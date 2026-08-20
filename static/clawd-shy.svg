@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 -25 45 45">
+<defs><style>
+.sy-body{animation:sy-wiggle 3s infinite ease-in-out;transform-origin:7.5px 10px}
+.sy-blush{animation:sy-glow 2s infinite ease-in-out}
+@keyframes sy-wiggle{0%,100%{transform:rotate(0deg)}30%{transform:rotate(-1.5deg)}60%{transform:rotate(1.5deg)}90%{transform:rotate(-.5deg)}}
+@keyframes sy-glow{0%,100%{opacity:.5}50%{opacity:.85}}
+</style></defs>
+<!-- shadow -->
+<rect x="3" y="15" width="9" height="1" fill="#000000" opacity="0.5"/>
+<!-- legs -->
+<g fill="#DE886D"><rect x="3" y="11" width="1" height="4"/><rect x="5" y="11" width="1" height="4"/><rect x="9" y="11" width="1" height="4"/><rect x="11" y="11" width="1" height="4"/></g>
+<!-- body -->
+<g class="sy-body">
+  <rect x="2" y="6" width="11" height="7" fill="#DE886D"/><!-- torso -->
+  <!-- left arm raised toward face -->
+  <rect x="1" y="7" width="2" height="2" fill="#DE886D"/>
+  <rect x="13" y="9" width="2" height="2" fill="#DE886D"/><!-- right arm -->
+  <!-- shy eyes: half-closed -->
+  <g fill="#000000"><rect x="4" y="8.5" width="1" height="1"/><rect x="10" y="8.5" width="1" height="1"/></g>
+</g>
+<!-- blush marks -->
+<g class="sy-blush"><rect x="2" y="10" width="2" height="1" rx=".5" fill="#F4A8B8"/><rect x="11" y="10" width="2" height="1" rx=".5" fill="#F4A8B8"/></g>
+</svg>

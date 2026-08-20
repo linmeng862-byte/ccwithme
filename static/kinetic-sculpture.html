@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kinetic Ruled Surface — Quantum Entanglement</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: #020617;
+    overflow: hidden;
+    font-family: 'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none; -webkit-user-select: none;
+  }
+  canvas { display: block; }
+
+  #loading {
+    position: fixed; inset:0; z-index:100;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:#020617; transition:opacity 1s ease, visibility 1s ease;
+  }
+  #loading.hidden { opacity:0; visibility:hidden; pointer-events:none; }
+  #loading .dot {
+    width:6px; height:6px; border-radius:50%; background:rgba(180,160,140,0.4);
+    animation: pulse 2s ease-in-out infinite; margin-bottom:28px;
+  }
+  @keyframes pulse { 0%,100% { opacity:0.2; transform:scale(1); } 50% { opacity:0.7; transform:scale(1.6); } }
+  #loading p {
+    color:rgba(180,160,140,0.5); font-size:11px; letter-spacing:0.12em; text-transform:uppercase;
+  }
+
+  #hint {
+    position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
+    color:rgba(180,160,140,0.22); font-size:11px; letter-spacing:0.08em;
+    pointer-events:none; transition:opacity 2s ease;
+  }
+
+  .lil-gui {
+    --font-family:'Inter',system-ui,sans-serif;
+    --font-size:11px;
+    --background:#0a0a0f;
+    --widget-color:#888;
+    --title-color:#999;
+    --title-background:#111118;
+    --number-color:#aaa;
+    --string-color:#777;
+  }
+</style>
+</head>
+<body>
+
+<div id="loading"><div class="dot"></div><p>Entering the gallery&hellip;</p></div>
+<div id="hint">Light from above &bull; Threads catch the light &bull; Two become one at the waist</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.umd.min.js"></script>
+
+<script>
+(function() {
+'use strict';
+
+// ─────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────
+var R = 8.0;
+var Z_OFFSET = 4.0;
+var R_HOOP = 10.0;
+
+// ─────────────────────────────────────
+// PARAMETERS
+// ─────────────────────────────────────
+var params = {
+  stringsPerLayer: 180,
+  rotationSpeed: 0.10,
+  waveAmplitude: 1.5,
+  bloomStrength: 1.2,
+  autoRotate: true,
+  paused: false
+};
+
+var time = 0;
+var TIME_STEP = 1/60;
+
+// ─────────────────────────────────────
+// SCENE
+// ─────────────────────────────────────
+var scene = new THREE.Scene();
+scene.background = new THREE.Color('#020617');
+scene.fog = new THREE.FogExp2('#020617', 0.00008);
+
+var camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.5, 80);
+camera.position.set(6, -1.5, 19);
+camera.lookAt(0, -0.2, 0);
+
+var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// ─────────────────────────────────────
+// ORBIT CONTROLS — museum visitor
+// ─────────────────────────────────────
+var controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.2;
+controls.minDistance = 8;
+controls.maxDistance = 35;
+controls.maxPolarAngle = Math.PI * 0.7;
+controls.minPolarAngle = 0.2;
+controls.target.set(0, 0, 0);
+controls.update();
+
+// ─────────────────────────────────────
+// GALLERY LIGHTING
+// ─────────────────────────────────────
+// Subtle ambient — dark gallery
+scene.add(new THREE.AmbientLight('#1a1a28', 0.3));
+
+// Main overhead spotlight — warm white
+var spotLight = new THREE.SpotLight('#f5efe6', 1.8, 40, Math.PI/7, 0.3, 0.5);
+spotLight.position.set(3, 14, 6);
+scene.add(spotLight);
+
+// Secondary fill light — cooler, from side
+var fillLight = new THREE.DirectionalLight('#c8d0e0', 0.3);
+fillLight.position.set(-8, 2, -4);
+scene.add(fillLight);
+
+// Rim light — subtle edge definition on the ring
+var rimLight = new THREE.DirectionalLight('#8899bb', 0.25);
+rimLight.position.set(0, -1, 8);
+scene.add(rimLight);
+
+// ─────────────────────────────────────
+// MAIN FRAME — Black metal ring
+// ─────────────────────────────────────
+var torusGeom = new THREE.TorusGeometry(R_HOOP, 0.12, 24, 320);
+var torusMat = new THREE.MeshStandardMaterial({
+  color: '#1a1a22',
+  roughness: 0.35,
+  metalness: 0.9
+});
+var torus = new THREE.Mesh(torusGeom, torusMat);
+// Default xy plane — vertical ring
+scene.add(torus);
+
+// ─────────────────────────────────────
+// STRING SYSTEM
+// ─────────────────────────────────────
+// Two independent layers merged into one geometry.
+// Layer A: indices 0..N-1, phase offset 0 — silver-blue fibers
+// Layer B: indices N..2N-1, phase offset π/2 — silver-gold fibers
+// Each string: 2 segments (endpoint → midpoint → endpoint), 4 vertices
+var N, totalStrings, vertCount;
+var positions, colors, stringGeom, stringMesh;
+
+// Fiber colors — overhead light catches the threads from above.
+// Top anchors glow in full light; bottom anchors fade into gallery shadow.
+// The waist (y≈0) is lit from above + brightened by thread convergence density.
+var END_R = 0.12, END_G = 0.13, END_B = 0.18;    // silver-blue endpoint in full light
+var MID_RA = 0.30, MID_GA = 0.32, MID_BA = 0.44; // Layer A waist: moon silver-blue
+var MID_RB = 0.38, MID_GB = 0.34, MID_BB = 0.22; // Layer B waist: pale gold
+
+function buildStrings() {
+  N = params.stringsPerLayer;
+  totalStrings = N * 2;
+  vertCount = totalStrings * 4; // 4 vertices per string (A→M→M→B)
+  positions = new Float32Array(vertCount * 3);
+  colors = new Float32Array(vertCount * 3);
+
+  stringGeom = new THREE.BufferGeometry();
+  stringGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  stringGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+  if (stringMesh) { scene.remove(stringMesh); stringMesh.geometry.dispose(); }
+
+  var mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.28,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  stringMesh = new THREE.LineSegments(stringGeom, mat);
+  scene.add(stringMesh);
+}
+
+function updateStrings(t) {
+  var spd = params.rotationSpeed;
+  var wa = params.waveAmplitude;
+  var omegaTwist = spd * 0.6;
+
+  // Quantum entanglement pulse — every ~30s the two layers synchronise,
+  // then decohere back into their independent orbits.
+  var entangle = 0.5 + 0.5 * Math.sin(t * 0.21);
+  var phaseOffset = Math.PI * 0.5 * (1 - entangle * 0.88);
+  var phiA = Math.PI * (1 + Math.sin(omegaTwist * t));
+  var phiB = Math.PI * (1 + Math.sin(omegaTwist * t + phaseOffset));
+  var A_env = wa * (0.7 + 0.3 * Math.sin(0.3 * t));
+
+  for (var i = 0; i < totalStrings; i++) {
+    var layer = i < N ? 0 : 1;
+    var idx = i < N ? i : i - N;
+    var theta = (2 * Math.PI * idx) / N;
+    var phi = layer === 0 ? phiA : phiB;
+
+    // Multi-frequency wave
+    var wave = Math.sin(3 * theta + t * 0.7) + 0.3 * Math.sin(7 * theta - t * 0.35);
+
+    // Upper anchor
+    var angleA = theta + spd * t;
+    var ax = R * Math.cos(angleA);
+    var ay = Z_OFFSET + A_env * wave;
+    var az = R * Math.sin(angleA);
+
+    // Lower anchor
+    var angleB = theta + phi - spd * t;
+    var bx = R * Math.cos(angleB);
+    var by = -Z_OFFSET - A_env * wave;
+    var bz = R * Math.sin(angleB);
+
+    // Midpoint
+    var mx = (ax + bx) * 0.5;
+    var my = (ay + by) * 0.5;
+    var mz = (az + bz) * 0.5;
+
+    // Endpoint base — dark silver, same for both layers
+    var er = END_R, eg = END_G, eb = END_B;
+    // Midpoint base — layer A blue-silver, layer B pale gold
+    var mr = layer === 0 ? MID_RA : MID_RB;
+    var mg = layer === 0 ? MID_GA : MID_GB;
+    var mb = layer === 0 ? MID_BA : MID_BB;
+
+    // Overhead light factor — threads brighter near the top, fading into shadow below.
+    // y = +Z_OFFSET → light = 1.0 (full spotlight).  y = -Z_OFFSET → light = 0.25 (shadow).
+    var lightA = 0.25 + 0.75 * (ay + Z_OFFSET) / (2 * Z_OFFSET);
+    var lightM = 0.25 + 0.75 * (my + Z_OFFSET) / (2 * Z_OFFSET);
+    var lightB = 0.25 + 0.75 * (by + Z_OFFSET) / (2 * Z_OFFSET);
+
+    // 4 vertices per string: A, M, M, B
+    var vi = i * 12;
+    positions[vi + 0] = ax; positions[vi + 1] = ay; positions[vi + 2] = az;
+    positions[vi + 3] = mx; positions[vi + 4] = my; positions[vi + 5] = mz;
+    positions[vi + 6] = mx; positions[vi + 7] = my; positions[vi + 8] = mz;
+    positions[vi + 9] = bx; positions[vi + 10] = by; positions[vi + 11] = bz;
+
+    colors[vi + 0] = er * lightA; colors[vi + 1] = eg * lightA; colors[vi + 2] = eb * lightA;
+    colors[vi + 3] = mr * lightM; colors[vi + 4] = mg * lightM; colors[vi + 5] = mb * lightM;
+    colors[vi + 6] = mr * lightM; colors[vi + 7] = mg * lightM; colors[vi + 8] = mb * lightM;
+    colors[vi + 9] = er * lightB; colors[vi + 10] = eg * lightB; colors[vi + 11] = eb * lightB;
+  }
+
+  stringGeom.attributes.position.needsUpdate = true;
+  stringGeom.attributes.color.needsUpdate = true;
+}
+
+function rebuildStrings() {
+  buildStrings();
+}
+
+// ─────────────────────────────────────
+// GALLERY DUST — subtle floating particles
+// ─────────────────────────────────────
+var dustGeom, dustMat, dustPoints;
+var dustPositions, dustBasePositions, dustPhases;
+
+function buildDust() {
+  var count = 1500;
+  var pos = new Float32Array(count * 3);
+  dustBasePositions = new Float32Array(count * 3);
+  dustPhases = new Float32Array(count);
+  var cols = new Float32Array(count * 3);
+
+  for (var i = 0; i < count; i++) {
+    // Distributed in a large volume around the sculpture
+    var rx = (Math.random() - 0.5) * 28;
+    var ry = (Math.random() - 0.5) * 18;
+    var rz = (Math.random() - 0.5) * 28;
+    pos[i * 3 + 0] = rx;
+    pos[i * 3 + 1] = ry;
+    pos[i * 3 + 2] = rz;
+    dustBasePositions[i * 3 + 0] = rx;
+    dustBasePositions[i * 3 + 1] = ry;
+    dustBasePositions[i * 3 + 2] = rz;
+    dustPhases[i] = Math.random() * Math.PI * 2;
+
+    // Warm gray, catching gallery light
+    var brt = 0.08 + Math.random() * 0.12;
+    cols[i * 3 + 0] = brt * 1.1;
+    cols[i * 3 + 1] = brt * 1.0;
+    cols[i * 3 + 2] = brt * 0.85;
+  }
+
+  dustGeom = new THREE.BufferGeometry();
+  dustGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  dustGeom.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  dustPositions = pos;
+
+  dustMat = new THREE.PointsMaterial({
+    size: 0.035,
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.4,
+    sizeAttenuation: true
+  });
+  dustPoints = new THREE.Points(dustGeom, dustMat);
+  scene.add(dustPoints);
+}
+
+function updateDust(t) {
+  if (!dustPositions) return;
+  for (var i = 0; i < 1500; i++) {
+    var i3 = i * 3;
+    // Slow float + subtle drift
+    dustPositions[i3 + 0] = dustBasePositions[i3 + 0] + 0.3 * Math.sin(t * 0.3 + dustPhases[i]);
+    dustPositions[i3 + 1] = dustBasePositions[i3 + 1] + 0.2 * Math.sin(t * 0.25 + dustPhases[i] + 1);
+    dustPositions[i3 + 2] = dustBasePositions[i3 + 2] + 0.3 * Math.cos(t * 0.28 + dustPhases[i] + 2);
+  }
+  dustGeom.attributes.position.needsUpdate = true;
+}
+
+// ─────────────────────────────────────
+// QUANTUM MIRROR PARTICLES — entangled pair
+// ─────────────────────────────────────
+var mirrorGeom, mirrorMat, mirrorPoints;
+var mirrorPositions;
+
+function buildMirrorPair() {
+  mirrorPositions = new Float32Array(6); // 2 particles × 3
+  mirrorGeom = new THREE.BufferGeometry();
+  mirrorGeom.setAttribute('position', new THREE.BufferAttribute(mirrorPositions, 3));
+
+  mirrorMat = new THREE.PointsMaterial({
+    color: 0xf5efe6,
+    size: 0.12,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.55,
+    sizeAttenuation: true
+  });
+  mirrorPoints = new THREE.Points(mirrorGeom, mirrorMat);
+  scene.add(mirrorPoints);
+}
+
+function updateMirrorPair(t) {
+  // Entanglement brightness — mirrors glow brighter when layers are coupled
+  var entangle = 0.5 + 0.5 * Math.sin(t * 0.21);
+  var entangleBright = 0.3 + entangle * 0.7; // 0.3 → 1.0
+
+  // Lemniscate (∞) orbit at the waist — figure-8 traced by the pair
+  var orbitR = 1.8;
+  var orbitSpeed = 0.35;
+  var ox = orbitR * Math.sin(t * orbitSpeed);
+  var oy = 0.6 * Math.sin(t * orbitSpeed * 2);
+  var oz = orbitR * Math.sin(t * orbitSpeed * 0.5) * Math.cos(t * orbitSpeed * 0.5);
+
+  // Particle 1 — drifts through the volume
+  mirrorPositions[0] = ox;
+  mirrorPositions[1] = oy;
+  mirrorPositions[2] = oz;
+
+  // Particle 2 — always the exact mirror image across the centre
+  // No signal, no delay. Spooky action at a distance.
+  mirrorPositions[3] = -ox;
+  mirrorPositions[4] = -oy;
+  mirrorPositions[5] = -oz;
+
+  mirrorGeom.attributes.position.needsUpdate = true;
+  mirrorMat.opacity = 0.3 + entangleBright * 0.45;
+  mirrorMat.size = 0.08 + entangleBright * 0.10;
+}
+
+// ─────────────────────────────────────
+// POST-PROCESSING — subtle bloom
+// ─────────────────────────────────────
+var composer, bloomPass;
+
+function buildComposer() {
+  composer = new THREE.EffectComposer(renderer);
+  var renderPass = new THREE.RenderPass(scene, camera);
+  composer.addPass(renderPass);
+
+  bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    params.bloomStrength,
+    0.6,
+    0.15
+  );
+  composer.addPass(bloomPass);
+
+  var copyPass = new THREE.ShaderPass(THREE.CopyShader);
+  copyPass.renderToScreen = true;
+  composer.addPass(copyPass);
+}
+
+// ─────────────────────────────────────
+// GUI
+// ─────────────────────────────────────
+function buildGUI() {
+  var gui = new lil.GUI({ title: 'Installation Controls', width: 260 });
+
+  var sFolder = gui.addFolder('Sculpture');
+  sFolder.add(params, 'stringsPerLayer', 90, 360, 1).name('Strings / Layer').onChange(function() {
+    rebuildStrings();
+  });
+  sFolder.add(params, 'rotationSpeed', 0.02, 0.25, 0.01).name('Rotation Speed');
+  sFolder.add(params, 'waveAmplitude', 0.0, 3.0, 0.05).name('Wave Amplitude');
+
+  var vFolder = gui.addFolder('Visual');
+  vFolder.add(params, 'bloomStrength', 0.0, 2.5, 0.05).name('Bloom').onChange(function(v) {
+    if (bloomPass) bloomPass.strength = v;
+  });
+
+  var aFolder = gui.addFolder('View');
+  aFolder.add(params, 'autoRotate').name('Auto Orbit').onChange(function(v) {
+    controls.autoRotate = v;
+  });
+  aFolder.add(params, 'paused').name('Pause');
+
+  sFolder.open(); vFolder.open(); aFolder.open();
+}
+
+// ─────────────────────────────────────
+// RESIZE
+// ─────────────────────────────────────
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  if (composer) composer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', onResize);
+
+// ─────────────────────────────────────
+// ANIMATION LOOP
+// ─────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+
+  if (!params.paused) {
+    time += TIME_STEP;
+  }
+
+  controls.update();
+
+  // Update string positions — in-place BufferAttribute write
+  if (positions && stringMesh) {
+    updateStrings(time);
+  }
+
+  // Update dust
+  if (dustPoints) {
+    updateDust(time);
+  }
+
+  // Update quantum mirror pair
+  if (mirrorPoints) {
+    updateMirrorPair(time);
+  }
+
+  // Render
+  if (composer) {
+    composer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
+
+  // Fade hint
+  var hint = document.getElementById('hint');
+  if (hint && time > 10) {
+    hint.style.opacity = Math.max(0, parseFloat(hint.style.opacity || 1) - 0.002);
+  }
+}
+
+// ─────────────────────────────────────
+// INIT
+// ─────────────────────────────────────
+function init() {
+  buildStrings();
+  buildDust();
+  buildMirrorPair();
+  buildComposer();
+  buildGUI();
+
+  setTimeout(function() {
+    var loading = document.getElementById('loading');
+    if (loading) loading.classList.add('hidden');
+  }, 800);
+
+  requestAnimationFrame(animate);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 200); });
+} else {
+  setTimeout(init, 200);
+}
+
+})();
+</script>
+</body>
+</html>

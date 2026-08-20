@@ -1,0 +1,24 @@
+{
+  "name": "chat-c",
+  "version": "1.0.0",
+  "description": "Claude Chat - full-featured chat frontend with relay API support",
+  "main": "backend.js",
+  "scripts": {
+    "start": "node backend.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "iconv-lite": "^0.7.3",
+    "jszip": "^3.10.1",
+    "multer": "^2.2.0",
+    "NeteaseCloudMusicApi": "^4.32.0",
+    "pdf-parse": "^1.1.1",
+    "ws": "^8.21.3"
+  }
+}

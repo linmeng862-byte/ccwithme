@@ -1,0 +1,8 @@
+node_modules/
+data/
+.git/
+*.md
+docker-compose.yml
+deploy.sh
+.codeflicker/
+参考/

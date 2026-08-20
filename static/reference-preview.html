@@ -1,0 +1,615 @@
+<!DOCTYPE html>  
+<html lang="zh">  
+<head>  
+<meta charset="UTF-8">  
+<meta name="viewport" content="width=device-width, initial-scale=1.0">  
+<title>Claude</title>  
+<style>  
+  * { margin: 0; padding: 0; box-sizing: border-box; }  
+  
+  body {  
+    background: #1a1915;  
+    color: #e8e2d9;  
+    font-family: -apple-system, 'Helvetica Neue', sans-serif;  
+    font-size: 15px;  
+    line-height: 1.6;  
+    height: 100vh;  
+    display: flex;  
+    flex-direction: column;  
+  }  
+  
+  /* 顶部栏 */  
+  .topbar {  
+    display: flex;  
+    align-items: center;  
+    padding: 14px 20px;  
+    border-bottom: 1px solid #2e2b26;  
+    gap: 10px;  
+    flex-shrink: 0;  
+  }  
+  
+  .topbar-title {  
+    font-size: 14px;  
+    color: #9a9080;  
+    font-weight: 500;  
+  }  
+  
+  /* 小花 logo */  
+  .flower-wrap {  
+    width: 28px;  
+    height: 28px;  
+    display: flex;  
+    align-items: center;  
+    justify-content: center;  
+  }  
+  
+  .flower {  
+    width: 22px;  
+    height: 22px;  
+    transition: transform 0.3s ease;  
+  }  
+  
+  .flower.thinking {  
+    animation: flowerPulse 1.4s ease-in-out infinite;  
+  }  
+  
+  @keyframes flowerPulse {  
+    0%, 100% { transform: scale(1); opacity: 1; }  
+    50% { transform: scale(0.72); opacity: 0.6; }  
+  }  
+  
+  /* 消息区域 */  
+  .messages {  
+    flex: 1;  
+    overflow-y: auto;  
+    padding: 24px 0;  
+    scrollbar-width: thin;  
+    scrollbar-color: #2e2b26 transparent;  
+  }  
+  
+  .messages::-webkit-scrollbar { width: 4px; }  
+  .messages::-webkit-scrollbar-track { background: transparent; }  
+  .messages::-webkit-scrollbar-thumb { background: #2e2b26; border-radius: 2px; }  
+  
+  .message {  
+    max-width: 720px;  
+    margin: 0 auto 24px;  
+    padding: 0 20px;  
+  }  
+  
+  /* 用户消息 */  
+  .message.user {  
+    display: flex;  
+    justify-content: flex-end;  
+  }  
+  
+  .user-bubble {  
+    background: #2c2820;  
+    border: 1px solid #3a3530;  
+    border-radius: 18px 18px 4px 18px;  
+    padding: 10px 16px;  
+    max-width: 72%;  
+    color: #e8e2d9;  
+  }  
+  
+  /* Claude消息 */  
+  .message.claude {  
+    display: flex;  
+    gap: 12px;  
+    align-items: flex-start;  
+  }  
+  
+  .claude-avatar {  
+    width: 26px;  
+    height: 26px;  
+    flex-shrink: 0;  
+    margin-top: 2px;  
+  }  
+  
+  .claude-content {  
+    flex: 1;  
+    min-width: 0;  
+  }  
+  
+  /* 思考链 */  
+  .thinking-block {  
+    margin-bottom: 12px;  
+    border: 1px solid #2e2b26;  
+    border-radius: 10px;  
+    overflow: hidden;  
+    background: #1e1c18;  
+  }  
+  
+  .thinking-header {  
+    display: flex;  
+    align-items: center;  
+    gap: 8px;  
+    padding: 9px 14px;  
+    cursor: pointer;  
+    user-select: none;  
+    color: #7a7060;  
+    font-size: 13px;  
+    transition: background 0.15s;  
+  }  
+  
+  .thinking-header:hover { background: #252219; }  
+  
+  .thinking-dot {  
+    width: 6px;  
+    height: 6px;  
+    border-radius: 50%;  
+    background: #c8a882;  
+    flex-shrink: 0;  
+  }  
+  
+  .thinking-dot.pulsing {  
+    animation: dotPulse 1.2s ease-in-out infinite;  
+  }  
+  
+  @keyframes dotPulse {  
+    0%, 100% { opacity: 1; transform: scale(1); }  
+    50% { opacity: 0.3; transform: scale(0.6); }  
+  }  
+  
+  .thinking-label { flex: 1; }  
+  
+  .thinking-toggle {  
+    font-size: 11px;  
+    color: #5a5248;  
+    transition: transform 0.2s;  
+  }  
+  
+  .thinking-toggle.open { transform: rotate(180deg); }  
+  
+  .thinking-body {  
+    padding: 0 14px;  
+    max-height: 0;  
+    overflow: hidden;  
+    transition: max-height 0.3s ease, padding 0.3s ease;  
+  }  
+  
+  .thinking-body.open {  
+    max-height: 300px;  
+    padding: 0 14px 14px;  
+  }  
+  
+  .thinking-text {  
+    font-size: 13px;  
+    color: #6a6058;  
+    line-height: 1.7;  
+    font-style: italic;  
+    border-left: 2px solid #2e2b26;  
+    padding-left: 12px;  
+  }  
+  
+  /* 正文 */  
+  .claude-text { color: #ddd8d0; line-height: 1.75; }  
+  
+  .claude-text p { margin-bottom: 12px; }  
+  .claude-text p:last-child { margin-bottom: 0; }  
+  
+  /* 代码块 */  
+  .code-block {  
+    margin: 14px 0;  
+    border-radius: 10px;  
+    overflow: hidden;  
+    border: 1px solid #2e2b26;  
+  }  
+  
+  .code-header {  
+    display: flex;  
+    align-items: center;  
+    justify-content: space-between;  
+    padding: 8px 14px;  
+    background: #222019;  
+    border-bottom: 1px solid #2e2b26;  
+  }  
+  
+  .code-lang {  
+    font-size: 12px;  
+    color: #6a6058;  
+    font-family: 'SF Mono', 'Menlo', monospace;  
+  }  
+  
+  .copy-btn {  
+    font-size: 12px;  
+    color: #7a7060;  
+    background: none;  
+    border: none;  
+    cursor: pointer;  
+    padding: 2px 8px;  
+    border-radius: 4px;  
+    transition: background 0.15s, color 0.15s;  
+  }  
+  
+  .copy-btn:hover { background: #2e2b26; color: #c8a882; }  
+  .copy-btn.copied { color: #7aaa7a; }  
+  
+  .code-body {  
+    background: #181612;  
+    padding: 14px 16px;  
+    overflow-x: auto;  
+  }  
+  
+  .code-body code {  
+    font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;  
+    font-size: 13px;  
+    line-height: 1.7;  
+    color: #c8c0b0;  
+  }  
+  
+  /* 语法高亮 */  
+  .kw { color: #c592ea; }  
+  .str { color: #a8d8a0; }  
+  .fn { color: #86c8e0; }  
+  .cm { color: #5a5850; font-style: italic; }  
+  .num { color: #f0c080; }  
+  .var { color: #e8d8b0; }  
+  
+  /* 行内代码 */  
+  code.inline {  
+    background: #222019;  
+    border: 1px solid #2e2b26;  
+    border-radius: 4px;  
+    padding: 1px 6px;  
+    font-family: 'SF Mono', monospace;  
+    font-size: 13px;  
+    color: #c8a882;  
+  }  
+  
+  /* 输入框区域 */  
+  .input-area {  
+    padding: 16px 20px 20px;  
+    border-top: 1px solid #2e2b26;  
+    flex-shrink: 0;  
+  }  
+  
+  .input-wrap {  
+    max-width: 720px;  
+    margin: 0 auto;  
+    display: flex;  
+    align-items: flex-end;  
+    gap: 10px;  
+    background: #201e1a;  
+    border: 1px solid #3a3530;  
+    border-radius: 16px;  
+    padding: 10px 14px;  
+  }  
+  
+  .input-field {  
+    flex: 1;  
+    background: none;  
+    border: none;  
+    outline: none;  
+    color: #e8e2d9;  
+    font-size: 15px;  
+    resize: none;  
+    min-height: 22px;  
+    max-height: 120px;  
+    font-family: inherit;  
+    line-height: 1.5;  
+  }  
+  
+  .input-field::placeholder { color: #4a4840; }  
+  
+  .send-btn {  
+    width: 30px;  
+    height: 30px;  
+    border-radius: 8px;  
+    background: #c8a882;  
+    border: none;  
+    cursor: pointer;  
+    display: flex;  
+    align-items: center;  
+    justify-content: center;  
+    flex-shrink: 0;  
+    transition: background 0.15s;  
+  }  
+  
+  .send-btn:hover { background: #d8b892; }  
+  
+  .send-btn svg { width: 14px; height: 14px; fill: #1a1915; }  
+  
+  /* 状态提示 */  
+  .status-bar {  
+    text-align: center;  
+    font-size: 12px;  
+    color: #3a3830;  
+    padding: 8px;  
+    flex-shrink: 0;  
+  }  
+  
+  /* 打字动画 */  
+  .typing-cursor::after {  
+    content: '▋';  
+    animation: blink 0.9s step-end infinite;  
+    color: #c8a882;  
+    font-size: 14px;  
+  }  
+  
+  @keyframes blink {  
+    0%, 100% { opacity: 1; }  
+    50% { opacity: 0; }  
+  }  
+</style>  
+</head>  
+<body>  
+  
+<!-- 顶部栏 -->  
+<div class="topbar">  
+  <div class="flower-wrap">  
+    <svg class="flower" id="mainFlower" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">  
+      <g transform="translate(50,50)">  
+        <!-- 8片花瓣 -->  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(0)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(45)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(90)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(135)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(180)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(225)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(270)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(315)"/>  
+        <!-- 花心 -->  
+        <circle cx="0" cy="0" r="11" fill="#e8a070"/>  
+        <circle cx="0" cy="0" r="7" fill="#f0b880"/>  
+      </g>  
+    </svg>  
+  </div>  
+  <span class="topbar-title">Claude</span>  
+</div>  
+  
+<!-- 消息 -->  
+<div class="messages" id="messagesArea">  
+  
+  <!-- 用户消息 -->  
+  <div class="message user">  
+    <div class="user-bubble">帮我写一个Python函数，斐波那契数列，要有类型注解</div>  
+  </div>  
+  
+  <!-- Claude回复（带思考链） -->  
+  <div class="message claude">  
+    <svg class="claude-avatar" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">  
+      <g transform="translate(50,50)">  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(0)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(45)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(90)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(135)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(180)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(225)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(270)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(315)"/>  
+        <circle cx="0" cy="0" r="11" fill="#e8a070"/>  
+        <circle cx="0" cy="0" r="7" fill="#f0b880"/>  
+      </g>  
+    </svg>  
+    <div class="claude-content">  
+      <!-- 思考链 -->  
+      <div class="thinking-block">  
+        <div class="thinking-header" onclick="toggleThinking(this)">  
+          <div class="thinking-dot"></div>  
+          <span class="thinking-label">思考过程</span>  
+          <span class="thinking-toggle">▾</span>  
+        </div>  
+        <div class="thinking-body">  
+          <div class="thinking-text">  
+            斐波那契数列有几种实现方式……递归的话简洁但有重复计算问题，O(2^n)；迭代的话O(n)时间O(1)空间；还有用lru_cache的记忆化递归。<br><br>  
+            她要类型注解，用 <code style="color:#7a9a7a;background:none">int -> int</code> 就好，参数n是非负整数，返回第n项。<br><br>  
+            做迭代版本，最实用，再加一个生成器版本作为bonus，挺有用的。  
+          </div>  
+        </div>  
+      </div>  
+  
+      <!-- 回复内容 -->  
+      <div class="claude-text">  
+        <p>两种实现，各有用处。</p>  
+  
+        <div class="code-block">  
+          <div class="code-header">  
+            <span class="code-lang">python</span>  
+            <button class="copy-btn" onclick="copyCode(this, 'code1')">复制</button>  
+          </div>  
+          <div class="code-body">  
+<code id="code1"><span class="kw">def</span> <span class="fn">fibonacci</span>(<span class="var">n</span>: <span class="fn">int</span>) -> <span class="fn">int</span>:  
+    <span class="str">"""返回第 n 个斐波那契数（0-indexed）。"""</span>  
+    <span class="kw">if</span> <span class="var">n</span> < <span class="num">0</span>:  
+        <span class="kw">raise</span> <span class="fn">ValueError</span>(<span class="str">"n 必须是非负整数"</span>)  
+    <span class="kw">if</span> <span class="var">n</span> <= <span class="num">1</span>:  
+        <span class="kw">return</span> <span class="var">n</span>  
+    <span class="var">a</span>, <span class="var">b</span> = <span class="num">0</span>, <span class="num">1</span>  
+    <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(<span class="var">n</span> - <span class="num">1</span>):  
+        <span class="var">a</span>, <span class="var">b</span> = <span class="var">b</span>, <span class="var">a</span> + <span class="var">b</span>  
+    <span class="kw">return</span> <span class="var">b</span>  
+  
+  
+<span class="kw">from</span> typing <span class="kw">import</span> Generator  
+  
+<span class="kw">def</span> <span class="fn">fibonacci_gen</span>(<span class="var">limit</span>: <span class="fn">int</span>) -> <span class="fn">Generator</span>[<span class="fn">int</span>, <span class="kw">None</span>, <span class="kw">None</span>]:  
+    <span class="str">"""生成前 limit 个斐波那契数。"""</span>  
+    <span class="var">a</span>, <span class="var">b</span> = <span class="num">0</span>, <span class="num">1</span>  
+    <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(<span class="var">limit</span>):  
+        <span class="kw">yield</span> <span class="var">a</span>  
+        <span class="var">a</span>, <span class="var">b</span> = <span class="var">b</span>, <span class="var">a</span> + <span class="var">b</span></code>  
+          </div>  
+        </div>  
+  
+        <p>第一个是迭代版，O(n) 时间，O(1) 空间，直接用 <code class="inline">fibonacci(10)</code> 取单个值。</p>  
+        <p>第二个是生成器，需要一批数的时候用 <code class="inline">list(fibonacci_gen(10))</code>，不用重复计算。</p>  
+      </div>  
+    </div>  
+  </div>  
+  
+  <!-- 思考中的状态 -->  
+  <div class="message claude" id="thinkingMsg" style="display:none">  
+    <svg class="claude-avatar" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">  
+      <g transform="translate(50,50)">  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(0)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(45)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(90)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(135)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(180)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(225)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(270)"/>  
+        <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(315)"/>  
+        <circle cx="0" cy="0" r="11" fill="#e8a070"/>  
+        <circle cx="0" cy="0" r="7" fill="#f0b880"/>  
+      </g>  
+    </svg>  
+    <div class="claude-content">  
+      <div class="thinking-block">  
+        <div class="thinking-header">  
+          <div class="thinking-dot pulsing"></div>  
+          <span class="thinking-label">正在思考…</span>  
+        </div>  
+      </div>  
+    </div>  
+  </div>  
+  
+</div>  
+  
+<div class="status-bar">Claude · Sonnet 4.6</div>  
+  
+<!-- 输入框 -->  
+<div class="input-area">  
+  <div class="input-wrap">  
+    <textarea  
+      class="input-field"  
+      id="inputField"  
+      placeholder="给 Claude 发消息…"  
+      rows="1"  
+      onkeydown="handleKey(event)"  
+      oninput="autoResize(this)"  
+    ></textarea>  
+    <button class="send-btn" onclick="sendMessage()">  
+      <svg viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>  
+    </button>  
+  </div>  
+</div>  
+  
+<script>  
+  // 思考链展开/收起  
+  function toggleThinking(header) {  
+    const body = header.nextElementSibling;  
+    const toggle = header.querySelector('.thinking-toggle');  
+    body.classList.toggle('open');  
+    toggle.classList.toggle('open');  
+  }  
+  
+  // 复制代码  
+  function copyCode(btn, codeId) {  
+    const el = document.getElementById(codeId);  
+    const text = el.innerText;  
+    navigator.clipboard.writeText(text).then(() => {  
+      btn.textContent = '已复制';  
+      btn.classList.add('copied');  
+      setTimeout(() => {  
+        btn.textContent = '复制';  
+        btn.classList.remove('copied');  
+      }, 1800);  
+    });  
+  }  
+  
+  // 自动调整高度  
+  function autoResize(el) {  
+    el.style.height = 'auto';  
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';  
+  }  
+  
+  // 回车发送  
+  function handleKey(e) {  
+    if (e.key === 'Enter' && !e.shiftKey) {  
+      e.preventDefault();  
+      sendMessage();  
+    }  
+  }  
+  
+  // 发送模拟  
+  function sendMessage() {  
+    const field = document.getElementById('inputField');  
+    const text = field.value.trim();  
+    if (!text) return;  
+  
+    field.value = '';  
+    field.style.height = 'auto';  
+  
+    // 添加用户消息  
+    const messages = document.getElementById('messagesArea');  
+    const userMsg = document.createElement('div');  
+    userMsg.className = 'message user';  
+    userMsg.innerHTML = `<div class="user-bubble">${escHtml(text)}</div>`;  
+    messages.appendChild(userMsg);  
+  
+    // 显示思考中  
+    const thinkingMsg = document.getElementById('thinkingMsg');  
+    thinkingMsg.style.display = 'flex';  
+    messages.scrollTop = messages.scrollHeight;  
+  
+    // 启动小花动画  
+    const flower = document.getElementById('mainFlower');  
+    flower.classList.add('thinking');  
+  
+    // 2.5秒后显示回复  
+    setTimeout(() => {  
+      thinkingMsg.style.display = 'none';  
+      flower.classList.remove('thinking');  
+  
+      const reply = document.createElement('div');  
+      reply.className = 'message claude';  
+      reply.innerHTML = `  
+        <svg class="claude-avatar" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">  
+          <g transform="translate(50,50)">  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(0)"/>  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(45)"/>  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(90)"/>  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(135)"/>  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.9" transform="rotate(180)"/>  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#c8835a" opacity="0.85" transform="rotate(225)"/>  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.8" transform="rotate(270)"/>  
+            <ellipse cx="0" cy="-22" rx="9" ry="16" fill="#d4926a" opacity="0.75" transform="rotate(315)"/>  
+            <circle cx="0" cy="0" r="11" fill="#e8a070"/>  
+            <circle cx="0" cy="0" r="7" fill="#f0b880"/>  
+          </g>  
+        </svg>  
+        <div class="claude-content">  
+          <div class="thinking-block">  
+            <div class="thinking-header" onclick="toggleThinking(this)">  
+              <div class="thinking-dot"></div>  
+              <span class="thinking-label">思考过程</span>  
+              <span class="thinking-toggle">▾</span>  
+            </div>  
+            <div class="thinking-body">  
+              <div class="thinking-text">让我想想怎么回答这个……</div>  
+            </div>  
+          </div>  
+          <div class="claude-text typing-cursor" id="replyText"></div>  
+        </div>  
+      `;  
+      messages.appendChild(reply);  
+      messages.scrollTop = messages.scrollHeight;  
+  
+      // 打字效果  
+      const replyEl = reply.querySelector('#replyText');  
+      const replyText = '嗯，收到了。';  
+      let i = 0;  
+      const typeInterval = setInterval(() => {  
+        if (i < replyText.length) {  
+          replyEl.textContent += replyText[i];  
+          i++;  
+          messages.scrollTop = messages.scrollHeight;  
+        } else {  
+          clearInterval(typeInterval);  
+          replyEl.classList.remove('typing-cursor');  
+        }  
+      }, 40);  
+  
+    }, 2500);  
+  }  
+  
+  function escHtml(str) {  
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');  
+  }  
+  
+  // 滚动到底部  
+  document.getElementById('messagesArea').scrollTop = 999999;  
+</script>  
+</body>  
+</html>  

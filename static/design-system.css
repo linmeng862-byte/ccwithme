@@ -1,0 +1,101 @@
+/* ============================================================
+   design-system.css — 「家」Home Space 设计系统
+   暖米纸张基调 + 玻璃态。保留 Claude 橙色。
+   ============================================================ */
+
+:root {
+  /* —— 色彩：暖米纸张基调 —— */
+  --bg-primary:    #FBF7F0;
+  --bg-surface:    #F3EFE7;
+  --bubble-user:   #E9E3D8;
+  --bubble-ai:     #F3EFE7;
+  --bg-sunken:     rgba(0,0,0,0.04);
+  --text-primary:  #1F1E1D;
+  --text-secondary:#6E6D66;
+  --text-faint:    #A6A39A;
+  --text-time:     #B5B5B5;
+
+  /* —— 主题色：Claude 橙（保留） —— */
+  --accent:        #DA7756;
+  --accent-hover:  #C96846;
+  --accent-fg:     #FFFFFF;
+
+  /* —— 玻璃态 —— */
+  --glass-bg:      rgba(255,255,255,0.65);
+  --glass-blur:    blur(20px);
+
+  /* —— 边框 —— */
+  --border:        rgba(31,30,29,0.08);
+  --border-strong: rgba(31,30,29,0.16);
+
+  /* —— 字体 —— */
+  --font-serif: 'Anthropic Serif', ui-serif, Georgia, 'PingFang SC', sans-serif;
+  --font-sans:  'Anthropic Sans', -apple-system, system-ui, 'PingFang SC', sans-serif;
+  --font-mono:  ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* —— 字号 —— */
+  --text-base:   16px;
+  --text-sm:     13px;
+  --text-title:  19px;
+  --leading:     1.65;
+  --text-read:   17.5px;
+
+  /* —— 圆角 —— */
+  --radius-md:     12px;
+  --radius-lg:     28px;
+  --radius-bubble: 22px;
+  --radius-full:   999px;
+  --radius-xl:     24px;
+
+  /* —— 间距 —— */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --msg-gap: 28px;
+  --page-pad: 16px;
+
+  /* —— 动效 —— */
+  --transition:      200ms ease;
+  --transition-slow: 500ms ease-in-out;
+
+  /* —— 阴影 —— */
+  --shadow-soft:     0 1px 4px rgba(31,30,29,0.04);
+  --shadow-composer: 0 0 18px rgba(0,0,0,0.035), 0 8px 22px rgba(0,0,0,0.035);
+}
+
+/* —— 暗色模式：暖暗调 —— */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary:    #1E1B18;
+    --bg-surface:    #23201D;
+    --bubble-user:   #E2D0D2;
+    --bubble-ai:     #F0ECE4;
+    --bg-sunken:     rgba(255,255,255,0.05);
+    --text-primary:  #E8E2D9;
+    --text-secondary:#9A948A;
+    --text-faint:    #6E6D66;
+    --text-time:     #5A5548;
+    --border:        rgba(236,234,228,0.08);
+    --border-strong: rgba(236,234,228,0.18);
+    --shadow-soft:   none;
+    --shadow-composer: none;
+  }
+}
+html[data-theme="dark"] {
+  --bg-primary:    #1E1B18;
+  --bg-surface:    #23201D;
+  --bubble-user:   #E2D0D2;
+  --bubble-ai:     #F0ECE4;
+  --bg-sunken:     rgba(255,255,255,0.05);
+  --text-primary:  #E8E2D9;
+  --text-secondary:#9A948A;
+  --text-faint:    #6E6D66;
+  --text-time:     #5A5548;
+  --border:        rgba(236,234,228,0.08);
+  --border-strong: rgba(236,234,228,0.18);
+  --shadow-soft:   none;
+  --shadow-composer: none;
+}

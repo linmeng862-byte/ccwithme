@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kinetic Ruled Surface — 宇宙银河星图</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: #030712;
+    overflow: hidden;
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  canvas { display: block; }
+
+  /* Loading overlay */
+  #loading {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: #030712;
+    transition: opacity 0.8s ease, visibility 0.8s ease;
+  }
+  #loading.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  #loading .ring {
+    width: 48px; height: 48px;
+    border: 2px solid rgba(139, 92, 246, 0.2);
+    border-top-color: #8B5CF6;
+    border-radius: 50%;
+    animation: spin 1.2s linear infinite;
+    margin-bottom: 20px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading p {
+    color: rgba(139, 92, 246, 0.7);
+    font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+
+  /* Info hint */
+  #hint {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0.25); font-size: 12px;
+    letter-spacing: 0.06em; pointer-events: none;
+    transition: opacity 1.5s ease;
+  }
+
+  /* lil-gui overrides */
+  .lil-gui { --font-family: 'Inter',system-ui,sans-serif; --font-size: 12px; }
+  .lil-gui .title { font-weight: 600; letter-spacing: 0.04em; background: rgba(139,92,246,0.12) !important; color: #c4b5fd !important; }
+  .lil-gui .controller { border-left: 2px solid transparent; }
+  .lil-gui .controller:hover { border-left-color: rgba(139,92,246,0.3); }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="ring"></div>
+  <p>Waking the ruled surface...</p>
+</div>
+<div id="hint">Drag to orbit &bull; Scroll to zoom &bull; Right-drag to pan</div>
+
+<!-- Three.js r128 + addons -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.umd.min.js"></script>
+
+<script>
+(function() {
+  'use strict';
+
+  // ─────────────────────────────────────
+  // CONSTANTS & CONFIG
+  // ─────────────────────────────────────
+  const R = 8.0;
+  const Z_OFFSET = 4.0;
+  const R_HOOP = 10.0;
+
+  // Color palettes — [endpointHex, midpointEvenHex, midpointOddHex]
+  // Even-indexed lines: blue-silver shimmer. Odd-indexed: gold-silver shimmer.
+  // For non-silver palettes (single midpoint color): both even/odd use same midpoint.
+  const PALETTES = {
+    'Silver Intertwine':    ['#3A4050', '#8899CC', '#D4B896'],
+    'Moonlit Silver':       ['#2E3340', '#9DB4D8', '#E8D5B0'],
+    'Galaxy Gold':          ['#1E1B4B', '#F59E0B', '#F59E0B'],
+    'Cyberpunk Neon':       ['#1E0A2E', '#06B6D4', '#EC4899'],
+    'Deep Space Violet':    ['#0F0A2E', '#8B5CF6', '#A78BFA'],
+    'Aurora Green':         ['#042F2E', '#10B981', '#34D399']
+  };
+
+  // ─────────────────────────────────────
+  // STATE
+  // ─────────────────────────────────────
+  var params = {
+    lineCount: 180,
+    twistSpeed: 0.25,
+    waveAmplitude: 1.5,
+    bloomStrength: 1.4,
+    colorPalette: 'Silver Intertwine',
+    autoRotate: true,
+    paused: false
+  };
+
+  var time = 0;
+  var palette = PALETTES[params.colorPalette];
+  var endpointColor = new THREE.Color(palette[0]);
+  var midpointEven = new THREE.Color(palette[1]);   // blue-silver
+  var midpointOdd  = new THREE.Color(palette[2]);   // gold-silver
+
+  // ─────────────────────────────────────
+  // SCENE SETUP
+  // ─────────────────────────────────────
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color('#030712');
+  scene.fog = new THREE.FogExp2('#030712', 0.00015);
+
+  var camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 80);
+  camera.position.set(6, 3.5, 16);
+  camera.lookAt(0, 0, 0);
+
+  var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  document.body.appendChild(renderer.domElement);
+
+  // ─────────────────────────────────────
+  // ORBIT CONTROLS
+  // ─────────────────────────────────────
+  var controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 0.35;
+  controls.minDistance = 6;
+  controls.maxDistance = 40;
+  controls.maxPolarAngle = Math.PI * 0.75;
+  controls.target.set(0, 0, 0);
+  controls.update();
+
+  // ─────────────────────────────────────
+  // LIGHTING (for the torus ring)
+  // ─────────────────────────────────────
+  scene.add(new THREE.AmbientLight('#334466', 0.6));
+  var keyLight = new THREE.DirectionalLight('#ccddff', 0.55);
+  keyLight.position.set(10, 15, 8);
+  scene.add(keyLight);
+  var rimLight = new THREE.DirectionalLight('#8866aa', 0.35);
+  rimLight.position.set(-8, -2, -6);
+  scene.add(rimLight);
+
+  // ─────────────────────────────────────
+  // OUTER RING (Torus)
+  // ─────────────────────────────────────
+  var torusGeom = new THREE.TorusGeometry(R_HOOP, 0.07, 16, 280);
+  var torusMat = new THREE.MeshStandardMaterial({
+    color: '#2A2540',
+    roughness: 0.72,
+    metalness: 0.35
+  });
+  var torus = new THREE.Mesh(torusGeom, torusMat);
+  // Default xy plane — vertical ring framing the structure
+  scene.add(torus);
+  var torusEmissiveColor = new THREE.Color(); // reused for ring shimmer
+
+  // ─────────────────────────────────────
+  // RULED SURFACE — LINES
+  // ─────────────────────────────────────
+  // Each line: upper → midpoint → lower (2 segments, 4 vertices per line)
+  var N = params.lineCount;
+  var linePositions, lineColors, lineGeom, lineMesh;
+  var midPoints; // Float32Array of midpoints for particle sync
+
+  function buildLineGeometry() {
+    N = params.lineCount;
+    var vertCount = N * 4; // 4 vertices per line
+    linePositions = new Float32Array(vertCount * 3);
+    lineColors = new Float32Array(vertCount * 3);
+    midPoints = new Float32Array(N * 3);
+
+    lineGeom = new THREE.BufferGeometry();
+    lineGeom.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+    lineGeom.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
+
+    if (lineMesh) { scene.remove(lineMesh); lineMesh.geometry.dispose(); }
+
+    var mat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+      linewidth: 1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    lineMesh = new THREE.LineSegments(lineGeom, mat);
+    scene.add(lineMesh);
+  }
+
+  function updateLines(t) {
+    var tw = params.twistSpeed;
+    var wa = params.waveAmplitude;
+    var omega1 = 0.15;
+    var omega2 = 0.15;
+    var omega3 = 0.6;
+    var omegaTwist = tw;
+    var A_wave = wa * Math.sin(0.5 * t);
+    var phi = Math.PI * (1 + Math.sin(omegaTwist * t));
+    var k = 3;
+
+    for (var i = 0; i < N; i++) {
+      var theta = (2 * Math.PI * i) / N;
+
+      // Upper anchor A_i
+      var angleA = theta + omega1 * t;
+      var ax = R * Math.cos(angleA);
+      var ay = Z_OFFSET + A_wave * Math.sin(k * theta + omega3 * t);
+      var az = R * Math.sin(angleA);
+
+      // Lower anchor B_i
+      var angleB = theta + phi - omega2 * t;
+      var bx = R * Math.cos(angleB);
+      var by = -Z_OFFSET - A_wave * Math.sin(k * theta + omega3 * t);
+      var bz = R * Math.sin(angleB);
+
+      // Midpoint M_i
+      var mx = (ax + bx) * 0.5;
+      var my = (ay + by) * 0.5;
+      var mz = (az + bz) * 0.5;
+
+      // Store positions — 4 vertices per line: A, M, M, B (2 segments)
+      var vi = i * 12; // vertex index × 3 components
+      linePositions[vi + 0] = ax; linePositions[vi + 1] = ay; linePositions[vi + 2] = az;
+      linePositions[vi + 3] = mx; linePositions[vi + 4] = my; linePositions[vi + 5] = mz;
+      linePositions[vi + 6] = mx; linePositions[vi + 7] = my; linePositions[vi + 8] = mz;
+      linePositions[vi + 9] = bx; linePositions[vi + 10] = by; linePositions[vi + 11] = bz;
+
+      // Store midpoint for particles
+      midPoints[i * 3 + 0] = mx;
+      midPoints[i * 3 + 1] = my;
+      midPoints[i * 3 + 2] = mz;
+
+      // Colors — endpoint dark silver, midpoint alternates blue-silver / gold-silver
+      var ec = endpointColor;
+      var mc = (i % 2 === 0) ? midpointEven : midpointOdd;
+      lineColors[vi + 0] = ec.r; lineColors[vi + 1] = ec.g; lineColors[vi + 2] = ec.b;
+      lineColors[vi + 3] = mc.r; lineColors[vi + 4] = mc.g; lineColors[vi + 5] = mc.b;
+      lineColors[vi + 6] = mc.r; lineColors[vi + 7] = mc.g; lineColors[vi + 8] = mc.b;
+      lineColors[vi + 9] = ec.r; lineColors[vi + 10] = ec.g; lineColors[vi + 11] = ec.b;
+    }
+
+    lineGeom.attributes.position.needsUpdate = true;
+    lineGeom.attributes.color.needsUpdate = true;
+  }
+
+  function rebuildLines() {
+    buildLineGeometry();
+    // Rebuild midpoint particles too
+    rebuildMidParticles();
+    updateLineColors();
+  }
+
+  function updateLineColors() {
+    if (!lineColors) return;
+    var ec = endpointColor;
+    for (var i = 0; i < N; i++) {
+      var vi = i * 12;
+      var mc = (i % 2 === 0) ? midpointEven : midpointOdd;
+      lineColors[vi + 0] = ec.r; lineColors[vi + 1] = ec.g; lineColors[vi + 2] = ec.b;
+      lineColors[vi + 3] = mc.r; lineColors[vi + 4] = mc.g; lineColors[vi + 5] = mc.b;
+      lineColors[vi + 6] = mc.r; lineColors[vi + 7] = mc.g; lineColors[vi + 8] = mc.b;
+      lineColors[vi + 9] = ec.r; lineColors[vi + 10] = ec.g; lineColors[vi + 11] = ec.b;
+    }
+    lineGeom.attributes.color.needsUpdate = true;
+  }
+
+  // ─────────────────────────────────────
+  // MIDPOINT GLOW PARTICLES
+  // ─────────────────────────────────────
+  var particleGeom, particleMat, particleSystem;
+
+  function buildMidParticles() {
+    particleGeom = new THREE.BufferGeometry();
+    // midPoints already allocated by buildLineGeometry — reuse the same Float32Array
+    var sizes = new Float32Array(N);
+    var pColors = new Float32Array(N * 3);
+    for (var i = 0; i < N; i++) {
+      sizes[i] = 0.08 + Math.random() * 0.06;
+      var pc = (i % 2 === 0) ? midpointEven : midpointOdd;
+      pColors[i * 3 + 0] = pc.r;
+      pColors[i * 3 + 1] = pc.g;
+      pColors[i * 3 + 2] = pc.b;
+    }
+    particleGeom.setAttribute('position', new THREE.BufferAttribute(midPoints, 3));
+    particleGeom.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    particleGeom.setAttribute('color', new THREE.BufferAttribute(pColors, 3));
+
+    particleMat = new THREE.PointsMaterial({
+      size: 0.12,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.7,
+      sizeAttenuation: true
+    });
+    particleSystem = new THREE.Points(particleGeom, particleMat);
+    scene.add(particleSystem);
+  }
+
+  function rebuildMidParticles() {
+    if (particleSystem) {
+      scene.remove(particleSystem);
+      particleSystem.geometry.dispose();
+      particleSystem.material.dispose();
+    }
+    buildMidParticles();
+  }
+
+  // ─────────────────────────────────────
+  // STARFIELD
+  // ─────────────────────────────────────
+  var starGeom, starMat, stars;
+
+  function buildStarfield() {
+    var count = 3000;
+    var pos = new Float32Array(count * 3);
+    var cols = new Float32Array(count * 3);
+    for (var i = 0; i < count; i++) {
+      // Random spherical distribution
+      var r = 18 + Math.random() * 40;
+      var theta = Math.random() * Math.PI * 2;
+      var phi = Math.acos(2 * Math.random() - 1);
+      pos[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      pos[i * 3 + 2] = r * Math.cos(phi);
+
+      // Slight color variation — cool white to pale blue/violet
+      var brightness = 0.3 + Math.random() * 0.7;
+      cols[i * 3 + 0] = 0.7 * brightness + 0.3 * brightness * (0.5 + 0.5 * Math.random());
+      cols[i * 3 + 1] = 0.7 * brightness + 0.25 * brightness * Math.random();
+      cols[i * 3 + 2] = 0.8 * brightness + 0.2 * brightness * Math.random();
+    }
+    starGeom = new THREE.BufferGeometry();
+    starGeom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    starGeom.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    starMat = new THREE.PointsMaterial({
+      size: 0.06,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.75,
+      sizeAttenuation: true
+    });
+    stars = new THREE.Points(starGeom, starMat);
+    scene.add(stars);
+  }
+
+  // ─────────────────────────────────────
+  // POST-PROCESSING (UnrealBloom)
+  // ─────────────────────────────────────
+  var composer, bloomPass;
+
+  function buildComposer() {
+    if (composer) { composer.dispose?.(); }
+    composer = new THREE.EffectComposer(renderer);
+
+    var renderPass = new THREE.RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    bloomPass = new THREE.UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      params.bloomStrength,
+      0.85,
+      0.15
+    );
+    composer.addPass(bloomPass);
+
+    var copyPass = new THREE.ShaderPass(THREE.CopyShader);
+    copyPass.renderToScreen = true;
+    composer.addPass(copyPass);
+  }
+
+  function updateBloomStrength() {
+    if (bloomPass) bloomPass.strength = params.bloomStrength;
+  }
+
+  // ─────────────────────────────────────
+  // LIL-GUI
+  // ─────────────────────────────────────
+  function buildGUI() {
+    var gui = new lil.GUI({ title: 'Kinetic Ruled Surface', width: 280 });
+
+    // Geometry
+    var geoFolder = gui.addFolder('Geometry · 结构参数');
+    geoFolder.add(params, 'lineCount', 60, 360, 1).name('Line Count').onChange(function(v) {
+      rebuildLines();
+    });
+    geoFolder.add(params, 'twistSpeed', 0.0, 2.0, 0.01).name('Twist Speed');
+    geoFolder.add(params, 'waveAmplitude', 0.0, 3.0, 0.05).name('Wave Amplitude');
+
+    // Visuals
+    var visFolder = gui.addFolder('Visuals · 特效');
+    visFolder.add(params, 'bloomStrength', 0.0, 3.0, 0.05).name('Bloom Strength').onChange(function(v) {
+      if (bloomPass) bloomPass.strength = v;
+    });
+    visFolder.add(params, 'colorPalette', Object.keys(PALETTES)).name('Color Palette').onChange(function(v) {
+      palette = PALETTES[v];
+      endpointColor.set(palette[0]);
+      midpointEven.set(palette[1]);
+      midpointOdd.set(palette[2]);
+      updateLineColors();
+      // Rebuild particles to sync their vertex colors
+      rebuildMidParticles();
+    });
+
+    // Animation
+    var animFolder = gui.addFolder('Animation · 动画');
+    animFolder.add(params, 'autoRotate').name('Auto Rotate').onChange(function(v) {
+      controls.autoRotate = v;
+    });
+    animFolder.add(params, 'paused').name('Pause Animation');
+
+    // Folders open by default
+    geoFolder.open();
+    visFolder.open();
+    animFolder.open();
+  }
+
+  // ─────────────────────────────────────
+  // RESIZE HANDLER
+  // ─────────────────────────────────────
+  function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    if (composer) composer.setSize(window.innerWidth, window.innerHeight);
+  }
+  window.addEventListener('resize', onResize);
+
+  // ─────────────────────────────────────
+  // ANIMATION LOOP
+  // ─────────────────────────────────────
+  var TIME_STEP = 1 / 60;
+
+  function animate(timestamp) {
+    requestAnimationFrame(animate);
+
+    if (!params.paused) {
+      time += TIME_STEP;
+    }
+
+    controls.update();
+
+    // Update line positions (NOT rebuilding geometry — in-place BufferAttribute write)
+    if (linePositions && lineMesh) {
+      updateLines(time);
+
+      // Sync midpoint particles
+      if (midPoints && particleGeom) {
+        particleGeom.attributes.position.needsUpdate = true;
+      }
+
+      // Breathing glow + convergence-density scaling on midpoint particles
+      if (particleMat) {
+        // Density factor: peaks at φ=π (hourglass, max convergence), flat at φ=0/2π (cylinder)
+        var phiDensity = Math.PI * (1 + Math.sin(params.twistSpeed * time));
+        var density = 1.0 + 0.8 * Math.sin(phiDensity / 2);
+        var breathe = 0.55 + 0.25 * Math.sin(time * 1.8);
+        particleMat.opacity = breathe * (0.7 + 0.3 * (density - 1));
+        particleMat.size = (0.10 + 0.04 * Math.sin(time * 1.8 + Math.PI * 0.5)) * density;
+      }
+
+      // Subtle ring shimmer
+      torus.rotation.z += 0.0008;
+      torusMat.emissive = torusEmissiveColor.setHSL(0.7, 0.3, 0.03 + 0.02 * Math.sin(time * 0.7));
+    }
+
+    // Slow starfield rotation
+    if (stars) {
+      stars.rotation.y += 0.00025;
+      stars.rotation.x += 0.00012;
+    }
+
+    // Render with bloom
+    if (composer) {
+      composer.render();
+    } else {
+      renderer.render(scene, camera);
+    }
+
+    // Fade hint text
+    var hint = document.getElementById('hint');
+    if (hint && time > 8) {
+      hint.style.opacity = Math.max(0, parseFloat(hint.style.opacity || 1) - 0.003);
+    }
+  }
+
+  // ─────────────────────────────────────
+  // INIT SEQUENCE
+  // ─────────────────────────────────────
+  function init() {
+    buildLineGeometry();
+    buildMidParticles();
+    buildStarfield();
+    buildComposer();
+    buildGUI();
+
+    // Hide loading overlay
+    setTimeout(function() {
+      var loading = document.getElementById('loading');
+      if (loading) loading.classList.add('hidden');
+    }, 600);
+
+    // Start animation
+    requestAnimationFrame(animate);
+  }
+
+  // Wait for DOM + scripts
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      // Small delay to ensure all CDN scripts have executed
+      setTimeout(init, 200);
+    });
+  } else {
+    setTimeout(init, 200);
+  }
+
+})();
+</script>
+</body>
+</html>

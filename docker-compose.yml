@@ -1,0 +1,11 @@
+version: "3.8"
+services:
+  claude-chat:
+    build: .
+    ports:
+      - "4567:4567"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped

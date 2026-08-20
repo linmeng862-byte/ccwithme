@@ -1,0 +1,14 @@
+{
+  "appId": "com.zzclaude.eclat",
+  "appName": "éclat",
+  "webDir": "static",
+  "backgroundColor": "#FBF7F0",
+  "ios": {
+    "contentInset": "never",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

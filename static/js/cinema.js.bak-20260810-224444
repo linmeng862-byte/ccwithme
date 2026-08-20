@@ -1,0 +1,966 @@
+// === 影院 v4 — Apple Vision Pro 玻璃拟态 + 片单 + B站扫码 ===
+// OWC (Open Watch Cinema) 在背后提供媒体管理 + MCP 画面
+// Chat-C 前端自己做 UI
+console.log('[cinema] v6 — + cove sensory layer (canvas + Qwen Vision)');
+
+var _cinemaBgImage = ''; // 粥粥的背景图 URL
+var _cinemaMessages = []; // [{sender, text, time}]
+var _cinemaFilmList = [];  // OWC 电影列表缓存
+var _cinemaRoomId = null;  // 当前 OWC 房间
+var _cinemaCurrentFilm = null;
+var _cinemaPollTimer = null;
+var _cinemaBvid = '';     // 当前 B站 bvid（证据层用）
+var _cinemaCid = '';      // 当前 B站 cid（证据层用）
+var _cinemaStateTimer = null; // 状态上报定时器
+
+function _cinemaDefaultBg() {
+  return 'linear-gradient(170deg, #F7F5F2 0%, #F0EDEA 30%, #EDE9E5 60%, #F2EFEC 100%)';
+}
+
+// =========== 面板生命周期 ===========
+
+function openCinemaPanel() {
+  // 每次打开都重建，确保拿到最新 UI
+  var old = $('cinemaPanel');
+  if (old) { old.remove(); }
+  var p = document.createElement('section');
+  p.id = 'cinemaPanel'; p.setAttribute('aria-hidden', 'true');
+  p.style.cssText = 'position:fixed;inset:0;z-index:80;display:none;flex-direction:column;color:#e0d5c1;overflow:hidden';
+  p.innerHTML = _cinemaBuildHTML();
+  document.body.appendChild(p);
+  _cinemaBindEvents();
+  $('cinemaPanel').style.display = 'flex';
+  $('cinemaPanel').setAttribute('aria-hidden', 'false');
+  _cinemaApplyBg();
+  _cinemaLoadFilms();
+  _cinemaRenderChat();
+  _cinemaRefreshBiliStatus();
+}
+
+function closeCinemaPanel() {
+  var p = $('cinemaPanel');
+  if (p) { p.style.display = 'none'; p.setAttribute('aria-hidden', 'true'); }
+  _cinemaStopPoll();
+  var v = $('cinemaVideo');
+  if (v) { v.pause(); v.src = ''; }
+  var ifr = $('cinemaBilibiliIframe');
+  if (ifr) ifr.src = '';
+}
+
+// =========== 背景 ===========
+
+function _cinemaApplyBg() {
+  var panel = $('cinemaPanel');
+  if (!panel) return;
+  if (_cinemaBgImage) {
+    panel.style.background = 'url(' + _cinemaBgImage + ') center/cover no-repeat';
+  } else {
+    panel.style.background = _cinemaDefaultBg();
+  }
+}
+
+// =========== 工具栏按钮生成器 ===========
+
+function _cinemaToolBtn(id, icon, title) {
+  return '<button id="' + id + '" class="cinema-tool-btn" style="width:42px;height:42px;border-radius:50%;' +
+    'border:1px solid rgba(255,255,255,.07);' +
+    'background:rgba(20,18,28,.3);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);' +
+    'color:rgba(255,255,255,.4);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;' +
+    'transition:all .25s;box-shadow:0 4px 20px rgba(0,0,0,.3)"' +
+    'title="' + title + '">' +
+    icon + '</button>';
+}
+
+// =========== HTML 结构 ===========
+
+function _cinemaBuildHTML() {
+  return '' +
+  // ── 环境光 ──
+  '<div style="position:absolute;inset:0;pointer-events:none;z-index:1;' +
+    'background:radial-gradient(ellipse 70% 50% at 50% 28%,rgba(200,150,120,.06) 0%,transparent 60%),' +
+    'radial-gradient(ellipse 50% 30% at 50% 88%,rgba(160,120,80,.04) 0%,transparent 60%)"></div>' +
+
+  // ── 关闭按钮（右上角）──
+  '<button id="cinemaCloseBtn" style="position:absolute;top:20px;right:24px;z-index:20;' +
+    'width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,255,255,.08);' +
+    'background:rgba(0,0,0,.2);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);' +
+    'color:rgba(255,255,255,.5);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;' +
+    'transition:all .2s;box-shadow:0 4px 20px rgba(0,0,0,.3)"' +
+    'onmouseenter="this.style.background=\'rgba(255,255,255,.06)\';this.style.color=\'rgba(255,255,255,.85)\'"' +
+    'onmouseleave="this.style.background=\'rgba(0,0,0,.2)\';this.style.color=\'rgba(255,255,255,.5)\'"' +
+    'title="关灯离场">✕</button>' +
+
+  // ── 主布局 ──
+  '<div style="position:relative;z-index:5;display:flex;flex-direction:column;height:100%;padding:16px 20px 20px">' +
+
+    // ═══════ 媒体区域 ═══════
+    '<div style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;padding-top:4px">' +
+
+      // 媒体窗口 — 大圆角影院框
+      '<div id="cinemaPlayerArea" style="width:100%;max-width:680px;aspect-ratio:16/9;border-radius:40px;overflow:hidden;position:relative;' +
+        'background:linear-gradient(180deg,rgba(255,255,255,.03) 0%,rgba(18,16,26,.25) 30%,rgba(12,10,20,.35) 100%);' +
+        'backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);' +
+        'border:1px solid rgba(255,255,255,.05);' +
+        'box-shadow:0 24px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.05),0 0 140px rgba(160,120,80,.04)">' +
+
+        // 影院黑边 (letterbox)
+        '<div style="position:absolute;inset:0;z-index:0;pointer-events:none;' +
+          'box-shadow:inset 0 10% 28px -14px rgba(0,0,0,.9),inset 0 -10% 28px -14px rgba(0,0,0,.9)"></div>' +
+
+        // 占位符 — 含 URL 输入
+        '<div id="cinemaPlaceholder" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:2;padding:20px">' +
+          '<div style="width:56px;height:56px;border-radius:50%;' +
+            'background:radial-gradient(circle,rgba(200,150,120,.1) 0%,transparent 70%);' +
+            'display:flex;align-items:center;justify-content:center">' +
+            '<span style="font-size:24px;opacity:.25">▶</span>' +
+          '</div>' +
+          '<span style="font:300 14px/1.5 var(--font-sans);color:rgba(255,255,255,.25);letter-spacing:.03em">选一部电影，或粘贴链接</span>' +
+          // URL 输入 — 在播放器中央
+          '<div style="display:flex;gap:8px;width:100%;max-width:420px">' +
+            '<input id="cinemaUrlInput" type="text" placeholder="粘贴 B站链接 / 视频直链…" style="flex:1;padding:12px 18px;border-radius:24px;' +
+              'border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);' +
+              'backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);' +
+              'color:#e8ddd0;font-size:13px;outline:none;' +
+              'box-shadow:inset 0 1px 0 rgba(255,255,255,.04);transition:border .25s"' +
+              'onfocus="this.style.borderColor=\'rgba(200,150,120,.35)\'"' +
+              'onblur="this.style.borderColor=\'rgba(255,255,255,.1)\'">' +
+            '<button id="cinemaPlayUrlBtn" style="padding:12px 24px;border-radius:24px;border:1px solid rgba(255,255,255,.1);' +
+              'background:rgba(200,150,100,.12);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);' +
+              'color:#f0e6d3;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;' +
+              'transition:all .2s;box-shadow:0 4px 16px rgba(0,0,0,.25)"' +
+              'onmouseenter="this.style.background=\'rgba(200,150,100,.22)\'"' +
+              'onmouseleave="this.style.background=\'rgba(200,150,100,.12)\'">▶ 播放</button>' +
+          '</div>' +
+          '<span style="font:300 11px/1 var(--font-sans);color:rgba(255,255,255,.15)">B站 · 本地文件 · 直链</span>' +
+        '</div>' +
+
+        // 视频播放器
+        '<video id="cinemaVideo" controls playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:3" preload="metadata"></video>' +
+
+        // B站 iframe
+        '<iframe id="cinemaBilibiliIframe" style="position:absolute;inset:0;width:100%;height:100%;border:0;display:none;z-index:3" allow="autoplay;fullscreen;encrypted-media" allowfullscreen></iframe>' +
+      '</div>' +
+
+      // ── 浮动工具栏 ──
+      '<div style="display:flex;gap:10px;margin-top:16px;z-index:10;position:relative;align-items:center">' +
+        _cinemaToolBtn('cinemaLibraryBtn', '📄', '片库') +
+        _cinemaToolBtn('cinemaImageBtn', '🖼', '背景') +
+        _cinemaToolBtn('cinemaRefreshBtn', '↻', '刷新') +
+        _cinemaToolBtn('cinemaFavBtn', '♥', '收藏') +
+        _cinemaToolBtn('cinemaBiliBtn', '📺', 'B站登录') +
+        _cinemaToolBtn('cinemaChatToggleBtn', '💬', '聊天') +
+      '</div>' +
+    '</div>' +
+
+    // ═══════ 对话面板 — iOS 液态玻璃 ═══════
+    '<div id="cinemaChatPanel" style="flex:1;display:none;flex-direction:column;margin-top:14px;min-height:0;' +
+      'border-radius:24px;overflow:hidden;' +
+      'background:linear-gradient(180deg,rgba(255,255,255,.04) 0%,rgba(20,18,28,.2) 30%,rgba(20,18,28,.3) 100%);' +
+      'backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);' +
+      'border:1px solid rgba(255,255,255,.06);' +
+      'box-shadow:0 16px 48px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.04)">' +
+
+      // 头部 — 同伴名字 + 状态
+      '<div style="flex:none;display:flex;align-items:center;justify-content:space-between;padding:14px 20px;' +
+        'border-bottom:1px solid rgba(255,255,255,.03)">' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+          '<span style="font-size:14px;opacity:.6">💬</span>' +
+          '<span style="font:500 13px/1 var(--font-sans);color:rgba(255,255,255,.55);letter-spacing:.02em">小克</span>' +
+          '<span id="cinemaStatus" style="font:400 11px/1 var(--font-sans);color:rgba(255,255,255,.3);margin-left:2px">准备中…</span>' +
+        '</div>' +
+      '</div>' +
+
+      // 消息区 — 故事段落风格
+      '<div id="cinemaChatList" style="flex:1;overflow-y:auto;padding:24px 20px;display:flex;flex-direction:column;gap:20px">' +
+        '<div style="text-align:center;padding:24px;color:rgba(255,255,255,.12);font:300 14px/1.6 var(--font-sans)">' +
+          '这一刻想聊点什么…' +
+        '</div>' +
+      '</div>' +
+
+      // 输入栏 — 底部浮动玻璃
+      '<div style="flex:none;padding:10px 14px 14px;border-top:1px solid rgba(255,255,255,.02)">' +
+        '<div style="display:flex;gap:8px;align-items:center;padding:3px 3px 3px 16px;border-radius:24px;' +
+          'background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);' +
+          'backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);' +
+          'box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 0 0 1px rgba(200,150,120,.02)">' +
+          '<input id="cinemaChatInput" type="text" placeholder="这一刻想聊点什么…" maxlength="500" style="flex:1;padding:9px 0;' +
+            'border:none;background:transparent;color:#e0d5c1;font-size:14px;outline:none;' +
+            'font-family:var(--font-sans);letter-spacing:.01em">' +
+          '<button id="cinemaChatSend" style="flex:none;width:38px;height:38px;border-radius:50%;border:none;' +
+            'background:rgba(200,150,100,.12);color:rgba(255,255,255,.4);font-size:16px;cursor:pointer;' +
+            'display:flex;align-items:center;justify-content:center;transition:all .2s"' +
+            'onmouseenter="this.style.background=\'rgba(200,150,100,.25)\';this.style.color=\'rgba(255,255,255,.8)\'"' +
+            'onmouseleave="this.style.background=\'rgba(200,150,100,.12)\';this.style.color=\'rgba(255,255,255,.4)\'">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>' +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+  '</div>' +
+
+  // ═══════ 片库 — 居中浮动玻璃面板 ═══════
+  '<div id="cinemaLibraryBackdrop" style="position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;' +
+    'background:rgba(0,0,0,.35);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
+    'opacity:0;transition:opacity .3s"' +
+    'onclick="if(event.target===this) _cinemaCloseLibrary()">' +
+
+    // 主面板
+    '<div id="cinemaLibrary" style="width:min(520px,92vw);max-height:80vh;display:flex;flex-direction:column;' +
+      'border-radius:28px;overflow:hidden;' +
+      'background:linear-gradient(180deg,rgba(255,255,255,.05) 0%,rgba(18,16,26,.22) 25%,rgba(14,12,22,.32) 100%);' +
+      'backdrop-filter:blur(48px) saturate(180%);-webkit-backdrop-filter:blur(48px) saturate(180%);' +
+      'border:1px solid rgba(255,255,255,.08);' +
+      'box-shadow:0 32px 80px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);' +
+      'transform:translateY(12px);transition:transform .35s cubic-bezier(.4,0,.2,1)">' +
+
+      // 头部
+      '<div style="flex:none;padding:24px 24px 12px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+            '<span style="font-size:18px;opacity:.7">🎬</span>' +
+            '<span style="font:600 18px/1 var(--font-sans);color:rgba(255,255,255,.75);letter-spacing:.02em">片单</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px">' +
+            '<button id="cinemaRescanBtn" style="font:400 12px/1 var(--font-sans);padding:7px 16px;border-radius:16px;' +
+              'border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:rgba(255,255,255,.45);cursor:pointer;' +
+              'transition:all .2s"' +
+              'onmouseenter="this.style.background=\'rgba(255,255,255,.08)\'"' +
+              'onmouseleave="this.style.background=\'rgba(255,255,255,.04)\'">扫描</button>' +
+            '<button id="cinemaLibraryCloseBtn" style="width:32px;height:32px;border-radius:50%;' +
+              'border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);color:rgba(255,255,255,.45);font-size:18px;cursor:pointer;' +
+              'display:flex;align-items:center;justify-content:center;transition:all .2s"' +
+              'onmouseenter="this.style.background=\'rgba(255,255,255,.08)\'"' +
+              'onmouseleave="this.style.background=\'rgba(255,255,255,.03)\'">✕</button>' +
+          '</div>' +
+        '</div>' +
+        '<p style="margin:0;font:300 13px/1.5 var(--font-sans);color:rgba(255,255,255,.3);letter-spacing:.01em">' +
+          '继续观看、回到观影会话、整理看过的片子。' +
+        '</p>' +
+      '</div>' +
+
+      // 电影列表
+      '<div id="cinemaFilmList" style="flex:1;overflow-y:auto;padding:4px 20px 12px">' +
+        '<div style="padding:32px 8px;text-align:center;font:300 14px/1.6 var(--font-sans);color:rgba(255,255,255,.2)">' +
+          '把电影放进<br><code style="font:400 12px/1.4 monospace;color:rgba(200,160,120,.45)">local-data/media</code><br>然后点扫描' +
+        '</div>' +
+      '</div>' +
+
+      // 底部上传区
+      '<div style="flex:none;padding:4px 20px 20px">' +
+        '<div id="cinemaDropZone" style="padding:16px;border:1px dashed rgba(255,255,255,.06);' +
+          'border-radius:14px;text-align:center;cursor:pointer;transition:all .2s">' +
+          '<span style="font:400 13px/1 var(--font-sans);color:rgba(255,255,255,.2)">' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:-4px;margin-right:4px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>' +
+            '拖拽或点击上传视频' +
+          '</span>' +
+        '</div>' +
+        '<input id="cinemaFileInput" type="file" accept="video/*,.mp4,.mkv,.mov,.webm,.m4v" style="display:none">' +
+        '<input id="cinemaImageInput" type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp" style="display:none">' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+// =========== 片库开关 ===========
+
+function _cinemaOpenLibrary() {
+  var backdrop = $('cinemaLibraryBackdrop');
+  var panel = $('cinemaLibrary');
+  if (!backdrop) return;
+  backdrop.style.display = 'flex';
+  // 强制回流后播放动画
+  backdrop.offsetHeight;
+  backdrop.style.opacity = '1';
+  if (panel) { panel.style.transform = 'translateY(0)'; }
+  _cinemaLoadFilms();
+}
+
+function _cinemaCloseLibrary() {
+  var backdrop = $('cinemaLibraryBackdrop');
+  var panel = $('cinemaLibrary');
+  if (!backdrop) return;
+  backdrop.style.opacity = '0';
+  if (panel) { panel.style.transform = 'translateY(12px)'; }
+  setTimeout(function() {
+    if (backdrop.style.opacity === '0') {
+      backdrop.style.display = 'none';
+    }
+  }, 300);
+}
+
+// =========== 事件绑定 ===========
+
+function _cinemaBindEvents() {
+  $('cinemaCloseBtn').onclick = function() {
+    closeCinemaPanel();
+    document.querySelectorAll('.home-nav-item').forEach(function(x) { x.classList.remove('active'); });
+    var homeBtn = document.querySelector('[data-page="home"]');
+    if (homeBtn) homeBtn.classList.add('active');
+  };
+  $('cinemaRefreshBtn').onclick = _cinemaLoadFilms;
+  $('cinemaRescanBtn').onclick = _cinemaRescan;
+  $('cinemaPlayUrlBtn').onclick = _cinemaPlayUrl;
+  $('cinemaUrlInput').onkeydown = function(e) { if (e.key === 'Enter') _cinemaPlayUrl(); };
+
+  $('cinemaChatSend').onclick = _cinemaSendChat;
+  $('cinemaChatInput').onkeydown = function(e) { if (e.key === 'Enter') _cinemaSendChat(); };
+
+  // 上传
+  $('cinemaDropZone').onclick = function() { $('cinemaFileInput').click(); };
+  $('cinemaFileInput').onchange = _cinemaHandleUpload;
+
+  // 图片上传
+  $('cinemaImageBtn').onclick = function() { $('cinemaImageInput').click(); };
+  $('cinemaImageInput').onchange = _cinemaHandleImageUpload;
+
+  // 拖拽
+  var dz = $('cinemaDropZone');
+  if (dz) {
+    dz.addEventListener('dragover', function(e) { e.preventDefault(); dz.style.borderColor = 'rgba(200,150,100,.4)'; });
+    dz.addEventListener('dragleave', function() { dz.style.borderColor = 'rgba(255,255,255,.06)'; });
+    dz.addEventListener('drop', function(e) {
+      e.preventDefault();
+      dz.style.borderColor = 'rgba(255,255,255,.06)';
+      var file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('video/')) {
+        _cinemaUploadFile(file);
+      }
+    });
+  }
+
+  // 片库 — 居中浮动面板
+  var libBtn = $('cinemaLibraryBtn');
+  var libClose = $('cinemaLibraryCloseBtn');
+  if (libBtn) { libBtn.onclick = _cinemaOpenLibrary; }
+  if (libClose) { libClose.onclick = _cinemaCloseLibrary; }
+
+  // 聊天面板切换
+  var chatToggle = $('cinemaChatToggleBtn');
+  var chatPanel = $('cinemaChatPanel');
+  if (chatToggle && chatPanel) {
+    chatToggle.onclick = function() {
+      var isHidden = chatPanel.style.display === 'none';
+      chatPanel.style.display = isHidden ? 'flex' : 'none';
+      chatToggle.style.color = isHidden ? 'rgba(255,255,255,.4)' : 'rgba(200,150,100,.7)';
+    };
+  }
+
+  // 收藏按钮（占位）
+  var favBtn = $('cinemaFavBtn');
+  if (favBtn) {
+    favBtn.onclick = function() {
+      favBtn.style.color = 'rgba(220,120,120,.7)';
+      setTimeout(function() { favBtn.style.color = 'rgba(255,255,255,.4)'; }, 800);
+    };
+  }
+
+  // B站扫码登录
+  var biliBtn = $('cinemaBiliBtn');
+  if (biliBtn) {
+    biliBtn.onclick = showBilibiliLogin;
+    // 检查登录状态，更新按钮颜色
+    fetch('/api/bilibili/status')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.loggedIn && biliBtn) { biliBtn.style.color = 'rgba(150,200,180,.6)'; biliBtn.title = 'B站已登录'; }
+      });
+  }
+
+  // 工具栏 hover 效果
+  var toolBtns = document.querySelectorAll('.cinema-tool-btn');
+  for (var i = 0; i < toolBtns.length; i++) {
+    toolBtns[i].addEventListener('mouseenter', function() {
+      this.style.background = 'rgba(255,255,255,.06)';
+      this.style.color = 'rgba(255,255,255,.7)';
+      this.style.transform = 'translateY(-2px)';
+    });
+    toolBtns[i].addEventListener('mouseleave', function() {
+      this.style.background = 'rgba(20,18,28,.3)';
+      this.style.color = 'rgba(255,255,255,.4)';
+      this.style.transform = 'translateY(0)';
+    });
+  }
+
+  // 视频播放时间更新 → 同步 OWC + 保存本地进度
+  var v = $('cinemaVideo');
+  if (v) {
+    v.addEventListener('timeupdate', function() {
+      if (_cinemaRoomId && v.currentTime) {
+        _cinemaSyncPlayback(v.currentTime * 1000);
+      }
+      // 每 5 秒保存一次观看进度
+      if (_cinemaCurrentFilm && v.currentTime && !v._lastProgressSave || (v.currentTime - (v._lastProgressSave || 0) > 5)) {
+        v._lastProgressSave = v.currentTime;
+        _cinemaSaveProgress(_cinemaCurrentFilm.id || _cinemaCurrentFilm.media_id, v.currentTime, v.duration || 0);
+        // 证据层：每 5 秒上报一次播放状态
+        if (v.currentTime && !v._lastStateReport || (v.currentTime - (v._lastStateReport || 0) > 5)) {
+          v._lastStateReport = v.currentTime;
+          _cinemaReportState(v);
+        }
+      }
+    });
+  }
+
+  // 注入动画 CSS（仅一次）
+  if (!document.getElementById('cinema-anim-style')) {
+    var st = document.createElement('style');
+    st.id = 'cinema-anim-style';
+    st.textContent = '@keyframes cinemaCardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}';
+    document.head.appendChild(st);
+  }
+}
+
+// =========== 电影库 ===========
+
+function _cinemaLoadFilms() {
+  var status = $('cinemaStatus');
+  if (status) status.textContent = '加载中…';
+
+  fetch('/api/owc/api/media')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      _cinemaFilmList = data.items || [];
+      var list = $('cinemaFilmList');
+      if (!list) return;
+      if (_cinemaFilmList.length === 0) {
+        list.innerHTML = '<div style="padding:32px 8px;text-align:center;font:300 14px/1.6 var(--font-sans);color:rgba(255,255,255,.2)">还没有电影<br>把文件放进 <code style="font:400 12px/1.4 monospace;color:rgba(200,160,120,.45)">local-data/media</code><br>然后点扫描</div>';
+      } else {
+        list.innerHTML = _cinemaFilmList.map(function(f, i) {
+          var ready = f.compatibilityStatus === 'ready';
+          var active = _cinemaCurrentFilm && (_cinemaCurrentFilm.id === f.id || _cinemaCurrentFilm.media_id === f.id);
+          var progress = _cinemaGetProgress(f.id || f.media_id);
+          var pct = progress ? Math.round((progress.currentTime / progress.duration) * 100) : 0;
+          var lastDate = progress ? new Date(progress.lastWatched).toLocaleDateString('zh-CN', {month:'short',day:'numeric'}) : '';
+          // 电影卡片 — 玻璃拟态
+          return '<div class="cinema-film-card" data-idx="' + i + '" style="' +
+            'display:flex;gap:14px;padding:14px;border-radius:18px;cursor:pointer;margin-bottom:10px;' +
+            'background:' + (active ? 'rgba(200,150,100,.1)' : 'rgba(255,255,255,.03)') + ';' +
+            'border:1px solid ' + (active ? 'rgba(200,150,100,.2)' : 'rgba(255,255,255,.05)') + ';' +
+            'backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);' +
+            'transition:all .25s;' +
+            'animation:cinemaCardIn .35s ' + (i * 0.06) + 's both;' +
+            '" onmouseenter="this.style.background=\'' + (active ? 'rgba(200,150,100,.16)' : 'rgba(255,255,255,.06)') + '\';this.style.borderColor=\'rgba(255,255,255,.12)\';this.style.transform=\'translateY(-1px)\'" ' +
+            'onmouseleave="this.style.background=\'' + (active ? 'rgba(200,150,100,.1)' : 'rgba(255,255,255,.03)') + '\';this.style.borderColor=\'' + (active ? 'rgba(200,150,100,.2)' : 'rgba(255,255,255,.05)') + '\';this.style.transform=\'translateY(0)\'">' +
+            // 缩略图
+            '<div style="flex:none;width:80px;height:52px;border-radius:10px;overflow:hidden;' +
+              'background:linear-gradient(135deg,rgba(200,150,120,.15) 0%,rgba(160,120,200,.1) 50%,rgba(120,160,200,.1) 100%);' +
+              'display:flex;align-items:center;justify-content:center">' +
+              '<span style="font-size:22px;opacity:.4">' + (ready ? '🎬' : '📦') + '</span>' +
+            '</div>' +
+            // 信息区
+            '<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:4px">' +
+              '<div style="font:500 14px/1.3 var(--font-sans);color:rgba(255,255,255,.75);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _escHtml(f.title) + '</div>' +
+              '<div style="font:400 11px/1 var(--font-sans);color:rgba(255,255,255,.3)">' +
+                (f.durationFormatted || '') +
+                (ready ? ' · 就绪' : '') +
+                (f.subtitleCount ? ' · CC:' + f.subtitleCount : '') +
+              '</div>' +
+              // 进度条
+              (pct > 0 ? '<div style="height:3px;border-radius:2px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:2px">' +
+                '<div style="height:100%;width:' + pct + '%;border-radius:2px;' +
+                  'background:linear-gradient(90deg,rgba(200,150,120,.3),rgba(200,150,120,.5));' +
+                  'transition:width .6s"></div></div>' : '') +
+              // 底部：日期 + 操作
+              '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">' +
+                '<span style="font:400 10px/1 var(--font-sans);color:rgba(255,255,255,.2)">' + (lastDate || '未观看') + '</span>' +
+                '<div style="display:flex;gap:6px" onclick="event.stopPropagation()">' +
+                  (pct > 0 ? '<button class="cinema-card-act" onclick="event.stopPropagation();_cinemaContinueFilm(' + i + ')" style="font:400 11px/1 var(--font-sans);padding:5px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:rgba(255,255,255,.35);cursor:pointer;transition:all .15s" onmouseenter="this.style.background=\'rgba(200,150,100,.15)\';this.style.color=\'rgba(255,255,255,.6)\'" onmouseleave="this.style.background=\'rgba(255,255,255,.03)\';this.style.color=\'rgba(255,255,255,.35)\'">续看</button>' : '') +
+                  '<button class="cinema-card-act" onclick="var idx=' + i + ';var f=_cinemaFilmList[idx];if(f){_cinemaDeleteFilm(f);_cinemaLoadFilms();}" style="font:400 11px/1 var(--font-sans);padding:5px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.06);background:transparent;color:rgba(255,255,255,.2);cursor:pointer;transition:all .15s" onmouseenter="this.style.color=\'rgba(255,100,100,.5)\'" onmouseleave="this.style.color=\'rgba(255,255,255,.2)\'">删除</button>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        // 绑定点击
+        var cards = list.querySelectorAll('.cinema-film-card');
+        cards.forEach(function(card) {
+          card.onclick = function() {
+            var idx = parseInt(card.dataset.idx);
+            var film = _cinemaFilmList[idx];
+            if (film) _cinemaPlayFilm(film);
+          };
+        });
+      }
+      if (status) status.textContent = _cinemaFilmList.length + ' 部影片';
+    })
+    .catch(function(e) {
+      if (status) status.textContent = '引擎离线';
+      console.error('[cinema] load films failed:', e);
+    });
+}
+
+function _cinemaRescan() {
+  var status = $('cinemaStatus');
+  if (status) status.textContent = '扫描中…';
+  fetch('/api/owc/api/media/rescan', { method: 'POST' })
+    .then(function() { _cinemaLoadFilms(); })
+    .catch(function() { if (status) status.textContent = '扫描失败'; });
+}
+
+// =========== 播放 ===========
+
+function _cinemaPlayFilm(film) {
+  _cinemaHideAllPlayers();
+  _cinemaCurrentFilm = film;
+
+  // 更新卡片高亮
+  _cinemaLoadFilms();
+
+  // 播放本地视频
+  var streamUrl = '/api/owc/api/stream/' + (film.id || film.media_id);
+  var video = $('cinemaVideo');
+  if (video) {
+    video.src = streamUrl;
+    video.style.display = 'block';
+    video.play().catch(function() {});
+    $('cinemaPlaceholder').style.display = 'none';
+  }
+
+  // 创建 OWC 房间
+  _cinemaOpenRoom(film.id || film.media_id);
+}
+
+function _cinemaPlayUrl() {
+  var url = ($('cinemaUrlInput').value || '').trim();
+  if (!url) return;
+
+  _cinemaHideAllPlayers();
+  _cinemaCurrentFilm = null;
+  _cinemaLoadFilms();
+  _cinemaCloseRoom();
+
+  if (/bilibili\.com|b23\.tv/i.test(url)) {
+    _cinemaPlayBilibili(url);
+  } else {
+    var video = $('cinemaVideo');
+    if (video) {
+      video.src = url;
+      video.style.display = 'block';
+      video.play().catch(function() {});
+      $('cinemaPlaceholder').style.display = 'none';
+    }
+  }
+}
+
+function _cinemaPlayBilibili(url) {
+  var bvMatch = url.match(/BV[\w]{10}/i);
+  var epMatch = url.match(/ep(\d+)/i);
+  if (bvMatch) {
+    _cinemaPlayBilibiliById(bvMatch[0], '');
+  } else if (epMatch) {
+    // 剧集链接 → 走解析获取 bvid + cid
+    _cinemaParseAndPlay(url);
+  } else {
+    _cinemaParseAndPlay(url);
+  }
+}
+
+function _cinemaParseAndPlay(url) {
+  fetch('/api/cinema/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: url })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.bvid) _cinemaPlayBilibiliById(d.bvid, d.cid || '');
+    else _cinemaFallback('B站链接解析失败，试试直接贴 BV 号');
+  }).catch(function() { _cinemaFallback('解析失败，试试直接贴 BV 号'); });
+}
+
+function _cinemaPlayBilibiliById(bvid, cid) {
+  var qs = 'bvid=' + bvid + (cid ? '&cid=' + cid : '');
+  // 先尝试通过后端 API 获取流地址（带 cookie，可播会员视频）
+  fetch('/api/bilibili/playback?' + qs)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.url) {
+        // 有直链 → HTML5 播放器（走后端代理绕过 Referer）
+        _cinemaHideAllPlayers();
+        var video = $('cinemaVideo');
+        if (video) {
+          video.src = '/api/bilibili/stream?url=' + encodeURIComponent(d.url);
+          video.style.display = 'block';
+          video.play().catch(function() {});
+          $('cinemaPlaceholder').style.display = 'none';
+          // 建房间 — 一起看
+          _cinemaCurrentFilm = { id: bvid, title: 'B站视频 ' + bvid };
+          _cinemaOpenRoom(bvid);
+          _cinemaBvid = bvid;
+          _cinemaCid = d.cid || cid || '';
+          // 立即上报一次状态
+          setTimeout(function() { _cinemaReportState(video); }, 500);
+        }
+      } else {
+        // 回退到嵌入式播放器
+        _cinemaLoadBilibiliEmbed(bvid, 1);
+      }
+    })
+    .catch(function() {
+      // 网络错误 → 回退嵌入式
+      _cinemaLoadBilibiliEmbed(bvid, 1);
+    });
+}
+
+function _cinemaLoadBilibiliEmbed(bvid, page) {
+  var iframe = $('cinemaBilibiliIframe');
+  if (!iframe) return;
+  iframe.src = '//player.bilibili.com/player.html?bvid=' + bvid + '&page=' + (page || 1) + '&high_quality=1&autoplay=1';
+  iframe.style.display = 'block';
+  iframe.onload = function() {
+    $('cinemaPlaceholder').style.display = 'none';
+  };
+}
+
+function _cinemaHideAllPlayers() {
+  var v = $('cinemaVideo'); if (v) { v.pause(); v.src = ''; v.style.display = 'none'; }
+  var ifr = $('cinemaBilibiliIframe'); if (ifr) { ifr.src = ''; ifr.style.display = 'none'; }
+}
+
+function _cinemaFallback(msg) {
+  var ph = $('cinemaPlaceholder');
+  if (ph) { ph.innerHTML = '<span style="font-size:14px;color:rgba(255,255,255,.4)">' + msg + '</span>'; ph.style.display = 'flex'; }
+}
+
+// =========== OWC 房间 ===========
+
+function _cinemaOpenRoom(mediaId) {
+  fetch('/api/owc/api/rooms/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mediaId: String(mediaId) })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.room) {
+      _cinemaRoomId = d.room.id;
+      console.log('[cinema] room opened:', _cinemaRoomId);
+    }
+  }).catch(function(e) {
+    console.error('[cinema] open room failed:', e);
+  });
+}
+
+function _cinemaCloseRoom() {
+  if (!_cinemaRoomId) return;
+  fetch('/api/owc/api/rooms/' + _cinemaRoomId + '/end', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mediaTimeMs: 0 })
+  }).catch(function() {});
+  _cinemaRoomId = null;
+}
+
+var _cinemaLastSync = 0;
+function _cinemaSyncPlayback(ms) {
+  if (!_cinemaRoomId || Math.abs(ms - _cinemaLastSync) < 3000) return;
+  _cinemaLastSync = ms;
+  fetch('/api/owc/api/rooms/' + _cinemaRoomId + '/playback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mediaTimeMs: Math.round(ms), playbackState: 'playing' })
+  }).catch(function() {});
+}
+
+function _cinemaStopPoll() {
+  if (_cinemaPollTimer) { clearInterval(_cinemaPollTimer); _cinemaPollTimer = null; }
+}
+
+// =========== 上传 ===========
+
+function _cinemaHandleUpload() {
+  var file = $('cinemaFileInput').files[0];
+  if (file) _cinemaUploadFile(file);
+}
+
+function _cinemaUploadFile(file) {
+  var status = $('cinemaStatus');
+  if (status) status.textContent = '上传中…';
+  var form = new FormData();
+  form.append('file', file);
+  fetch('/api/cinema/upload', { method: 'POST', body: form })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.url) {
+        $('cinemaUrlInput').value = window.location.origin + d.url;
+        _cinemaPlayUrl();
+      }
+      if (status) status.textContent = '上传完成';
+    }).catch(function() {
+      if (status) status.textContent = '上传失败';
+    });
+}
+
+// =========== 图片上传 ===========
+
+function _cinemaHandleImageUpload() {
+  var file = $('cinemaImageInput').files[0];
+  if (!file) return;
+  // 只接受图片
+  if (!file.type.startsWith('image/')) return;
+  _cinemaUploadImage(file);
+}
+
+function _cinemaUploadImage(file) {
+  var status = $('cinemaStatus');
+  if (status) status.textContent = '上传图片…';
+  var form = new FormData();
+  form.append('file', file);
+  fetch('/api/cinema/upload-image', { method: 'POST', body: form })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.url) {
+        _cinemaBgImage = window.location.origin + d.url;
+        _cinemaApplyBg();
+        if (status) status.textContent = '背景已更新';
+      }
+    }).catch(function() {
+      if (status) status.textContent = '上传失败';
+    });
+}
+
+// =========== 聊天 ===========
+
+function _cinemaRenderChat() {
+  var list = $('cinemaChatList');
+  if (!list) return;
+  if (_cinemaMessages.length === 0) {
+    list.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,.12);font:300 14px/1.6 var(--font-sans)">这一刻想聊点什么…</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (var i = 0; i < _cinemaMessages.length; i++) {
+    var m = _cinemaMessages[i];
+    var isMe = m.sender === '小克' || m.sender === 'Claude';
+    var el = document.createElement('div');
+    el.style.cssText = 'display:flex;flex-direction:column;gap:3px;line-height:1.8;padding:4px 0';
+    // 发送者名 — 小的提示
+    var nameEl = document.createElement('span');
+    nameEl.style.cssText = 'font-weight:500;font-size:11px;letter-spacing:.03em;color:' +
+      (isMe ? 'rgba(200,160,120,.5)' : 'rgba(180,160,220,.5)') + ';text-transform:uppercase';
+    nameEl.textContent = m.sender;
+    // 消息正文 — 大字体段落
+    var textEl = document.createElement('p');
+    textEl.style.cssText = 'margin:0;font:300 15px/1.75 var(--font-sans);color:rgba(255,255,255,.72);letter-spacing:.01em;' +
+      (isMe ? 'border-left:2px solid rgba(200,150,120,.2);padding-left:14px;' : '');
+    textEl.textContent = m.text;
+    el.appendChild(nameEl);
+    el.appendChild(textEl);
+    list.appendChild(el);
+  }
+  list.scrollTop = list.scrollHeight;
+}
+
+function _cinemaSendChat() {
+  var input = $('cinemaChatInput');
+  var text = (input.value || '').trim();
+  if (!text) return;
+
+  var name = (window._viewerName || localStorage.getItem('chatc_name') || '我').trim();
+  _cinemaMessages.push({ sender: name, text: text, time: Date.now() });
+  input.value = '';
+  _cinemaRenderChat();
+
+  // 转发到 Chat-C 主聊天
+  if (typeof appendChatMessage === 'function') {
+    appendChatMessage({ role: 'user', content: '[影院] ' + text });
+  }
+  // 如果有 OWC 房间，也发到房间消息
+  if (_cinemaRoomId) {
+    var video = $('cinemaVideo');
+    var currentMs = video ? Math.round(video.currentTime * 1000) : 0;
+    fetch('/api/owc/api/rooms/' + _cinemaRoomId + '/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senderName: name, content: text, mediaTimeMs: currentMs })
+    }).catch(function() {});
+  }
+}
+
+// =========== B站扫码登录 ===========
+
+function showBilibiliLogin() {
+  fetch('/api/bilibili/qr')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.qrimg) { _cinemaFallback('获取二维码失败'); return; }
+      // 玻璃遮罩
+      var ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)';
+      // 玻璃面板
+      var box = document.createElement('div');
+      box.style.cssText = 'width:min(340px,88vw);border-radius:28px;padding:32px 24px 24px;text-align:center;' +
+        'background:linear-gradient(180deg,rgba(255,255,255,.05) 0%,rgba(18,16,26,.25) 30%,rgba(14,12,22,.35) 100%);' +
+        'backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);' +
+        'border:1px solid rgba(255,255,255,.08);' +
+        'box-shadow:0 32px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);' +
+        'transform:translateY(8px);transition:transform .35s cubic-bezier(.4,0,.2,1)';
+      box.innerHTML =
+        '<div style="font:600 18px/1 var(--font-sans);color:rgba(255,255,255,.75);margin-bottom:6px;letter-spacing:.02em">登录 B站</div>' +
+        '<div style="font:300 13px/1.5 var(--font-sans);color:rgba(255,255,255,.3);margin-bottom:20px">用 Bilibili App 扫码</div>' +
+        '<img src="' + d.qrimg + '" style="width:220px;height:220px;border-radius:16px;background:#fff;padding:8px">' +
+        '<div class="bili-qr-status" style="margin-top:16px;font:400 13px/1 var(--font-sans);color:rgba(255,255,255,.35)">等待扫码…</div>';
+      ov.appendChild(box);
+      // 点击遮罩关闭
+      ov.onclick = function(e) {
+        if (e.target === ov) { clearInterval(iv); ov.remove(); }
+      };
+      document.body.appendChild(ov);
+      // 动画
+      setTimeout(function() { box.style.transform = 'translateY(0)'; }, 50);
+
+      // 轮询
+      var iv = setInterval(function() {
+        fetch('/api/bilibili/qr/check?key=' + d.key)
+          .then(function(r2) { return r2.json(); })
+          .then(function(s) {
+            var st = box.querySelector('.bili-qr-status');
+            if (!st) return;
+            if (s.state === 'ok') {
+              st.textContent = '登录成功';
+              st.style.color = 'rgba(150,200,150,.8)';
+              clearInterval(iv);
+              setTimeout(function() { ov.remove(); _cinemaRefreshBiliStatus(); }, 800);
+            } else if (s.state === 'expired') {
+              st.innerHTML = '二维码已过期，<span style="color:rgba(200,150,120,.6);cursor:pointer;text-decoration:underline">点此重试</span>';
+              st.querySelector('span').onclick = function() { ov.remove(); clearInterval(iv); showBilibiliLogin(); };
+              clearInterval(iv);
+            } else if (s.state === 'scanning') {
+              st.textContent = '已扫描，请在手机上确认';
+              st.style.color = 'rgba(200,180,140,.7)';
+            }
+          });
+      }, 2000);
+    })
+    .catch(function() { _cinemaFallback('获取二维码失败'); });
+}
+
+function _cinemaRefreshBiliStatus() {
+  fetch('/api/bilibili/status')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var status = $('cinemaStatus');
+      if (d.loggedIn && status) status.textContent = _cinemaFilmList.length + ' 部 · B站已登录';
+    });
+}
+
+// =========== 进度追踪 ===========
+
+function _cinemaGetProgress(filmId) {
+  try {
+    var raw = localStorage.getItem('cinema_progress_' + (filmId || ''));
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+}
+
+// 证据层：上报当前播放状态到后端
+function _cinemaReportState(video) {
+  if (!video) return;
+  var film = _cinemaCurrentFilm || {};
+  fetch('/api/cinema/state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: film.title || '',
+      bvid: _cinemaBvid || '',
+      cid: _cinemaCid || '',
+      currentTime: Math.round(video.currentTime || 0),
+      duration: Math.round(video.duration || 0),
+      source: _cinemaBvid ? 'bilibili' : 'local',
+      sourceUrl: video.src || ''
+    })
+  }).catch(function() {});
+}
+
+// Cove 感官层：截取当前视频帧 → 发给千问 Vision 读硬字幕
+function _cinemaCaptureFrame() {
+  var video = $('cinemaVideo');
+  if (!video || video.readyState < 2) return null;
+  try {
+    var canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // 压缩到 720p 以内，减少传输体积
+    if (canvas.width > 1280) {
+      var ratio = 1280 / canvas.width;
+      var small = document.createElement('canvas');
+      small.width = 1280;
+      small.height = Math.round(canvas.height * ratio);
+      small.getContext('2d').drawImage(canvas, 0, 0, small.width, small.height);
+      canvas = small;
+    }
+    return canvas.toDataURL('image/jpeg', 0.7);
+  } catch(e) { return null; }
+}
+
+// 问这一幕 — 截帧 + 调用千问 Vision
+function _cinemaAskScene(question) {
+  var frame = _cinemaCaptureFrame();
+  if (!frame) { _cinemaAddMessage('系统', '无法截取画面，请等视频开始播放后再问'); return; }
+  var video = $('cinemaVideo');
+  var t = video ? Math.round(video.currentTime) : 0;
+
+  // 临时显示
+  _cinemaAddMessage('系统', '正在看这一幕...');
+
+  fetch('/api/cinema/sensory', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ frame: frame, timestamp: t, question: question || '' })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.error) { _cinemaAddMessage('系统', d.error); return; }
+    _cinemaAddMessage('小克', d.text);
+  }).catch(function(e) {
+    _cinemaAddMessage('系统', '感官分析失败: ' + e.message);
+  });
+}
+
+// 向聊天区添加消息
+function _cinemaAddMessage(sender, text) {
+  _cinemaMessages.push({ sender: sender, text: text, time: Date.now() });
+  _cinemaRenderChat();
+}
+
+function _cinemaSaveProgress(filmId, currentTime, duration) {
+  try {
+    localStorage.setItem('cinema_progress_' + (filmId || ''), JSON.stringify({
+      currentTime: currentTime,
+      duration: duration,
+      lastWatched: Date.now()
+    }));
+  } catch(e) {}
+}
+
+function _cinemaContinueFilm(idx) {
+  var film = _cinemaFilmList[idx];
+  if (film) {
+    _cinemaPlayFilm(film);
+    // 如果有保存的进度，等视频加载后跳转
+    var progress = _cinemaGetProgress(film.id || film.media_id);
+    if (progress && progress.currentTime) {
+      var v = $('cinemaVideo');
+      if (v) {
+        var jump = function() {
+          if (v.readyState >= 2) { v.currentTime = progress.currentTime; }
+          else { setTimeout(jump, 300); }
+        };
+        setTimeout(jump, 500);
+      }
+    }
+    _cinemaCloseLibrary();
+  }
+}
+
+function _cinemaDeleteFilm(film) {
+  if (!film) return;
+  var id = film.id || film.media_id;
+  // 清除进度
+  try { localStorage.removeItem('cinema_progress_' + id); } catch(e) {}
+  // 调用 OWC 删除
+  fetch('/api/owc/api/media/' + id, { method: 'DELETE' }).catch(function() {});
+}
+
+// =========== 辅助 ===========
+
+function _escHtml(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}

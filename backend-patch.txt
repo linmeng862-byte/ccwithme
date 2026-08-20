@@ -1,0 +1,40 @@
+在 app.get('/api/music/search' 那行前面加：
+
+// 网易云登录状态 & cookie 持久化
+let neteaseCookie = '';
+const neteaseSessionPath = path.join(__dirname, 'data', 'netease-cookie.txt');
+try { neteaseCookie = fs.readFileSync(neteaseSessionPath, 'utf8').trim(); } catch(e) {}
+function saveNeteaseCookie(c) { neteaseCookie = c; try { fs.writeFileSync(neteaseSessionPath, c, 'utf8'); } catch(e) {} }
+function neteaseAuth() { return neteaseCookie ? { cookie: neteaseCookie } : {}; }
+
+app.get('/api/music/qr', async (req, res) => {
+  if (!neteaseApi) return res.status(500).json({ error: 'Netease API not available' });
+  try {
+    const kr = await neteaseApi.login_qr_key({});
+    const key = kr.body?.data?.unikey;
+    if (!key) return res.status(500).json({ error: 'Failed to get QR key' });
+    const qr = await neteaseApi.login_qr_create({ key, qrimg: true });
+    res.json({ key, qrimg: qr.body?.data?.qrimg || '', qrurl: qr.body?.data?.qrurl || '' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/music/qr/check', async (req, res) => {
+  const key = req.query.key || '';
+  if (!key || !neteaseApi) return res.json({ state: 'error' });
+  try {
+    const cr = await neteaseApi.login_qr_check({ key });
+    const code = cr.body?.code || 0;
+    const state = code === 800 ? 'expired' : code === 801 ? 'waiting' : code === 802 ? 'scanning' : code === 803 ? 'ok' : 'error';
+    if (state === 'ok' && cr.body?.cookie) {
+      saveNeteaseCookie(cr.body.cookie);
+    }
+    res.json({ state, message: cr.body?.message || '' });
+  } catch(e) { res.json({ state: 'error', message: e.message }); }
+});
+
+app.get('/api/music/status', (req, res) => {
+  res.json({ loggedIn: !!neteaseCookie });
+});
+
+还要把 /api/music/playback 里的 neteaseApi.song_url_v1 调用改成带 cookie 的：
+neteaseApi.song_url_v1({ id, level: 'standard', cookie: neteaseCookie })

@@ -1,0 +1,15 @@
+node_modules/
+data/
+参考/
+.codeflicker/
+package-lock.json
+*.log
+.DS_Store
+Thumbs.db
+# Capacitor
+ios/App/Pods/
+ios/App/build/
+android/
+*.bak.*
+backups/
+.capacitor/

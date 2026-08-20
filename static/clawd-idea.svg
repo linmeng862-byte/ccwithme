@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 -25 45 45">
+<defs><style>
+.ib-body{transform-origin:7.5px 10px;animation:ib-bob 2s infinite ease-in-out}
+.ib-bulb{animation:ib-glow 1.2s infinite ease-in-out}
+.ib-spark{animation:ib-spark var(--d,1.2s) var(--delay,0s) infinite ease-out;opacity:0}
+@keyframes ib-bob{0%,100%{transform:translateY(0)}30%{transform:translateY(-1px)}60%{transform:translateY(0)}}
+@keyframes ib-glow{0%,100%{opacity:.7}50%{opacity:1}}
+@keyframes ib-spark{0%,50%,100%{opacity:0;transform:translate(0,0) scale(0)}20%{opacity:1;transform:translate(var(--tx,0),var(--ty,-4px)) scale(1)}40%{opacity:.5;transform:translate(var(--tx2,0),var(--ty2,-8px)) scale(.5)}}
+</style></defs>
+<!-- shadow -->
+<rect x="3" y="15" width="9" height="1" fill="#000000" opacity="0.5"/>
+<!-- legs -->
+<g fill="#DE886D"><rect x="3" y="11" width="1" height="4"/><rect x="5" y="11" width="1" height="4"/><rect x="9" y="11" width="1" height="4"/><rect x="11" y="11" width="1" height="4"/></g>
+<!-- body -->
+<g class="ib-body">
+  <rect x="2" y="6" width="11" height="7" fill="#DE886D"/><!-- torso -->
+  <!-- left arm raised (thinking gesture) -->
+  <rect x="-1" y="6" width="2" height="2" fill="#DE886D"/>
+  <rect x="13" y="9" width="2" height="2" fill="#DE886D"/><!-- right arm -->
+  <!-- wide thinking eyes -->
+  <g fill="#000000"><rect x="3.5" y="7.5" width="1.5" height="2"/><rect x="10" y="7.5" width="1.5" height="2"/></g>
+  <!-- eye highlights -->
+  <g fill="#fff" opacity=".6"><rect x="3.8" y="7.8" width=".6" height=".6"/><rect x="10.3" y="7.8" width=".6" height=".6"/></g>
+</g>
+<!-- lightbulb -->
+<g class="ib-bulb">
+  <rect x="4.5" y="-4" width="2.5" height="1.5" rx=".3" fill="#D4A050"/>
+  <rect x="4" y="-5" width="3.5" height="1.5" fill="#FADB5F"/>
+  <rect x="3.5" y="-6" width="4.5" height="2" rx=".6" fill="#FADB5F"/>
+  <rect x="4" y="-7" width="3.5" height="1.2" rx=".5" fill="#FCE68A"/>
+  <rect x="4.5" y="-9" width="2.5" height="1.8" rx=".5" fill="#FADB5F"/>
+  <rect x="5" y="-10" width="1.5" height="1" rx=".4" fill="#FCE68A"/>
+</g>
+<!-- sparks -->
+<rect class="ib-spark" style="--d:1.2s;--delay:0s;--tx:-3px;--ty:-6px;--tx2:-5px;--ty2:-10px" x="1" y="-5" width="1" height="1" fill="#FCE68A"/>
+<rect class="ib-spark" style="--d:1.2s;--delay:.3s;--tx:3px;--ty:-5px;--tx2:5px;--ty2:-8px" x="10" y="-6" width=".8" height=".8" fill="#FCE68A"/>
+<rect class="ib-spark" style="--d:1.4s;--delay:.6s;--tx:-1px;--ty:-4px;--tx2:-3px;--ty2:-7px" x="13" y="-4" width=".7" height=".7" fill="#FADB5F"/>
+</svg>

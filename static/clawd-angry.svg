@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 -25 45 45">
+<defs><style>
+.ab-body{animation:ab-shake .35s infinite ease-in-out;transform-origin:7.5px 10px}
+.ab-mark{animation:ab-pop .8s infinite ease-in-out;transform-origin:7.5px -2px}
+@keyframes ab-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-.6px)}75%{transform:translateX(.6px)}}
+@keyframes ab-pop{0%,100%{transform:scale(1)}30%{transform:scale(1.25)}60%{transform:scale(.9)}}
+</style></defs>
+<!-- shadow -->
+<rect x="3" y="15" width="9" height="1" fill="#000000" opacity="0.5"/>
+<!-- legs -->
+<g fill="#DE886D"><rect x="3" y="11" width="1" height="4"/><rect x="5" y="11" width="1" height="4"/><rect x="9" y="11" width="1" height="4"/><rect x="11" y="11" width="1" height="4"/></g>
+<!-- body -->
+<g class="ab-body">
+  <rect x="2" y="6" width="11" height="7" fill="#DE886D"/><!-- torso -->
+  <rect x="0" y="9" width="2" height="2" fill="#DE886D"/><!-- left arm -->
+  <rect x="13" y="9" width="2" height="2" fill="#DE886D"/><!-- right arm -->
+  <!-- angry eyes: larger + furrowed brows -->
+  <g fill="#000000"><rect x="3.5" y="7.5" width="1.5" height="2.5"/><rect x="10" y="7.5" width="1.5" height="2.5"/></g>
+  <!-- furrowed brows -->
+  <g fill="#000000"><rect x="3" y="7" width="2.5" height=".5"/><rect x="9.5" y="7" width="2.5" height=".5"/></g>
+</g>
+<!-- anger mark -->
+<g class="ab-mark"><rect x="5" y="-6" width="5" height="2" fill="#E85D5D" rx=".5"/><rect x="6" y="-8" width="3" height="2.5" fill="#E85D5D" rx=".5"/><rect x="7" y="-10" width="1" height="3" fill="#E85D5D" rx=".3"/></g>
+</svg>

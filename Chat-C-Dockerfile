@@ -1,0 +1,22 @@
+FROM node:20-slim
+
+# 安装 better-sqlite3 编译依赖
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 先复制 package.json，利用 Docker 层缓存
+COPY package.json ./
+RUN npm install
+
+# 再复制源代码
+COPY . .
+
+# 创建数据目录
+RUN mkdir -p data/uploads data/projects data/uploads/tmp
+
+# ★ 不设 ENV PORT — 让 Zeabur 在运行时注入自己的端口
+# ★ 不设 EXPOSE — Zeabur 不用这个来路由
+
+ENV NODE_ENV=production
+CMD ["node", "backend.js"]

@@ -1,0 +1,316 @@
+/* ============================================================
+   journey.css — Journey Cards 旅行故事
+   从 journey-cards 参考实现提取，CSS 类名已加 jc- 前缀
+   配色适配 Chat-C 暖纸主题
+   ============================================================ */
+
+/* —— CSS 变量（带 jc- 前缀，不污染宿主） —— */
+:root {
+  --jc-bg: #FBF7F0;
+  --jc-surface: rgba(255,255,255,0.62);
+  --jc-text: #2a2723;
+  --jc-text-muted: #6b6357;
+  --jc-text-faint: #a89e8b;
+  --jc-rule: rgba(80,60,30,0.10);
+  --jc-accent: #D4957A;
+  --jc-bubble-user: #E9E3D8;
+  --jc-bubble-ai: #F3EFE7;
+  --jc-story-bg: #14100b;
+  --jc-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC", serif;
+  --jc-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --jc-sans: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+html[data-theme="dark"] {
+  --jc-bg: #1E1B18;
+  --jc-surface: rgba(36,36,40,0.55);
+  --jc-text: #E8E6E2;
+  --jc-text-muted: #A8A6A0;
+  --jc-text-faint: #6E6C66;
+  --jc-rule: rgba(255,255,255,0.08);
+  --jc-bubble-user: #23201D;
+  --jc-bubble-ai: #23201D;
+}
+
+/* —— 卡片容器（聊天流里那张） —— */
+.jc-card {
+  margin: 20px 0; width: 100%;
+  background: linear-gradient(150deg, rgba(243,239,231,0.7), rgba(233,227,216,0.55) 48%, rgba(243,239,231,0.65));
+  backdrop-filter: blur(40px) saturate(1.15) brightness(1.04);
+  -webkit-backdrop-filter: blur(40px) saturate(1.15) brightness(1.04);
+  border: 1px solid rgba(255,255,255,0.55);
+  border-radius: 26px;
+  padding: 18px 14px 14px;
+  box-shadow: 0 20px 50px -22px rgba(40,45,55,0.25), inset 0 1px 0 rgba(255,255,255,0.8);
+}
+html[data-theme="dark"] .jc-card {
+  background: linear-gradient(150deg, rgba(58,56,54,0.6), rgba(48,46,44,0.5) 48%, rgba(58,56,54,0.55));
+  border-color: rgba(255,255,255,0.12);
+  box-shadow: 0 20px 50px -22px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.15);
+}
+
+.jc-card-head { text-align: center; margin-bottom: 12px; }
+.jc-card-kicker {
+  font-family: var(--jc-mono); font-size: 9.5px; letter-spacing: 3px;
+  color: var(--jc-accent); font-weight: 700;
+}
+.jc-card-title {
+  font-family: var(--jc-serif); font-style: italic; font-weight: 600;
+  font-size: 20px; margin-top: 4px; color: var(--jc-text);
+}
+.jc-card-sub {
+  font-family: var(--jc-mono); font-size: 10px; letter-spacing: 1.5px;
+  color: var(--jc-text-faint); margin-top: 5px;
+}
+
+/* 照片墙舞台 */
+.jc-card-stage {
+  height: 204px; display: flex; align-items: center; justify-content: center;
+}
+@media (hover: hover) and (pointer: fine) {
+  .jc-card-stage { height: 284px; }
+}
+
+/* 一排竖条照片 */
+.jc-rail {
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px;
+  position: relative; max-width: 100%;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  padding: 4px;
+}
+.jc-rail > .jc-rail-item:first-child { margin-left: auto; }
+.jc-rail > .jc-rail-item:last-child  { margin-right: auto; }
+.jc-rail::-webkit-scrollbar { display: none; }
+.jc-rail.is-magnetic { overflow: visible; }
+
+.jc-rail-item {
+  flex: none; padding: 0; border: none; cursor: pointer;
+  width: 44px; height: 188px;
+  border-radius: 11px; overflow: hidden; position: relative;
+  background-size: cover; background-position: center;
+  box-shadow: 0 6px 16px -8px rgba(30,20,5,0.5), inset 0 0 0 1px rgba(255,255,255,0.06);
+  z-index: 1;
+  will-change: width, height;
+}
+.jc-rail-item::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, transparent 55%, rgba(20,14,5,0.55));
+  opacity: 0.85;
+}
+.jc-rail-item-label {
+  position: absolute; left: 0; right: 0; bottom: 9px; z-index: 2;
+  text-align: center; color: #fff; opacity: 0;
+  font-family: var(--jc-serif); font-style: italic; font-weight: 600;
+  font-size: 13px; text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  pointer-events: none; white-space: nowrap;
+}
+
+.jc-card-hint {
+  text-align: center; margin-top: 8px;
+  font-family: var(--jc-serif); font-style: italic;
+  font-size: 12px; color: var(--jc-text-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   全屏故事浮层
+   ══════════════════════════════════════════════════════════════ */
+.jc-story-overlay {
+  position: fixed; inset: 0; z-index: 120;
+  background: var(--jc-story-bg);
+  animation: jcFadeIn .3s ease;
+}
+@keyframes jcFadeIn { from { opacity: 0; } }
+
+.jc-story {
+  position: relative; width: 100%; height: 100%;
+  background: var(--jc-story-bg); overflow: hidden;
+  display: flex; flex-direction: column;
+  user-select: none; -webkit-user-select: none; touch-action: pan-y;
+}
+
+@media (min-width: 760px) and (min-height: 560px) {
+  .jc-story-overlay { display: grid; place-items: center; background: #0b0908; }
+  .jc-story {
+    width: min(430px, 92vw); height: min(880px, 92vh);
+    border-radius: 28px; box-shadow: 0 40px 90px -30px rgba(0,0,0,0.8);
+  }
+}
+
+/* 顶部关闭按钮 */
+.jc-story-top {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 12px 10px;
+  display: flex; align-items: center;
+  background: linear-gradient(rgba(0,0,0,0.5), transparent);
+}
+.jc-story-close {
+  width: 36px; height: 36px; border: none; border-radius: 50%;
+  background: transparent; color: #fff; cursor: pointer;
+  font-size: 26px; line-height: 1; display: grid; place-items: center;
+  filter: drop-shadow(0 1px 4px rgba(0,0,0,0.6));
+}
+
+/* 照片 + Ken Burns */
+.jc-story-photo { position: relative; flex: 1; overflow: hidden; }
+.jc-story-photo-bg {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  transform-origin: 58% 42%;
+  animation: jcKen 20s ease-in-out infinite alternate;
+}
+@keyframes jcKen { 0% { transform: scale(1.04); } 100% { transform: scale(1.16); } }
+@media (prefers-reduced-motion: reduce) { .jc-story-photo-bg { animation: none; } }
+
+/* 压暗层 */
+.jc-story-centerscrim {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% 45%, rgba(8,5,3,0.28), rgba(8,5,3,0.62) 78%),
+    linear-gradient(rgba(8,5,3,0.5), transparent 30%, transparent 62%, rgba(8,5,3,0.75));
+}
+
+/* 顶部地名 */
+.jc-story-cap {
+  position: absolute; top: calc(64px + env(safe-area-inset-top, 0px)); left: 0; right: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  pointer-events: none; text-align: center; padding: 0 20px;
+}
+.jc-story-cap-en {
+  font-family: var(--jc-mono); font-size: 10px; letter-spacing: 3px;
+  text-transform: uppercase; color: rgba(255,255,255,0.72);
+}
+.jc-story-cap-place {
+  border: none; background: transparent; padding: 0; cursor: pointer; pointer-events: auto;
+  font-family: var(--jc-serif); font-style: italic; font-weight: 700;
+  font-size: 22px; color: #fff; text-shadow: 0 1px 10px rgba(0,0,0,0.6);
+}
+.jc-replay-hint {
+  font-size: 14px; font-style: normal; color: var(--jc-accent);
+  opacity: 0.85; margin-left: 8px;
+}
+.jc-story-cap-date {
+  font-family: var(--jc-mono); font-size: 10.5px; letter-spacing: 1.5px;
+  color: rgba(255,255,255,0.6);
+}
+
+/* 正中念白 */
+.jc-story-narr {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 34px; pointer-events: none;
+}
+.jc-story-narr-line {
+  margin: 0; max-width: 100%;
+  font-family: var(--jc-serif); font-style: italic; font-weight: 500;
+  font-size: 21px; line-height: 2; letter-spacing: 0.3px;
+  color: #fff; text-align: center;
+  text-shadow: 0 2px 16px rgba(0,0,0,0.7), 0 1px 3px rgba(0,0,0,0.5);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.jc-story-narr-line.out { opacity: 0; transform: translateY(-8px); }
+.jc-story-narr-cursor {
+  display: inline-block; margin-left: 2px; font-style: normal;
+  color: var(--jc-accent); animation: jcBlink 1s steps(1) infinite;
+}
+@keyframes jcBlink { 0%,50% { opacity: 1; } 50.01%,100% { opacity: 0; } }
+
+/* 落定后的左下角段落 */
+.jc-story-settled {
+  position: absolute; left: 0; right: 0; z-index: 3;
+  bottom: calc(152px + env(safe-area-inset-bottom, 0px));
+  padding: 0 24px; pointer-events: auto;
+  animation: jcFadeIn 0.6s ease;
+}
+.jc-story-settled-note {
+  margin: 0; max-width: 72%; text-align: left;
+  font-family: var(--jc-serif); font-style: italic; font-weight: 500;
+  font-size: 12.5px; line-height: 1.7; letter-spacing: 0.2px;
+  color: rgba(255,255,255,0.9);
+  text-shadow: 0 1px 2px rgba(0,0,0,.9), 0 0 5px rgba(0,0,0,.45);
+  overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+}
+.jc-story-settled-note.expanded {
+  display: block; -webkit-line-clamp: unset;
+  max-height: 42vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.jc-story-settled-note.expanded::-webkit-scrollbar { display: none; }
+.jc-story-settled-more {
+  display: inline-block; margin-top: 6px;
+  font-family: var(--jc-sans); font-size: 11px; letter-spacing: 1px;
+  color: rgba(255,255,255,0.55);
+  background: none; border: none; padding: 0; cursor: pointer;
+}
+
+/* 底部播放器 */
+.jc-story-foot {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  padding: 0 22px calc(30px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(transparent, rgba(8,5,3,0.6));
+}
+.jc-story-player {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: 16px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.jc-story-player-play {
+  flex: none; width: 40px; height: 40px; border: none; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer; color: #fff;
+  background: var(--jc-accent);
+  box-shadow: 0 4px 12px -4px rgba(0,0,0,0.4);
+}
+.jc-story-player-play.is-loading { animation: jcPulse 1.1s ease-in-out infinite; }
+@keyframes jcPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+.jc-story-player-body { flex: 1; min-width: 0; }
+.jc-story-player-meta { display: flex; align-items: baseline; gap: 8px; }
+.jc-story-player-title {
+  font-family: var(--jc-serif); font-weight: 600; font-size: 14px; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.jc-story-player-artist {
+  font-family: var(--jc-mono); font-size: 10px; color: rgba(255,255,255,0.75);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.jc-story-eq { display: inline-flex; gap: 2px; align-items: flex-end; height: 11px; margin-left: auto; }
+.jc-story-eq i {
+  width: 2.5px; background: var(--jc-accent); border-radius: 1px;
+  animation: jcEq 0.9s ease-in-out infinite;
+}
+.jc-story-eq i:nth-child(1) { height: 5px;  animation-delay: -0.2s; }
+.jc-story-eq i:nth-child(2) { height: 10px; animation-delay: -0.5s; }
+.jc-story-eq i:nth-child(3) { height: 7px; }
+@keyframes jcEq { 0%,100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+.jc-story-player-track {
+  height: 3px; border-radius: 2px; margin: 8px 0 5px;
+  background: rgba(255,255,255,0.10); cursor: pointer;
+  position: relative; touch-action: none;
+}
+.jc-story-player-track::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -11px; bottom: -11px;
+}
+.jc-story-player-fill {
+  height: 100%; width: 100%; border-radius: 2px;
+  background: rgba(255,255,255,0.7);
+  transform-origin: left; transform: scaleX(0);
+  transition: transform 0.25s linear; will-change: transform;
+}
+.jc-story-player-track.dragging .jc-story-player-fill { transition: none; }
+.jc-story-player-times {
+  display: flex; justify-content: space-between;
+  font-family: var(--jc-mono); font-size: 9px; color: rgba(255,255,255,0.8);
+}
+
+/* 底部圆点 */
+.jc-story-dots {
+  position: absolute; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 0; right: 0; z-index: 12;
+  display: flex; gap: 7px; justify-content: center;
+}
+.jc-story-dots span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(255,255,255,0.4); cursor: pointer; transition: all 0.2s;
+}
+.jc-story-dots span.on { width: 20px; border-radius: 3px; background: var(--jc-accent); }
