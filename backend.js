@@ -1126,11 +1126,20 @@ app.get('/api/settings/tts', auth, (req, res) => {
              has_key: !!g('minimax_api_key') });
 });
 
-// MiniMax 的 t2a_v2 在国内站要求把 GroupId 放 query 上，国际站不用。
-// 配了就带，没配就不带 —— 这是 MiniMax 报鉴权失败最常见的原因。
-function minimaxUrl() {
-  const gid = db.prepare("SELECT value FROM settings WHERE key = 'minimax_group_id'").get()?.value;
-  return 'https://api.minimax.io/v1/t2a_v2' + (gid ? '?GroupId=' + encodeURIComponent(gid) : '');
+// MiniMax 有两个互不通用的站，key 只在自己那站有效：
+//   国内站 api.minimaxi.com（老域名 api.minimax.chat 也还活着）
+//   国际站 api.minimax.io
+// ⚠️ 2026-08-21 踩过：写死国际站，她拿国内站的 key 一测就是 "invalid api key"（code 2049），
+//    但同一把 key 在她电脑上是通的 —— 因为她电脑上调的是国内站。
+//    错误信息只说 key 无效，完全看不出是站点选错了，能卡很久。
+// 所以站点存进 settings，默认国内站；/api/tts/test 会两个站都试一遍，通了就把站记下来。
+// GroupId 国内站要放 query 上，国际站不用；配了就带，没配就不带。
+const MINIMAX_HOSTS = ['https://api.minimaxi.com', 'https://api.minimax.io'];
+function minimaxUrl(host) {
+  const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
+  const base = host || g('minimax_host') || MINIMAX_HOSTS[0];
+  const gid = g('minimax_group_id');
+  return base + '/v1/t2a_v2' + (gid ? '?GroupId=' + encodeURIComponent(gid) : '');
 }
 
 // 配置自检：不回显 key，只告诉她通没通、哪一步卡住
@@ -1138,24 +1147,37 @@ app.post('/api/tts/test', auth, async (req, res) => {
   const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   if (!g('minimax_api_key')) return res.json({ ok: false, step: 'key', message: '还没填 API Key' });
   if (!g('minimax_voice_id')) return res.json({ ok: false, step: 'voice', message: '还没填 Voice ID' });
+  // 已记住的站排前面先试，省一个来回；没记住就按 MINIMAX_HOSTS 的顺序。
+  const saved = g('minimax_host');
+  const hosts = saved ? [saved, ...MINIMAX_HOSTS.filter(h => h !== saved)] : MINIMAX_HOSTS;
+  let last = null;
   try {
-    const r = await fetch(minimaxUrl(), {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + g('minimax_api_key'), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'speech-2.8-hd', text: '在呢', stream: false,
-        voice_setting: { voice_id: g('minimax_voice_id'), speed: 1.0 },
-        audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 } }),
-      signal: AbortSignal.timeout(30000),
-    });
-    const body = await r.text();
-    if (!r.ok) return res.json({ ok: false, step: 'http', message: 'HTTP ' + r.status + '：' + body.slice(0, 300) });
-    let d; try { d = JSON.parse(body); } catch (e) { return res.json({ ok: false, step: 'parse', message: body.slice(0, 300) }); }
-    if (d.base_resp?.status_code !== 0) {
-      return res.json({ ok: false, step: 'minimax',
-        message: 'MiniMax 说：' + (d.base_resp?.status_msg || '未知错误') + '（code ' + d.base_resp?.status_code + '）' });
+    for (const host of hosts) {
+      const r = await fetch(minimaxUrl(host), {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + g('minimax_api_key'), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'speech-2.8-hd', text: '在呢', stream: false,
+          voice_setting: { voice_id: g('minimax_voice_id'), speed: 1.0 },
+          audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 } }),
+        signal: AbortSignal.timeout(30000),
+      });
+      const body = await r.text();
+      if (!r.ok) { last = { ok: false, step: 'http', message: 'HTTP ' + r.status + '：' + body.slice(0, 300) }; continue; }
+      let d; try { d = JSON.parse(body); } catch (e) { last = { ok: false, step: 'parse', message: body.slice(0, 300) }; continue; }
+      if (d.base_resp?.status_code !== 0) {
+        last = { ok: false, step: 'minimax',
+          message: 'MiniMax 说：' + (d.base_resp?.status_msg || '未知错误') + '（code ' + d.base_resp?.status_code + '）' };
+        continue;
+      }
+      // 通了 —— 把站记住，后面正式合成和流式播放都用这个站。
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('minimax_host', host);
+      const bytes = (d.data?.audio || d.audio || '').length / 2;
+      const where = host.includes('minimaxi') ? '国内站' : '国际站';
+      return res.json({ ok: true, message: '通了（' + where + '），试听音频 ' + Math.round(bytes / 1024) + ' KB' });
     }
-    const bytes = (d.data?.audio || d.audio || '').length / 2;
-    res.json({ ok: true, message: '通了，试听音频 ' + Math.round(bytes / 1024) + ' KB' });
+    // 两个站都不行。如果是鉴权失败，多半是 key 跟站对不上或者 key 抄错了。
+    if (last?.step === 'minimax') last.message += '　——国内站和国际站都试过了，都不认这把 key。';
+    res.json(last || { ok: false, step: 'unknown', message: '没拿到任何响应' });
   } catch (e) {
     res.json({ ok: false, step: 'network', message: e.message });
   }

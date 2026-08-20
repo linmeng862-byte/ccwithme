@@ -3684,8 +3684,9 @@ function saveMiniMaxConfig(){
   if(mk)body.minimax_api_key=mk;
   if(mv)body.minimax_voice_id=mv;
   if(mg)body.minimax_group_id=mg;
-  if(!Object.keys(body).length)return;
-  api('/api/settings/tts',{method:'POST',body:JSON.stringify(body)})
+  if(!Object.keys(body).length)return Promise.resolve();
+  // 返回 promise：测试按钮要等保存真的落库了再测，否则测的是上一把旧 key
+  return api('/api/settings/tts',{method:'POST',body:JSON.stringify(body)})
     .then(function(){var e=document.getElementById('drawerMiniMaxKey');if(e){e.value='';e.placeholder='MiniMax API Key（已保存）'}})
     .catch(function(){});
 }
@@ -3700,7 +3701,7 @@ function loadMiniMaxConfig(){
 loadMiniMaxConfig();
 // 自检：不回显 key，只告诉她通没通、卡在哪一步
 async function testMiniMax(btn){
-  saveMiniMaxConfig();
+  await saveMiniMaxConfig();
   var el=document.getElementById('drawerTtsTestResult');
   if(btn){btn.disabled=true;btn.textContent='测试中…'}
   if(el){el.style.display='block';el.style.color='var(--text-faint)';el.textContent='正在让他说一句「在呢」…'}
