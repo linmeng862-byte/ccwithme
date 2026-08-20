@@ -1145,9 +1145,11 @@ function _startRingPoll(){
   _ringPollTimer=setInterval(async function(){
     if(_incomingCall||_callWs)return;
     try{
-      var r=await fetch('/api/call/status');
+      // 加时间戳 + no-store 双保险：光靠后端的 Cache-Control 不够，
+      // 中间还隔着 Cloudflare，URL 每次不同它才不会合并成一条缓存。
+      var r=await fetch('/api/call/status?t='+Date.now(),{cache:'no-store'});
       var d=await r.json();
-      if(d.ringing&&Date.now()-d.since<30000){
+      if(d.ringing&&Date.now()-d.since<90000){
         _showIncomingCall();
       }
     }catch(e){}
@@ -1161,6 +1163,7 @@ _startRingPoll();
 // 上限 12 秒兜底：她要是一口气讲个不停，也别把他一直晾着。
 var _SPEECH_GAP=1500,_SPEECH_MAX=12000;
 var _speechBuf='',_speechTimer=null,_speechFirstAt=0;
+var _lastSpeechText='',_lastSpeechAt=0;
 function _queueSpeech(t){
   _speechBuf=_speechBuf?(_speechBuf+' '+t):t;
   if(!_speechFirstAt)_speechFirstAt=Date.now();
@@ -1173,6 +1176,14 @@ function _flushSpeech(){
   var t=_speechBuf.trim();_speechBuf='';_speechFirstAt=0;
   if(!t)return;
   if(!_callWs||_callWs.readyState!==WebSocket.OPEN)return;
+  // 同一句 6 秒内只发一次：他念回复的那一瞬间，麦克风偶尔会把她刚说完的话
+  // 再识别出来一遍（关麦/重开麦分散在 rec.onend 和 _speakWithMicPaused 两处，
+  // 时序一乱就漏）。在出口这儿兜住，比在两个地方各修一遍稳。
+  // 代价：她故意在 6 秒内说两遍同样的话，第二遍会被吞掉。
+  if(t===_lastSpeechText&&Date.now()-_lastSpeechAt<6000){
+    console.warn('[call] 丢弃重复识别:',t);return;
+  }
+  _lastSpeechText=t;_lastSpeechAt=Date.now();
   _callWs.send(JSON.stringify({type:'speech',text:t}));
   var bubble=document.createElement('div');bubble.className='msg-user';bubble.style.cssText='padding:8px 16px;margin:4px 0;background:var(--bubble-user);border-radius:14px;font:14px var(--font-sans);color:var(--text-primary);text-align:right';
   bubble.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg> '+escHtml(t);
@@ -1340,7 +1351,11 @@ async function _speakWithMicPaused(text){
 }
 async function _playStreamTTS(text){
   try{
-    var r=await fetch('/api/tts/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+    // 这个接口在 auth 中间件后面，不带 token 就是 401 —— 然后 catch 会把它
+    // 悄悄降级到 speechSynthesis，很多设备上那个是哑的，表现就是"接通了但没声音"。
+    var _h={'Content-Type':'application/json'};
+    if(state.token)_h.Authorization='Bearer '+state.token;
+    var r=await fetch('/api/tts/stream',{method:'POST',headers:_h,body:JSON.stringify({text:text})});
     if(!r.ok){throw new Error('stream endpoint returned '+r.status)}
     var reader=r.body.getReader();
     var decoder=new TextDecoder();
