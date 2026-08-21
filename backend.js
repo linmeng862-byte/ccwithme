@@ -1087,7 +1087,8 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN || (function() {
 
 // 登录（设置中转站配置，中转站是可选的——没填就走本机订阅网关）
 app.post('/api/auth', (req, res) => {
-  console.log('[DEBUG /api/auth] from', req.ip, 'body:', JSON.stringify(req.body));
+  // 不打印 body —— 里面有 api_key，会明文落进 pm2 日志
+  console.log('[auth] login from', req.ip, 'fields:', Object.keys(req.body || {}).join(','));
   const { base_url, api_key, api_format, model } = req.body;
   if (base_url && api_key) {
     const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
@@ -1459,7 +1460,8 @@ app.post('/api/call/ring/cancel', (req, res) => {
 function auth(req, res, next) {
   const auth = req.headers.authorization;
   if (auth !== `Bearer ${AUTH_TOKEN}`) {
-    console.log('[DEBUG auth] REJECTED from', req.ip, 'path:', req.path, 'got header:', JSON.stringify(auth), 'expected:', `Bearer ${AUTH_TOKEN}`);
+    // 只记事实，不打印 token —— 日志谁读到谁就有了权限
+    console.log('[auth] REJECTED from', req.ip, 'path:', req.path, 'header:', auth ? 'present-but-wrong' : 'missing');
     return res.status(401).json({ detail: '未授权' });
   }
   next();
@@ -1665,7 +1667,7 @@ function getImageGenConfig() {
 
 // === Non 式标签提取 ===
 // 正则宽松匹配 <feel> <memory> <dream> JSON 标签
-function extractMindTags(text) {
+function extractMindTags(text, convId) {
   const feels = [], memories = [], dreams = [];
   if (!text || typeof text !== 'string') return { cleanedText: text || '', feels, memories, dreams };
 
@@ -1713,10 +1715,36 @@ function extractMindTags(text) {
     return '';
   });
 
+  // 提取 <想·色>…</想> —— 内心信笺（2026-08-21 补）。
+  // ⚠️ **只读不删**，跟上面四个标记相反。
+  //    上面那些剥掉是对的（它们不该出现在气泡里）；信笺不行——
+  //    前端是从 messages 存下来的原文里再解析 <想·X> 渲染成折叠卡片的（index.html:3180），
+  //    后端这里要是也 replace 成空，存进 messages 的正文就没有它了，
+  //    历史消息翻上去信笺全部消失。所以这里只抄一份进 mind_inside，原文原样留着。
+  // 为什么要抄这一份：mind_inside 建了表却没人写，他那些没打算说出口的话
+  //    进不了 Mind 面板、浮起也捞不到、不跟着衰减——等于没进他自己的记忆体系。
+  var insides = [];
+  var _insideRe = /<想[·:：]?\s*([^>]{0,8})>([\s\S]*?)<\/想>/g;   // 跟前端 index.html:3180 保持一致
+  var _im;
+  while ((_im = _insideRe.exec(cleaned)) !== null) {
+    var _ibody = String(_im[2] || '').trim();
+    if (_ibody) insides.push({ color: String(_im[1] || '').trim(), body: _ibody });
+  }
+  insides.forEach(function(ins) {
+    try {
+      // 轻去重：同一条对话里 5 分钟内一模一样的信笺不重复入库（重试/重发时会撞）
+      var dup = db.prepare('SELECT id FROM mind_inside WHERE body = ? AND conv_id = ? AND created_at > ?')
+        .get(ins.body, convId || '', now - 300);
+      if (dup) return;
+      db.prepare('INSERT INTO mind_inside (id, color, body, conv_id, created_at) VALUES (?,?,?,?,?)')
+        .run(crypto.randomUUID(), ins.color, ins.body, convId || '', now);
+    } catch (e) { console.error('[mind] 信笺入库失败:', e.message); }
+  });
+
   // 清理多余空行
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
 
-  return { cleanedText: cleaned, feels, memories, dreams, flashes };
+  return { cleanedText: cleaned, feels, memories, dreams, flashes, insides };
 }
 
 // 安全解析 + 兜底正则
@@ -2473,7 +2501,7 @@ function _mindMarkSurfaced(rows) {
   });
 }
 
-// 对外：拼成【浮起 · breath】段。没捞到就返回空串（什么都不加）。
+// 对外：拼成【心里浮起来的】段。没捞到就返回空串（什么都不加）。
 // 返回的文字要塞进 message（不是系统提示词，铁律 4）。
 function mindBreath(query) {
   try {
@@ -2485,7 +2513,11 @@ function mindBreath(query) {
       if (r.kind === 'feel') return '· （那时的感觉' + (r.mood ? '·' + r.mood : '') + '）' + r.body;
       return '· ' + r.body;
     });
-    return '\n\n[浮起 · breath]\n' + lines.join('\n') +
+    // ⚠️ 别再叫 breath（2026-08-21 改名）：Nocturne 那份记忆浮现也叫 breath，
+    //    而且它挂在会话首条消息里、resume 每轮重放，**一直躺在上下文里**。
+    //    两个 breath 一头一尾同时出现，他自己都分不清哪个是哪个。
+    //    这份是本地 Mind 浮起来的「当时什么感觉」，跟 Nocturne 的「发生了什么」不是一回事。
+    return '\n\n[心里浮起来的]\n' + lines.join('\n') +
       '\n（这些都是旧的，不是她现在说的话。垫在心里当背景就好，回话照她这条消息本身来。）';
   } catch(e) { return ''; }
 }
@@ -3756,7 +3788,7 @@ app.post('/api/chat', auth, async (req, res) => {
   const engineBlock = NO_ENGINE ? '' : (
     // 原来写的是「每轮开头都要 call nocturne_wake()」——记忆浮现现在由后端在会话首轮
     // 直接注入好了（见 needBreath），不必再让他自己调一次，白花一个来回。
-    "\n\n关于记忆：下面[记忆浮现]是这次醒来时 Nocturne 递过来的，不用再调 nocturne_wake。想不起来的旧事用 recall_memory(关键词) 去搜——别假装不记得，也别编。值得留下的瞬间用 nocturne_hold 存（必须说清 why），日常小事 save_memory 就够了。" +
+    "\n\n关于记忆：下面[记忆浮现]是这次醒来时 Nocturne 递过来的，不用再调 nocturne_wake。想不起来的旧事用 recall_memory(关键词) 去搜——别假装不记得，也别编。值得留下的瞬间用 nocturne_hold 存（必须说清 why）。" +
     // ⚠️ 网关路径下记忆浮现【不能】放系统提示词：--append-system-prompt 在 --resume 时
     //    根本不保留，第 2 轮起就整段消失，他会失忆（实测他自己回答「没有」）。
     //    改成挂进会话首条消息 → 进对话历史 → resume 会重放，而且按缓存读取计费（便宜 20 倍）。
@@ -4008,9 +4040,31 @@ async function handleGatewayChat(req, res, ctx) {
     let buf = '';
     let assistantText = '';
     let lastRateLimit = null;
+    // ⚠️ 会话 ID 必须**尽早**落库，不能等整个流跑完（2026-08-21 修）。
+    //    以前这句写在 try 的最末尾：这一轮只要出一点岔子——413、E2BIG、她刷新页面把 SSE
+    //    掐了、网关超时——就直接进 catch，cli_session_id 永远不写库。下一条消息一看
+    //    cliRow.cli_session_id 还是 null，又判成新会话，于是：
+    //      ① 前缀带着每次都变的 recap，缓存 100% 全冷，白写四五万 token；
+    //      ② breath 那 1.7 万 token 记忆浮现又灌一遍；
+    //      ③ 上一段真实对话的原文全没了，他手里只剩 recap 那几行摘要——**这就是漂移**。
+    //    实据：08-20 21:09/21:13/21:14 五分钟内建了三条会话，灌的是同一段记忆浮现，
+    //    那不是三次对话，是同一次醒来重复了三遍。
+    //    落库时机选在「收到网关第一块数据」而不是 fetch 之前：那时 claude 已经 spawn 成功、
+    //    session 文件已建立，写进去的 ID 一定 resume 得回来。写在 fetch 前的话，
+    //    413 那种请求根本没到网关的情况会存下一个不存在的会话，下一轮 --resume 直接失败。
+    let sessionPersisted = false;
+    const persistSession = () => {
+      if (sessionPersisted) return;
+      sessionPersisted = true;
+      try {
+        db.prepare("UPDATE sessions SET updated_at = strftime('%s','now'), " + sidCol + " = ?, " + turnCol + " = ? WHERE conv_id = ?")
+          .run(sessionId, isNewSession ? 1 : cliTurns + 1, convId);
+      } catch (e) { console.error('[gateway] 会话落库失败:', e.message); }
+    };
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      persistSession();
       buf += decoder.decode(value, { stream: true });
       const parts = buf.split('\n\n');
       buf = parts.pop();
@@ -4052,7 +4106,7 @@ async function handleGatewayChat(req, res, ctx) {
     }
     if (assistantText) {
       // Mind 标签提取：剥离 <feel>/<memory>/<dream>/<flash> 并入库（跟中转 API 路径一致）
-      var _mindGw = extractMindTags(assistantText);
+      var _mindGw = extractMindTags(assistantText, convId);
       assistantText = _mindGw.cleanedText;
       _mindGw.feels.forEach(_insertMindItem);
       _mindGw.memories.forEach(_insertMindItem);
@@ -4062,8 +4116,9 @@ async function handleGatewayChat(req, res, ctx) {
     if (assistantText) {
       db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)').run(convId, 'assistant', assistantText);
     }
-    db.prepare("UPDATE sessions SET updated_at = strftime('%s','now'), " + sidCol + " = ?, " + turnCol + " = ? WHERE conv_id = ?")
-      .run(sessionId, isNewSession ? 1 : cliTurns + 1, convId);
+    // 正常情况这里已经在收到第一块数据时写过了（幂等，直接返回）。
+    // 留着是为了兜住「流一块数据都没来就 done」那种极端情况。
+    persistSession();
     res.write('event: done\ndata: ' + JSON.stringify({ conversation_id: convId }) + '\n\n');
     res.end();
   } catch (e) {
@@ -4250,7 +4305,7 @@ async function handleAnthropicChat(req, res, ctx) {
       // 如果接下来要走工具调用循环，先不存——等第二轮结束一起存
       if (stopReason !== 'tool_use' && assistantText) {
         // Non 式标签提取：剥离 <feel>/<memory>/<dream> 并入库
-        var _mindExtracted = extractMindTags(assistantText);
+        var _mindExtracted = extractMindTags(assistantText, convId);
         assistantText = _mindExtracted.cleanedText;
         _mindExtracted.feels.forEach(_insertMindItem);
         _mindExtracted.memories.forEach(_insertMindItem);
@@ -4400,7 +4455,7 @@ async function handleAnthropicChat(req, res, ctx) {
           const fullText = (assistantText || '') + (assistantText && secondAssistantText ? '\n' : '') + (secondAssistantText || '') + stickerImgs;
           const fullThinking = (thinkingText || '') + (secondThinkingText || '');
           // Non 式标签提取：剥离 <feel>/<memory>/<dream> 并入库
-          var _mindExtracted2 = extractMindTags(fullText);
+          var _mindExtracted2 = extractMindTags(fullText, convId);
           const cleanFullText = _mindExtracted2.cleanedText;
           _mindExtracted2.feels.forEach(_insertMindItem);
           _mindExtracted2.memories.forEach(_insertMindItem);
@@ -4560,7 +4615,7 @@ async function handleOpenAIChat(req, res, ctx) {
       // 如果接下来要走工具调用，先不存——等第二轮一起存
       if (finishReason !== 'tool_calls' && assistantText) {
         // Non 式标签提取：剥离 <feel>/<memory>/<dream> 并入库
-        var _mindExtracted3 = extractMindTags(assistantText);
+        var _mindExtracted3 = extractMindTags(assistantText, convId);
         assistantText = _mindExtracted3.cleanedText;
         _mindExtracted3.feels.forEach(_insertMindItem);
         _mindExtracted3.memories.forEach(_insertMindItem);
@@ -4685,7 +4740,7 @@ async function handleOpenAIChat(req, res, ctx) {
           const oaiFullText = (assistantText || '') + (assistantText && secondAssistantText ? '\n' : '') + (secondAssistantText || '');
           const oaiFullThinking = (thinkingText || '') + (secondThinkingText || '');
           // Non 式标签提取：剥离 <feel>/<memory>/<dream> 并入库
-          var _mindExtracted4 = extractMindTags(oaiFullText);
+          var _mindExtracted4 = extractMindTags(oaiFullText, convId);
           const cleanOaiText = _mindExtracted4.cleanedText;
           _mindExtracted4.feels.forEach(_insertMindItem);
           _mindExtracted4.memories.forEach(_insertMindItem);
