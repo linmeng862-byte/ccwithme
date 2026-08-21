@@ -43,27 +43,37 @@ TTL 解释不通。那次发生在探针装好之前。**这个反例是关键�
 **怎么继续**：网关里的 `[probe]` 挂着，她正常聊天就在收数据。
 攒十几轮，看断裂行的 `gap` 是不是全都 > 300s。全是就证实假说，出现短 gap 的就说明另有元凶。
 
-### 2. workplace（已定方案，未动工）
+### 2. workplace（**骨架全通了**，剩打磨）
 
-她要把 `project` 那套改造成「工作台」，跟主线分开：
+2026-08-21 已经不是"未动工"了。整条链路端到端验证过：
 
-| | 主线 | workplace |
-|---|---|---|
-| 谁 | Sonnet ——「他」 | **Opus** —— 干活的这个（她定的） |
-| 带什么 | breath + mind + 人格 | **只有 md，不带记忆不带 mind** |
-| 干嘛 | 陪她 | 改代码 |
-| model | `claude-sonnet-4-6` | opus |
-| 工具 | Read | Read/Write/Edit/Grep/Bash |
-| 会话 | `cli_session_id` | 新加一列，各走各的 |
+```
+前端 static/js/workplace.js  （抽屉里那个 workplace 按钮）
+  → backend.js  /api/workplace/{chat,mainline,diff,apply,reject}
+  → cc-gateway  POST /workplace   opus + 空 MCP + --tools Read/Write/Edit/Grep/Glob
+  → claude -p   cwd=/opt/ccwithme，path-jail.js 逐次审核
+```
 
-⚠️ **artifact 现在寄生在 `projects` 表里**——`index.html:681` 去找一个名叫 `Artifacts`
-的 project，把它的文件当 artifact 列。所以顶部那个 artcraft 和 project 面板底层是同一套东西。
-**要先给 artifact 拆一张自己的表，project 才腾得出来做 workplace。**
+**实测**：`{"message":"只回四个字：工作台通了"}` → `工作台通了`，
+usage `cost_usd 0.132 / cache_write 13096`（冷启动写的就是 CLAUDE.md 那 13k）。
 
-还要做：workplace 里能看见主线的实时消息（她发给 Sonnet 的东西，干活的这个要看得见）。
+已经有的：
+- 主线消息勾选（`/api/workplace/mainline`），原文后端按 id 回库里取，不信前端传的正文
+- 红绿 diff + 「确认并重启」/「还原」，**改动只落工作树，她不点就不 commit**
+- workplace 单独一份日额度 `usage_limits.workplace_daily_usd`（默认 $3），
+  `usage_log.source='workplace'` 分得清钱是谁花的
 
-**顺序**：artifact 拆表 → workplace 骨架 → 主线消息接进来 → 双线打磨。
-**建议等缓存那件事定案再动**，否则 workplace 的注入设计可能要返工。
+**artifact 拆表也做完了**（那是 workplace 的前置）：`artifacts` 自己一张表，
+API `/api/artifacts` 四件套，前端 `_loadArtifactsFromDB` 改读新表。
+2026-08-21 又补了最后一截：`create_artifact` 工具里**还留着**往 `projects` 建假项目、
+把正文写成 `project_files` 的旧路径，同一个作品会在两处各存一份而前端只读新表——
+已改成直接落 `artifacts` 表保底；`POST /api/artifacts` 的去重也从
+"title+content+conv_id" 改成 "title+content"，已有记录缺 `conv_id` 时补上，
+否则工具落的那条和前端 POST 的那条会重成两个。
+
+**还剩**：双线打磨。具体没定，等她用了再说。
+`static/js/workplace.js` 目前还是 untracked，跟 CLAUDE.md / backend.js /
+index.html / home.css 的改动一起躺在工作树里，**等她点确认**。
 
 ### 3. 小事
 

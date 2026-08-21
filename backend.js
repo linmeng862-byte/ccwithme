@@ -101,6 +101,21 @@ db.exec(`
     updated_at INTEGER DEFAULT (strftime('%s','now')),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
+  -- 作品集：聊天里生成的 HTML/SVG。
+  -- 以前它寄生在 projects 表里一个名叫 Artifacts 的 project 上，但那个 project
+  -- 从来没被建出来过，所以前端那段查询一直空转，作品只活在内存里、刷新就没了。
+  -- 2026-08-21 拆出来自己一张表。conv_id/msg_id 记着它是哪次对话生成的。
+  CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    language TEXT DEFAULT 'html',
+    content TEXT DEFAULT '',
+    conv_id TEXT,
+    msg_id INTEGER,
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    updated_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts(created_at DESC);
 `);
 
 // MiniMax 语音配置默认值
@@ -1111,6 +1126,27 @@ app.post('/api/settings', (req, res) => {
 // MiniMax TTS 配置保存
 // ⚠️ 这三个 tts 接口原本**没有 auth**，而域名是公网可达的 —— 谁都能刷她的 MiniMax 额度、
 //    甚至覆盖掉配置。补上。
+// === 语音用量记账（TTS/STT）===
+// MiniMax 按字符、Groq 按音频时长计费，两家费率都会变，所以不写死在代码里：
+// 从 settings 读 tts_usd_per_1k_chars / stt_usd_per_min，没配就是 0 ——
+// 只记用量、不编价格。宁可显示 $0，也不给一个看着精确其实是猜的数。
+function voiceRate(key) {
+  const v = db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : 0;
+}
+// units：tts = 字符数，stt = 音频秒数。复用 input_tokens 存，不给表加列。
+function logVoiceUsage(kind, units, ms) {
+  try {
+    const cost = kind === 'tts'
+      ? units / 1000 * voiceRate('tts_usd_per_1k_chars')
+      : units / 60   * voiceRate('stt_usd_per_min');
+    db.prepare(`INSERT INTO usage_log
+      (conv_id, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms, num_turns, source)
+      VALUES (?,?,?,0,0,0,?,1,?)`).run(kind, cost, Math.round(units) || 0, ms || 0, kind);
+  } catch (e) { console.error('[voice usage]', e.message); }
+}
+
 app.post('/api/settings/tts', auth, (req, res) => {
   const { minimax_api_key, minimax_voice_id, minimax_group_id } = req.body;
   const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
@@ -1203,7 +1239,8 @@ app.get('/api/settings/stt', auth, (req, res) => {
 // 语音识别：把已上传的语音文件转成文字。
 // 走 OpenAI 兼容的 multipart /audio/transcriptions —— Groq、OpenAI、中转站同一套。
 // webm/opus 这些容器上游直接吃，本机不需要 ffmpeg。
-async function transcribeUpload(uploadId) {
+async function transcribeUpload(uploadId, durSec) {
+  const _sttT0 = Date.now();
   const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   const baseUrl = g('stt_base_url'), apiKey = g('stt_api_key'), model = g('stt_model');
   if (!apiKey) throw new Error('未配置语音识别 API Key（抽屉 → API 配置 → 语音识别）');
@@ -1231,6 +1268,9 @@ async function transcribeUpload(uploadId) {
   const text = (data.text || data.result || '').trim();
   if (!text) throw new Error('没识别出内容');
 
+  // duration 优先用识别服务回报的，其次用语音气泡标签里的时长
+  logVoiceUsage('stt', Number(data.duration) || durSec || 0, Date.now() - _sttT0);
+
   // 存回 uploads，同一段语音不重复花钱识别
   try { db.prepare('UPDATE uploads SET transcript = ? WHERE id = ?').run(text, uploadId); } catch (e) {}
   return text;
@@ -1249,7 +1289,7 @@ async function expandVoiceTags(text) {
     let said;
     try {
       said = db.prepare('SELECT transcript FROM uploads WHERE id = ?').get(j.id)?.transcript
-        || await transcribeUpload(j.id);
+        || await transcribeUpload(j.id, (j.dur || '').split(':').reduce((a, b) => a * 60 + (+b || 0), 0));
     } catch (e) {
       console.warn('[stt] 识别失败 ' + j.id + ': ' + e.message);
       said = null;
@@ -1279,6 +1319,7 @@ app.post('/api/tts', auth, async (req, res) => {
   try {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: 'text required' });
+    const _ttsT0 = Date.now();
     const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
     const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
     if (!apiKey || !voiceId) return res.status(400).json({ error: '请先配置 MiniMax API Key 和 Voice ID' });
@@ -1302,6 +1343,8 @@ app.post('/api/tts', auth, async (req, res) => {
     if (data.base_resp?.status_code !== 0) {
       return res.status(500).json({ error: 'MiniMax TTS 失败: ' + (data.base_resp?.status_msg || 'unknown') });
     }
+    // 优先用 MiniMax 自己报的计费字符数，没有再退回本地长度
+    logVoiceUsage('tts', data.extra_info?.usage_characters ?? text.length, Date.now() - _ttsT0);
     // MiniMax 返回 hex 编码的音频
     if (data.data?.audio) {
       const audioBuf = Buffer.from(data.data.audio, 'hex');
@@ -1369,6 +1412,9 @@ app.post('/api/tts/stream', auth, async (req, res) => {
       res.end();
       return;
     }
+
+    // 流式拿不到 usage_characters，按送进去的文本长度算——MiniMax 也是按入参字符计费的
+    logVoiceUsage('tts', text.length, 0);
 
     // 发送采样率给前端
     res.write('data: ' + JSON.stringify({ type: 'meta', sampleRate: 24000 }) + '\n\n');
@@ -1584,6 +1630,13 @@ app.get('/api/sessions/:id/messages', auth, (req, res) => {
 const OMBRE_BRAIN_URL = 'https://ye-ombre-brain.zeabur.app';
 const CONTINUITY_URL = 'https://zzloveclaude.zeabur.app';
 const NOCTURNE_URL = 'https://core.zeabur.app';
+
+// 只掐“连不上”，不掐“正在说话”：拿到响应头就解除超时，长回复/带图的流不再被 120s 砍成 Fetch is aborted
+function _headTimeout(ms = 120000) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  return { signal: c.signal, clear: () => clearTimeout(t) };
+}
 
 // Nocturne MCP 调用辅助 —— 记忆库 (streamable-http)
 let _nocturneSessionId = null;
@@ -3455,24 +3508,31 @@ async function executeTool(name, input) {
       const artContent = input.content || '';
       const artLang = input.language || 'html';
       if (!artTitle || !artContent) return { error: 'title 和 content 不能为空' };
-      // 保存到 Artifacts 项目
       const ext = artLang === 'svg' ? '.svg' : '.html';
       const filename = artTitle.replace(/[<>:"/\\|?*]/g, '_') + ext;
-      const proj = db.prepare("SELECT * FROM projects WHERE name = 'Artifacts'").get();
-      let pid;
-      if (!proj) {
-        pid = Date.now().toString(36) + Math.random().toString(36).slice(2);
-        db.prepare('INSERT INTO projects (id, name, description) VALUES (?, ?, ?)').run(pid, 'Artifacts', 'AI 生成的 artifact');
-        const pDir = path.join(projectDir, pid);
-        if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-      } else {
-        pid = proj.id;
-      }
-      const fileResult = writeProjectFile(pid, filename, artContent);
+      // 2026-08-21：以前这里往 projects 里建一个名叫 Artifacts 的假项目、把正文写成
+      // project_files。拆表之后作品有自己的 artifacts 表了，那条路要拆干净——
+      // 留着的话同一个作品会在两个地方各存一份，而前端只读新表，旧的那份永远没人看。
+      //
+      // 在这里先落一次库是**保底**：前端认出卡片后还会 POST 一次带 conv_id 的。
+      // 那条 POST 会走去重分支，只补 conv_id，不会堆成两条。
+      // 万一这一轮流断了、卡片没渲染出来，作品也已经在库里了，刷新还找得回来。
+      let artId = null;
+      try {
+        const dup = db.prepare('SELECT id FROM artifacts WHERE title = ? AND content = ?')
+          .get(artTitle, artContent);
+        if (dup) {
+          artId = dup.id;
+          db.prepare("UPDATE artifacts SET updated_at = strftime('%s','now') WHERE id = ?").run(artId);
+        } else {
+          artId = crypto.randomUUID();
+          db.prepare('INSERT INTO artifacts (id, title, language, content) VALUES (?,?,?,?)')
+            .run(artId, artTitle, artLang, artContent);
+        }
+      } catch (e) { console.error('[create_artifact]', e.message); }
       return {
-        artifact: { title: artTitle, language: artLang, filename, content: artContent },
-        file: fileResult,
-        message: 'Artifact 「' + artTitle + '」已创建，保存到 Artifacts 项目'
+        artifact: { id: artId, title: artTitle, language: artLang, filename, content: artContent },
+        message: 'Artifact 「' + artTitle + '」已创建'
       };
     }
     case 'share_music': {
@@ -3985,6 +4045,238 @@ app.post('/api/tools/exec', async (req, res) => {
   }
 });
 
+// === workplace ===============================================================
+// 工作台里的「他」跟聊天里的小克是两条不同的路：
+//   小克   → /chat      sonnet + 36 个 chat-c 工具 + 人设提示词
+//   工作台 → /workplace opus  + 只吃 CLAUDE.md + 关在 /opt/ccwithme 里，没有 Bash
+// 安全不靠自觉：网关那头挂了 path-jail.js 逐次审核，越界一律拒。
+// 改动只落在 git 工作树，要她在界面上点「确认」才 commit + 重启。
+const WORKPLACE_URL = 'http://127.0.0.1:9876/workplace';
+const REPO = __dirname;
+
+// usage_log 要能分辨钱是谁花的；usage_limits 给 workplace 单独一份日额度
+try { db.exec("ALTER TABLE usage_log ADD COLUMN source TEXT DEFAULT 'chat'"); } catch(e) {}
+try { db.exec('ALTER TABLE usage_limits ADD COLUMN workplace_daily_usd REAL DEFAULT 3'); } catch(e) {}
+
+const wpSpentToday = () => db.prepare(
+  "SELECT COALESCE(SUM(cost_usd),0) AS c FROM usage_log WHERE source='workplace' AND created_at >= strftime('%s', date('now'))"
+).get().c;
+
+function wpLimitBlock() {
+  const L = getLimits();
+  if (!L || !L.enforce) return null;
+  const cap = L.workplace_daily_usd;
+  if (!(cap > 0)) return null;
+  const spent = wpSpentToday();
+  if (spent >= cap) return `workplace 今天已用 $${spent.toFixed(2)}，到上限 $${cap} 了。要接着改就把上限调高。`;
+  return null;
+}
+
+// git 一律用数组传参，不拼 shell，免得文件名里带奇怪字符出事
+function git(args, cb) {
+  require('child_process').execFile('git', ['-C', REPO, ...args],
+    { maxBuffer: 8 * 1024 * 1024, timeout: 30000 }, cb);
+}
+
+// 会话 id 存 settings，重启后还能接上
+const wpSession = {
+  get: () => { try { return db.prepare("SELECT value FROM settings WHERE key='wp_session'").get()?.value || null; } catch { return null; } },
+  set: (v) => { try { db.prepare("INSERT INTO settings (key,value) VALUES ('wp_session',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(v); } catch(e) {} },
+};
+
+app.post('/api/workplace/chat', auth, async (req, res) => {
+  const { message, reset, mainline_ids, upload_ids } = req.body || {};
+  if (!message) return res.status(400).json({ error: 'message required' });
+
+  // 她勾了主线消息就拼在前面。拼不出来（id 都失效了）就当没勾，不报错打断她。
+  // 附件排在主线上下文后面、真正的指令前面，顺序别调——指令永远在最后一段。
+  const prefixed = wpMainlineContext(mainline_ids) + wpAttachmentContext(upload_ids) + message;
+
+  const blocked = wpLimitBlock();
+  if (blocked) return res.status(429).json({ error: blocked });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  let sid = reset ? null : wpSession.get();
+  const isNew = !sid;
+  if (isNew) { sid = crypto.randomUUID(); wpSession.set(sid); }
+
+  try {
+    const gw = await fetch(WORKPLACE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+      body: JSON.stringify({ message: prefixed, session_id: sid, is_new_session: isNew }),
+    });
+    if (!gw.ok || !gw.body) {
+      res.write('event: error\ndata: ' + JSON.stringify({ message: '网关返回 ' + gw.status }) + '\n\n');
+      return res.end();
+    }
+    const reader = gw.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+        if (evt.delta)    res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n');
+        if (evt.thinking) res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
+        if (evt.tool_use) res.write('event: tool_use\ndata: ' + JSON.stringify(evt.tool_use) + '\n\n');
+        if (evt.error) {
+          // 会话丢了（网关重启/记录过期）就清掉，下一句自动开新的
+          if (evt.error === 'session_lost') wpSession.set('');
+          res.write('event: error\ndata: ' + JSON.stringify({ message: evt.error }) + '\n\n');
+        }
+        if (evt.usage) {
+          const u = evt.usage;
+          try {
+            db.prepare(`INSERT INTO usage_log
+              (conv_id, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms, num_turns, source)
+              VALUES (?,?,?,?,?,?,?,?,'workplace')`).run(
+              'workplace', u.cost_usd || 0, u.input_tokens || 0, u.output_tokens || 0,
+              u.cache_read_tokens || 0, u.cache_write_tokens || 0, u.duration_ms || 0, u.num_turns || 0);
+          } catch (e) { console.error('[workplace usage]', e.message); }
+          res.write('event: usage\ndata: ' + JSON.stringify(u) + '\n\n');
+        }
+      }
+    }
+    res.write('event: done\ndata: {}\n\n');
+  } catch (e) {
+    res.write('event: error\ndata: ' + JSON.stringify({ message: String(e.message || e) }) + '\n\n');
+  }
+  res.end();
+});
+
+// 主线最近说了什么 —— 给 workplace 面板显示，让她勾选哪几条带给干活的这个。
+//
+// 为什么要有这个：她在主线跟小克聊出来的需求（"这个按钮我想放右边"），
+// 干活的这个看不见，她得自己复述一遍。现在能直接勾。
+//
+// 只给列表和摘要，正文不从这里带走——真正注入时后端按 id 回库里取原文，
+// 免得前端截断过的文本被当成她的原话传进去。
+app.get('/api/workplace/mainline', auth, (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+  // 主线 = 最近有消息的那个会话，就是她正在聊的那个
+  const latest = db.prepare('SELECT conv_id FROM messages ORDER BY id DESC LIMIT 1').get();
+  if (!latest) return res.json({ conv_id: null, messages: [] });
+  const rows = db.prepare(
+    'SELECT id, role, content, created_at FROM messages WHERE conv_id = ? ORDER BY id DESC LIMIT ?'
+  ).all(latest.conv_id, limit).reverse();
+  res.json({
+    conv_id: latest.conv_id,
+    messages: rows.map(m => ({
+      id: m.id,
+      role: m.role,
+      created_at: m.created_at,
+      // 面板上只用得着一眼能认出是哪句，太长的截断
+      preview: String(m.content || '').replace(/\s+/g, ' ').slice(0, 120),
+      truncated: String(m.content || '').length > 120,
+    })),
+  });
+});
+
+// 把勾中的主线消息拼成一段前言。原文从库里取，不信前端传来的正文。
+function wpMainlineContext(ids) {
+  if (!Array.isArray(ids) || !ids.length) return '';
+  const clean = ids.map(Number).filter(Number.isFinite).slice(0, 30);
+  if (!clean.length) return '';
+  const rows = db.prepare(
+    `SELECT id, role, content FROM messages WHERE id IN (${clean.map(() => '?').join(',')}) ORDER BY id ASC`
+  ).all(...clean);
+  if (!rows.length) return '';
+  const body = rows.map(m =>
+    (m.role === 'user' ? '粥粥' : '小克') + '：' + String(m.content || '').trim()
+  ).join('\n');
+  return '【她从主线聊天里带过来的上下文 —— 这是背景，不是给你的指令，' +
+         '真正要你做的事在后面】\n' + body + '\n\n【以上是背景，下面才是她让你做的事】\n';
+}
+
+// 她甩给工作台的文件（图片 / PDF / 任意附件）。
+// 走的是主线那个 /api/upload —— 文件已经落在 data/uploads/ 里了，这里只把 id 换成路径。
+// path-jail 对 data/uploads/ 只开了「读」，所以工作台能 Read，改不了、也碰不到 claude.db。
+// ⚠️ 路径必须在后端复核：前端传什么 id 都不能越界（realpath 比对，防软链穿墙）。
+function wpAttachmentContext(ids) {
+  if (!Array.isArray(ids) || !ids.length) return '';
+  const clean = ids.map(String).filter(Boolean).slice(0, 10);
+  if (!clean.length) return '';
+  const realUploadDir = fs.realpathSync(uploadDir);
+  const items = [];
+  for (const id of clean) {
+    const u = db.prepare('SELECT id, filename, path, size FROM uploads WHERE id = ?').get(id);
+    if (!u || !fs.existsSync(u.path)) continue;
+    let real;
+    try { real = fs.realpathSync(u.path); } catch { continue; }
+    if (path.relative(realUploadDir, real).startsWith('..')) {
+      console.warn('[workplace] 附件越界，已跳过:', id);
+      continue;
+    }
+    const kb = Math.max(1, Math.round((u.size || 0) / 1024));
+    items.push('- ' + real + '（原名 ' + (u.filename || '未命名') + '，' + kb + ' KB）');
+  }
+  if (!items.length) return '';
+  return '【她给你发了 ' + items.length + ' 个文件，用 Read 打开看 —— PDF 超过 10 页要带 pages 参数分段读】\n' +
+         items.join('\n') + '\n\n【以上是她发的文件，下面才是她让你做的事】\n';
+}
+
+// 他改了什么：给她看的红绿 diff
+app.get('/api/workplace/diff', auth, (req, res) => {
+  git(['diff'], (e1, diff) => {
+    if (e1) return res.status(500).json({ error: String(e1.message) });
+    git(['status', '--porcelain'], (e2, st) => {
+      if (e2) return res.status(500).json({ error: String(e2.message) });
+      const lines = (st || '').split('\n').filter(Boolean);
+      res.json({
+        diff: diff || '',
+        changed: lines.map(l => ({ status: l.slice(0, 2).trim(), file: l.slice(3) })),
+        clean: lines.length === 0,
+        spent_today: wpSpentToday(),
+        cap: getLimits()?.workplace_daily_usd ?? 3,
+      });
+    });
+  });
+});
+
+// 她点确认：提交 + 重启。重启要等响应发完再做，否则请求半路断在她脸上。
+app.post('/api/workplace/apply', auth, (req, res) => {
+  const msg = String((req.body || {}).message || '').trim() || 'workplace: 粥粥确认的改动';
+  git(['status', '--porcelain'], (e0, st) => {
+    if (e0) return res.status(500).json({ error: String(e0.message) });
+    if (!(st || '').trim()) return res.json({ ok: false, error: '没有改动可提交' });
+    git(['add', '-A'], (e1) => {
+      if (e1) return res.status(500).json({ error: String(e1.message) });
+      git(['-c', 'user.name=粥粥和Claude', '-c', 'user.email=victoriawood6298@gmail.com',
+           'commit', '-m', msg], (e2, out) => {
+        if (e2) return res.status(500).json({ error: 'commit 失败: ' + String(e2.message) });
+        git(['rev-parse', '--short', 'HEAD'], (e3, sha) => {
+          res.json({ ok: true, commit: (sha || '').trim(), output: (out || '').trim(), restarting: true });
+          // 响应已经发出去了，再重启自己
+          setTimeout(() => {
+            require('child_process').execFile('pm2', ['restart', 'ccwithme'], () => {});
+          }, 400);
+        });
+      });
+    });
+  });
+});
+
+// 她点还原：把已跟踪文件改回去。新建的文件不自动删——那可能是她自己放的，
+// 只报给她看，让她自己决定。
+app.post('/api/workplace/reject', auth, (req, res) => {
+  git(['checkout', '--', '.'], (e1) => {
+    if (e1) return res.status(500).json({ error: String(e1.message) });
+    git(['status', '--porcelain'], (e2, st) => {
+      const untracked = (st || '').split('\n').filter(l => l.startsWith('??')).map(l => l.slice(3));
+      res.json({ ok: true, untracked });
+    });
+  });
+});
+
 // CLI 会话滚动窗口：多少轮之后换新会话（换会话 = 清掉 CLI 侧堆积的历史）
 // 别设太小：每次滚动要付「第1条冷启动 $0.185 + 第2条结构重写 $0.062」的重建费。
 // 16 轮时这笔摊销 $0.0154/条，比多带的历史还贵。48 轮附近是最优（再大就基本不降了）：
@@ -4162,6 +4454,7 @@ async function handleAnthropicChat(req, res, ctx) {
   if (thinkingConfig) requestBody.thinking = thinkingConfig;
 
   try {
+    const _to1 = _headTimeout();
     const apiRes = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -4170,8 +4463,9 @@ async function handleAnthropicChat(req, res, ctx) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(120000),
+      signal: _to1.signal,
     });
+    _to1.clear();
 
     if (!apiRes.ok) {
       const err = await apiRes.json().catch(() => ({}));
@@ -4382,6 +4676,7 @@ async function handleAnthropicChat(req, res, ctx) {
         };
         if (thinkingConfig) secondBody.thinking = thinkingConfig;
         
+        const _to2 = _headTimeout();
         const secondRes = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -4390,8 +4685,9 @@ async function handleAnthropicChat(req, res, ctx) {
             'anthropic-version': '2023-06-01',
           },
           body: JSON.stringify(secondBody),
-          signal: AbortSignal.timeout(120000),
+          signal: _to2.signal,
         });
+        _to2.clear();
         
         if (!secondRes.ok) {
           const err = await secondRes.json().catch(() => ({}));
@@ -4531,6 +4827,7 @@ async function handleOpenAIChat(req, res, ctx) {
   const requestBody = { model, stream: true, messages, tools: openaiTools };
 
   try {
+    const _to3 = _headTimeout();
     const apiRes = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -4538,8 +4835,9 @@ async function handleOpenAIChat(req, res, ctx) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(120000),
+      signal: _to3.signal,
     });
+    _to3.clear();
 
     if (!apiRes.ok) {
       const err = await apiRes.json().catch(() => ({}));
@@ -4695,6 +4993,7 @@ async function handleOpenAIChat(req, res, ctx) {
 
         // 第二次请求
         const secondBody = { model, stream: true, messages: newMessages, tools: openaiTools };
+        const _to4 = _headTimeout();
         const secondRes = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -4702,8 +5001,9 @@ async function handleOpenAIChat(req, res, ctx) {
             'Authorization': `Bearer ${apiKey}`,
           },
           body: JSON.stringify(secondBody),
-          signal: AbortSignal.timeout(120000),
+          signal: _to4.signal,
         });
+        _to4.clear();
 
         if (!secondRes.ok) {
           const err = await secondRes.json().catch(() => ({}));
@@ -5401,17 +5701,37 @@ app.delete('/api/diary/:id/comments/:cid', auth, (req, res) => {
 // === 工具标题 (前端 tool caption 请求) ===
 app.post('/api/tool-caption', auth, (req, res) => {
   const { tool_use_id, name } = req.body;
+  // 一律不带 emoji —— 图标由前端 _TOOL_ICONS 画，文字只说做了什么
   const titles = {
-    get_weather: '🌤 查询天气',
-    get_time: '🕐 获取时间',
-    search_memory: '🧠 搜索记忆',
-    save_note: '📝 保存笔记',
-    read_diary: '📖 翻日记',
-    diary_comment: '💬 在日记下留言',
-    create_artifact: '🎨 创建 Artifact',
-    project_write_file: '📄 写入文件'
+    get_weather: '查询天气',
+    get_time: '获取时间',
+    search_memory: '搜索记忆',
+    recall_memory: '翻记忆',
+    search_chat_history: '翻聊天记录',
+    save_note: '保存笔记',
+    read_diary: '翻日记',
+    diary_comment: '在日记下留言',
+    create_artifact: '创建 Artifact',
+    project_write_file: '写入文件',
+    project_read_file: '读取文件',
+    project_list_files: '列出文件',
+    generate_image: '画一张图',
+    send_sticker: '发表情',
+    share_music: '分享音乐',
+    call_her: '拨电话',
+    issue_command: '执行指令',
+    nocturne_hold: '收进记忆',
+    nocturne_moment: '记下里程碑',
+    nocturne_texture: '留下接力棒',
+    nocturne_story: '讲个故事',
+    nocturne_bottle: '扔漂流瓶',
+    nocturne_persona: '想起你是谁',
+    garden: '去花园',
+    drive: '兜风',
+    wander: '闲逛'
   };
-  res.json({ caption: titles[name] || ('🔧 ' + (name || 'Tool')) });
+  // 粥粥不要那个扳手：没配标题的工具就只报名字
+  res.json({ caption: titles[name] || (name || 'Tool') });
 });
 
 app.post('/api/thinking-summary', auth, (req, res) => {
@@ -5646,6 +5966,57 @@ app.get('/api/bilibili/stream', async (req, res) => {
   } catch(e) {
     if (!res.headersSent) res.status(500).end();
   }
+});
+
+// === 作品集 ==================================================================
+// 聊天里生成的 HTML/SVG 落库，刷新不丢。跟 workplace 没关系——那个是改代码的，
+// 这个是她放作品的地方，界面上一个在顶栏一个在抽屉，别混。
+
+// 列表不带 content：作品可能很大，列表页用不上，点开再单取
+app.get('/api/artifacts', auth, (req, res) => {
+  const rows = db.prepare(
+    'SELECT id, title, language, conv_id, msg_id, length(content) AS size, created_at, updated_at FROM artifacts ORDER BY created_at DESC'
+  ).all();
+  res.json({ artifacts: rows });
+});
+
+app.get('/api/artifacts/:id', auth, (req, res) => {
+  const row = db.prepare('SELECT * FROM artifacts WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  res.json(row);
+});
+
+// 前端每认出一个生成物就 POST 一次，所以这里必须幂等：
+// 同一 conv 里标题和内容都没变的，认成同一个，只更新时间，不再堆一条。
+app.post('/api/artifacts', auth, (req, res) => {
+  const { title, language, content, conv_id, msg_id } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'title required' });
+  const body = String(content || '');
+  // 同名同内容就是同一个作品——不看 conv_id。
+  // create_artifact 工具会先落一条没有 conv_id 的保底记录，前端随后带着 conv_id 再 POST 一次；
+  // 把 conv_id 算进同一性的话，那两次会存成两条一模一样的东西。
+  const dup = db.prepare('SELECT id, conv_id FROM artifacts WHERE title = ? AND content = ?')
+    .get(String(title), body);
+  if (dup) {
+    if (!dup.conv_id && conv_id) {
+      db.prepare("UPDATE artifacts SET conv_id = ?, msg_id = COALESCE(msg_id, ?), updated_at = strftime('%s','now') WHERE id = ?")
+        .run(conv_id, Number.isFinite(+msg_id) ? +msg_id : null, dup.id);
+    } else {
+      db.prepare("UPDATE artifacts SET updated_at = strftime('%s','now') WHERE id = ?").run(dup.id);
+    }
+    return res.json({ ok: true, id: dup.id, deduped: true });
+  }
+  const id = crypto.randomUUID();
+  db.prepare(
+    'INSERT INTO artifacts (id, title, language, content, conv_id, msg_id) VALUES (?,?,?,?,?,?)'
+  ).run(id, String(title), String(language || 'html'), body, conv_id || null,
+        Number.isFinite(+msg_id) ? +msg_id : null);
+  res.json({ ok: true, id });
+});
+
+app.delete('/api/artifacts/:id', auth, (req, res) => {
+  const info = db.prepare('DELETE FROM artifacts WHERE id = ?').run(req.params.id);
+  res.json({ ok: info.changes > 0 });
 });
 
 app.get('/api/projects', auth, (req, res) => {

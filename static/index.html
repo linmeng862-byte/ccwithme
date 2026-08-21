@@ -26,6 +26,7 @@
 <script src="/js/mind.js?v=2"></script>
 <script src="/js/cinema.js?v=19"></script>
 <script src="/js/journey.js?v=1"></script>
+<script src="/js/workplace.js?v=4"></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -45,7 +46,7 @@
       <span class="topbar-model-setting" id="topbarModelSetting">Medium</span>
     </button>
     <div class="topbar-actions">
-      <button class="icon-button" id="artifactsTopBtn" aria-label="工作台" title="工作台"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+      <button class="icon-button" id="artifactsTopBtn" aria-label="作品集" title="作品集"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg></button>
       <div class="capsule-group" id="capsuleGroup">
         <button class="capsule-btn" id="todoTopBtn" aria-label="待办" title="待办"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
         <span class="capsule-divider"></span>
@@ -173,7 +174,7 @@
       <button class="mobile-sidebar-nav-item" id="drawerMain" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg></span><span>主线</span></button>
       <button class="mobile-sidebar-nav-item" id="drawerChats"><span class="mobile-sidebar-nav-icon" data-icon="chats"></span><span>Chats</span></button>
       <button class="mobile-sidebar-nav-item" id="projectsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="projects"></span><span>Projects</span></button>
-            <button class="mobile-sidebar-nav-item" id="artifactsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="artifacts"></span><span>工作台</span></button>
+            <button class="mobile-sidebar-nav-item" id="artifactsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="artifacts"></span><span>workplace</span></button>
       
       <button class="mobile-sidebar-nav-item" id="openMemory"><span class="mobile-sidebar-nav-icon" data-icon="memory"></span><span>Memory</span></button>
       <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><path d="M2 13h12M4 13V8M8 13V4M12 13v-3"/></svg></span><span>usage</span></button>
@@ -325,7 +326,9 @@
 <div class="overlay" id="quizOverlay" aria-hidden="true" inert></div>
 <section class="sheet" id="quizSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeQuiz">&times;</button><h2 class="sheet-title" id="quizSheetTitle">答题</h2><span></span></header><div class="sheet-content" style="padding:0 20px 40px"><div id="quizQuestion" style="font:600 17px/1.5 var(--font-serif);color:var(--text-primary);margin:12px 0 20px"></div><div id="quizOptions" class="hidden" style="display:flex;flex-direction:column;gap:10px"></div><div id="quizTextInput" class="hidden" style="display:flex;flex-direction:column;gap:12px"><textarea id="quizTextarea" placeholder="输入你的答案..." style="width:100%;min-height:100px;padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--bg-surface);font:15px/1.5 var(--font-serif);color:var(--text-primary);resize:vertical;outline:none" autocomplete="off"></textarea><button id="quizTextSubmit" style="align-self:flex-end;padding:10px 24px;background:var(--accent);color:#fff;border:none;border-radius:12px;font:600 14px/1 var(--font-sans);cursor:pointer">提交</button></div><div id="quizResult" class="hidden" style="font:500 15px/1.4 var(--font-serif);padding:14px;background:#FBF7F0;border-radius:12px;text-align:center"></div></div></section>
 <div class="overlay" id="artifactsOverlay" aria-hidden="true" inert></div>
-<section class="sheet" id="artifactsSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeArtifacts">×</button><h2 class="sheet-title">工作台</h2><span></span></header><div class="sheet-content" id="artifactsContent"></div></section>
+<div class="overlay" id="workplaceOverlay" aria-hidden="true" inert></div>
+<section class="sheet" id="workplaceSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeWorkplace">×</button><h2 class="sheet-title">workplace</h2><span></span></header><div class="sheet-content" id="workplaceContent"></div></section>
+<section class="sheet" id="artifactsSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeArtifacts">×</button><h2 class="sheet-title">作品集</h2><span></span></header><div class="sheet-content" id="artifactsContent"></div></section>
 
 <div class="overlay" id="todoOverlay" aria-hidden="true" inert></div>
 <section class="sheet" id="todoSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeTodo">×</button><h2 class="sheet-title">待办</h2><span></span></header><div class="sheet-content" id="todoContent"></div></section>
@@ -603,7 +606,10 @@ document.querySelectorAll('[data-context-icon]').forEach(el=>{el.innerHTML=icon(
 window.__sidebarBuild='round97-phosphor-all';
 // 全局 Artifacts 追踪
 var _artifactsList=[];
-function _addArtifactToList(art){if(!art||!art.title)return;if(_artifactsList.some(function(a){return a.title===art.title&&a.content===art.content}))return;_artifactsList.push(art);var btn=$('artifactsTopBtn');if(btn)btn.style.display=''}
+function _addArtifactToList(art){if(!art||!art.title)return;if(_artifactsList.some(function(a){return a.title===art.title&&a.content===art.content}))return;_artifactsList.push(art);var btn=$('artifactsTopBtn');if(btn)btn.style.display='';_saveArtifactToDB(art)}
+// 落库，刷新就不丢了。以前只活在内存里，关掉页面全没。
+// 后端按 标题+内容+会话 去重，这里重复 POST 不会堆数据。失败就算了，不打断她聊天。
+function _saveArtifactToDB(art){if(!state.token||!art.content)return;try{api('/api/artifacts',{method:'POST',body:JSON.stringify({title:art.title,language:art.language||'html',content:art.content,conv_id:state.convId||null})}).then(function(r){return r.json()}).then(function(d){if(d&&d.id)art.id=d.id}).catch(function(){})}catch(e){}}
 function _renderArtifactsSheet(){var c=$('artifactsContent');if(!c)return;c.innerHTML='';
 // ── 专注工具区 ──
 var tools=document.createElement('div');
@@ -664,9 +670,10 @@ c.append(tools);
 var toolsDiv=document.createElement('div');
 toolsDiv.style.cssText='height:1px;background:var(--border);margin:0 0 14px';
 c.append(toolsDiv);
-if(!_artifactsList.length){var emptyMsg=document.createElement('div');emptyMsg.style.cssText='text-align:center;padding:40px;color:var(--text-secondary);font-size:15px';emptyMsg.innerHTML='还没有生成物。<br>让 Claude 生成 HTML 或 SVG 吧。';c.append(emptyMsg);return}var dlAll=document.createElement('button');dlAll.style.cssText='display:block;width:100%;margin-bottom:14px;padding:10px 0;border:1px dashed var(--border);border-radius:12px;background:transparent;color:var(--text-secondary);font:500 13px var(--font-sans);cursor:pointer';dlAll.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download All ('+_artifactsList.length+')';dlAll.onclick=function(e){e.stopPropagation();_downloadAllArtifacts()};c.append(dlAll);_artifactsList.forEach(function(art,i){var lang=art.language||'html';var card=document.createElement('div');card.style.cssText='margin-bottom:10px;max-width:440px;border:1px solid var(--border);border-radius:18px;overflow:hidden;background:var(--bg-surface)';var hdr=document.createElement('div');hdr.style.cssText='display:flex;align-items:center;gap:12px;padding:10px 16px;user-select:none';var iconBox=document.createElement('div');iconBox.style.cssText='width:30px;height:30px;border-radius:8px;background:#3D3A36;color:#F5F2ED;display:grid;place-items:center;font-size:11px;font-weight:700;flex:none;transform:rotate(-6deg)';iconBox.innerHTML=lang==='html'?'&lt;/&gt;':lang.toUpperCase().slice(0,2);var info=document.createElement('div');info.style.cssText='flex:1;min-width:0';var n=document.createElement('div');n.style.cssText='font:600 14px/1.2 var(--font-sans);color:#2B2927';n.textContent=art.title;var t=document.createElement('div');t.style.cssText='font:12px var(--font-sans);color:#9A948C;margin-top:2px';t.textContent='Code · '+lang.toUpperCase();info.append(n,t);hdr.append(iconBox,info);var dlBtn=document.createElement('button');dlBtn.style.cssText='width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--text-secondary);display:grid;place-items:center;cursor:pointer;flex:none;font-size:14px';dlBtn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';dlBtn.title='Download '+art.title;dlBtn.onclick=function(e){e.stopPropagation();_downloadArtifact(art)};hdr.append(dlBtn);card.append(hdr);if(art.content){var expanded=false,iframe=null;card.onclick=function(e){if(e.target===dlBtn)return;if(expanded){if(iframe){iframe.remove();iframe=null}expanded=false;card.style.cursor='pointer';return}expanded=true;card.style.cursor='default';iframe=document.createElement('iframe');iframe.style.cssText='width:100%;min-height:400px;border:none;border-top:1px solid #EAE5DE;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob([art.content],{type:'text/html'}));card.append(iframe)}}else{card.onclick=function(){_showArtifactFull(art)}}c.append(card)})}
+if(!_artifactsList.length){var emptyMsg=document.createElement('div');emptyMsg.style.cssText='text-align:center;padding:40px;color:var(--text-secondary);font-size:15px';emptyMsg.innerHTML='还没有生成物。<br>让 Claude 生成 HTML 或 SVG 吧。';c.append(emptyMsg);return}var dlAll=document.createElement('button');dlAll.style.cssText='display:block;width:100%;margin-bottom:14px;padding:10px 0;border:1px dashed var(--border);border-radius:12px;background:transparent;color:var(--text-secondary);font:500 13px var(--font-sans);cursor:pointer';dlAll.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download All ('+_artifactsList.length+')';dlAll.onclick=function(e){e.stopPropagation();_downloadAllArtifacts()};c.append(dlAll);_artifactsList.forEach(function(art,i){var lang=art.language||'html';var card=document.createElement('div');card.style.cssText='margin-bottom:10px;max-width:440px;border:1px solid var(--border);border-radius:18px;overflow:hidden;background:var(--bg-surface)';var hdr=document.createElement('div');hdr.style.cssText='display:flex;align-items:center;gap:12px;padding:10px 16px;user-select:none';var iconBox=document.createElement('div');iconBox.style.cssText='width:30px;height:30px;border-radius:8px;background:#3D3A36;color:#F5F2ED;display:grid;place-items:center;font-size:11px;font-weight:700;flex:none;transform:rotate(-6deg)';iconBox.innerHTML=lang==='html'?'&lt;/&gt;':lang.toUpperCase().slice(0,2);var info=document.createElement('div');info.style.cssText='flex:1;min-width:0';var n=document.createElement('div');n.style.cssText='font:600 14px/1.2 var(--font-sans);color:#2B2927';n.textContent=art.title;var t=document.createElement('div');t.style.cssText='font:12px var(--font-sans);color:#9A948C;margin-top:2px';t.textContent='Code · '+lang.toUpperCase();info.append(n,t);hdr.append(iconBox,info);var dlBtn=document.createElement('button');dlBtn.style.cssText='width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--text-secondary);display:grid;place-items:center;cursor:pointer;flex:none;font-size:14px';dlBtn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';dlBtn.title='Download '+art.title;dlBtn.onclick=function(e){e.stopPropagation();_downloadArtifact(art)};hdr.append(dlBtn);card.append(hdr);if(art.content){var expanded=false,iframe=null;card.onclick=function(e){if(e.target===dlBtn)return;if(expanded){if(iframe){iframe.remove();iframe=null}expanded=false;card.style.cursor='pointer';return}expanded=true;card.style.cursor='default';iframe=document.createElement('iframe');iframe.style.cssText='width:100%;min-height:400px;border:none;border-top:1px solid #EAE5DE;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob([art.content],{type:'text/html'}));card.append(iframe)}}else if(art._lazy){/* 从库里来的：正文还没拉，点一下拉回来直接展开 */card.onclick=function(){if(art._loading)return;art._loading=true;var tip=document.createElement('div');tip.style.cssText='padding:10px 16px;color:var(--text-secondary);font:12px var(--font-sans);border-top:1px solid #EAE5DE';tip.textContent='加载中…';card.append(tip);_fetchArtifactContent(art).then(function(){tip.remove();art._loading=false;if(!art.content){toast('这个作品没有正文');return}var ifr=document.createElement('iframe');ifr.style.cssText='width:100%;min-height:400px;border:none;border-top:1px solid #EAE5DE;display:block';ifr.sandbox='allow-scripts';ifr.src=URL.createObjectURL(new Blob([art.content],{type:'text/html'}));card.append(ifr)})}}else{card.onclick=function(){_showArtifactFull(art)}}c.append(card)})}
 function _showArtifactFull(art){var w=window.open('','_blank','');if(w){w.document.write(art.content);w.document.close()}}
-function _downloadArtifact(art){if(!art||!art.content)return;var blob=new Blob([art.content],{type:'text/html;charset=utf-8'});var url=URL.createObjectURL(blob);var w=window.open(url,'_blank');if(!w){var a=document.createElement('a');a.href=url;a.download=art.title||'artifact.html';document.body.appendChild(a);a.click();document.body.removeChild(a)}setTimeout(function(){URL.revokeObjectURL(url)},2000)}
+// 库里来的作品正文是懒加载的，直接下会存出空文件——先把正文补齐再下
+function _downloadArtifact(art){if(!art)return;if(art._lazy&&!art.content){_fetchArtifactContent(art).then(function(){if(art.content)_downloadArtifact(art);else toast('这个作品没有正文')});return}if(!art.content)return;var blob=new Blob([art.content],{type:'text/html;charset=utf-8'});var url=URL.createObjectURL(blob);var w=window.open(url,'_blank');if(!w){var a=document.createElement('a');a.href=url;a.download=art.title||'artifact.html';document.body.appendChild(a);a.click();document.body.removeChild(a)}setTimeout(function(){URL.revokeObjectURL(url)},2000)}
 function _downloadAllArtifacts(){var list=_artifactsList.filter(function(a){return a.content});if(!list.length){toast('No artifacts to download');return}list.forEach(function(art,i){setTimeout(function(){_downloadArtifact(art)},i*350)});toast('Downloading '+list.length+' artifacts…')}
 
 var _MUSIC_PLAY_SVG='<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="6,3 20,12 6,21"/></svg>';var _MUSIC_PAUSE_SVG='<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="5" y="3" width="5" height="18" rx="1"/><rect x="14" y="3" width="5" height="18" rx="1"/></svg>';
@@ -678,7 +685,13 @@ function _showMusicSearch(title,artist,playBtn,timeEl,progBar){var q=encodeURICo
   fetch('/api/music/status').then(function(sr){return sr.json()}).then(function(st){if(!st.loggedIn){showNeteaseLogin();playBtn.innerHTML=_MUSIC_PLAY_SVG;playBtn.classList.add('paused');return}fetch('/api/music/search?q='+q).then(function(r){return r.json()}).then(function(data){var songs=data.songs||[];if(!songs.length){window.open('https://music.163.com/search/?m=1&s='+q,'_blank');return}var song=songs[0];fetch('/api/music/playback?id='+song.id).then(function(r2){return r2.json()}).then(function(pdata){if(pdata.url){preAudio.src=pdata.url;_startMusicPlayback(pdata.url,playBtn,timeEl,progBar,preAudio)}else{window.open('https://music.163.com/song?id='+song.id,'_blank')}}).catch(function(){window.open('https://music.163.com/song?id='+song.id,'_blank')})}).catch(function(){window.open('https://music.163.com/search/?m=1&s='+q,'_blank')})})}
 function _startMusicPlayback(url,playBtn,timeEl,progBar,_preAudio){var audio=_preAudio||new Audio(url);if(_preAudio&&!_preAudio.src)_preAudio.src=url;var playing=true;playBtn.innerHTML=_MUSIC_PAUSE_SVG;playBtn.classList.remove('paused');audio.play();if(typeof setClawdMood==='function')setClawdMood('groove');function fmtTime(s){var m=Math.floor(s/60),sec=Math.floor(s%60);return m+':'+(sec<10?'0':'')+sec}audio.ontimeupdate=function(){var pct=audio.duration?(audio.currentTime/audio.duration*100):0;progBar.style.width=pct+'%';timeEl.textContent=fmtTime(audio.currentTime)+' / '+fmtTime(audio.duration)};audio.onloadedmetadata=function(){timeEl.textContent='0:00 / '+fmtTime(audio.duration)};audio.onended=function(){playBtn.innerHTML=_MUSIC_PLAY_SVG;playBtn.classList.add('paused');progBar.style.width='0%';timeEl.textContent='0:00 / '+fmtTime(audio.duration||0);if(typeof setClawdMood==='function')setClawdMood('idle')};var origPause=function(){if(playing){audio.pause();playing=false;playBtn.innerHTML=_MUSIC_PLAY_SVG;playBtn.classList.add('paused');if(typeof setClawdMood==='function')setClawdMood('idle')}else{audio.play();playing=true;playBtn.innerHTML=_MUSIC_PAUSE_SVG;playBtn.classList.remove("paused");_lyricsAudio=audio;_lyricsIdx=-1;if(typeof setClawdMood==='function')setClawdMood('groove')}};playBtn.onclick=function(e){e.stopPropagation();origPause()};progBar.parentElement.onclick=function(e){e.stopPropagation();if(audio.duration){var rect=progBar.parentElement.getBoundingClientRect();audio.currentTime=((e.clientX-rect.left)/rect.width)*audio.duration}}}
 $('artifactsTopBtn').onclick=async function(){await _loadArtifactsFromDB();_renderArtifactsSheet();sheet('artifacts',true);$('artifactsSheet').classList.add('expanded');$('artifactsSheet').style.transform=''};
-async function _loadArtifactsFromDB(){try{var r=await api('/api/projects');var data=await r.json();var proj=(data.projects||[]).find(function(p){return p.name==='Artifacts'});if(!proj)return;var r2=await api('/api/projects/'+proj.id+'/files');var files=await r2.json();(files.files||[]).forEach(function(f){if(!/\.(html|svg|md)$/i.test(f.filename))return;var art={title:f.filename,language:f.filename.match(/\.(html|svg|md)$/i)[1],content:'',id:f.id};if(!_artifactsList.some(function(a){return a.title===art.title})){_artifactsList.push(art)}})}catch(e){}}
+// 2026-08-21：改读 artifacts 自己的表。
+// 以前这里去 projects 里找一个名叫 Artifacts 的 project，但那个 project 从来没被
+// 建出来过，所以这段一直空转 —— 作品只活在内存里，刷新就没了。现在真的存得住。
+// 列表接口不返回正文（作品可能很大），点开时再按 id 单取。
+async function _loadArtifactsFromDB(){try{var r=await api('/api/artifacts');var data=await r.json();(data.artifacts||[]).forEach(function(a){if(_artifactsList.some(function(x){return x.id===a.id}))return;_artifactsList.push({id:a.id,title:a.title,language:a.language||'html',content:'',_lazy:true})})}catch(e){}}
+// 正文按需拉。展开卡片前调它，拉回来就缓在内存里不再重复请求。
+async function _fetchArtifactContent(art){if(!art||!art._lazy||art.content)return art;try{var r=await api('/api/artifacts/'+art.id);var d=await r.json();if(d&&d.content!=null){art.content=d.content;art._lazy=false}}catch(e){}return art}
 $('closeArtifacts').onclick=function(){sheet('artifacts',false)};$('artifactsOverlay').onclick=function(){sheet('artifacts',false)};
 // ── 收据风待办清单（Timed Checklist） ──
 var _todos=JSON.parse(localStorage.getItem('chat_todos')||'[]');
@@ -917,19 +930,23 @@ function removePendingFile(index){const [removed]=state.pendingFiles.splice(inde
 function clearPendingFiles(){state.pendingFiles.forEach(item=>item.preview&&URL.revokeObjectURL(item.preview));state.pendingFiles=[];renderPendingFiles();$('fileInput').value=''}
 // iPhone 原图动不动 15MB+，走隧道传上去很慢、超 20MB 还会被直接拒掉。
 // 真正的瓶颈是**上传**，所以压缩必须发生在发出去之前（服务端压缩救不了）。
-// 长边缩到 2048、JPEG q0.85——聊天里看图完全够，15MB 通常掉到 300~600KB。
-const _IMG_MAX_EDGE=2048, _IMG_SHRINK_OVER=1.2*1024*1024;
+// 长边缩到 1080、JPEG q0.7——粥粥定的档，省 token 优先（1290x2796 的截图 ~4800 tok → ~730 tok）。
+const _IMG_MAX_EDGE=1080, _IMG_SHRINK_OVER=512*1024;
 function _shrinkImage(file){
   return new Promise(function(resolve){
     // 小图、GIF（动图缩了就不动了）、SVG 一律原样放行
-    if(file.size<=_IMG_SHRINK_OVER||/gif|svg/i.test(file.type))return resolve(file);
+    // 只看体积会漏掉手机截图：PNG 才 700KB 却是 1290x2796，给模型算 token 是按像素来的（≈w*h/750），
+    // 这种图不压是白烧额度。所以体积和尺寸任一超标都进压缩，尺寸判断在 img.onload 里做。
+    if(/gif|svg/i.test(file.type))return resolve(file);
+    if(file.size<=_IMG_SHRINK_OVER&&!/png/i.test(file.type))return resolve(file);
     var url=URL.createObjectURL(file);
     var img=new Image();
     img.onload=function(){
       try{
         var w=img.naturalWidth,h=img.naturalHeight;
         var scale=Math.min(1,_IMG_MAX_EDGE/Math.max(w,h));
-        if(scale>=1&&file.size<=8*1024*1024){URL.revokeObjectURL(url);return resolve(file)}
+        // 尺寸够小（长边没超 1080）、体积也够小 → 真没必要动它
+        if(scale>=1&&file.size<=_IMG_SHRINK_OVER){URL.revokeObjectURL(url);return resolve(file)}
         var cw=Math.round(w*scale),ch=Math.round(h*scale);
         var cv=document.createElement('canvas');cv.width=cw;cv.height=ch;
         cv.getContext('2d').drawImage(img,0,0,cw,ch);
@@ -939,7 +956,7 @@ function _shrinkImage(file){
           if(!blob||blob.size>=file.size)return resolve(file);
           var name=(file.name||'image').replace(/\.[^.]+$/,'')+'.jpg';
           resolve(new File([blob],name,{type:'image/jpeg',lastModified:Date.now()}));
-        },'image/jpeg',0.85);
+        },'image/jpeg',0.7);
       }catch(e){URL.revokeObjectURL(url);resolve(file)}
     };
     // HEIC 之类 canvas 解不了的，原样发（多半浏览器已经帮忙转成 jpeg 了）
@@ -1114,14 +1131,16 @@ function _showIncomingCall(){
   var overlay=document.createElement('div');overlay.id='incomingCallOverlay';
   overlay.className='incoming-call-overlay';
   var avatar=localStorage.getItem('claude_avatar')||'';
-  var avatarHtml=avatar?'<span class=\"incoming-call-avatar\"><img src=\"'+avatar+'\" style=\"width:100%;height:100%;border-radius:50%;object-fit:cover\"></span>':'<span class=\"incoming-call-avatar\" style=\"background:linear-gradient(135deg,#D4A574,#8B6B4A);display:grid;place-items:center\"><svg width=\"32\" height=\"32\" viewBox=\"0 0 16 16\" fill=\"#fff\"><use href=\"#claude-mark\"/></svg></span>';
+  // 没设头像就用线描 logo（白底大圆，跟图里一样），设了就铺满
+  var avatarHtml=avatar?'<span class=\"incoming-call-avatar\"><img src=\"'+avatar+'\" style=\"width:100%;height:100%;border-radius:50%;object-fit:cover\"></span>':'<span class=\"incoming-call-avatar\"><svg width=\"88\" height=\"88\" viewBox=\"0 0 16 16\" fill=\"#2B2924\"><use href=\"#claude-mark\"/></svg></span>';
   overlay.innerHTML='<div class=\"incoming-call-card\">'+
+    '<div class=\"incoming-call-tag\"><i></i>Incoming call</div>'+
     avatarHtml+
     '<h3 class=\"incoming-call-name\">Claude</h3>'+
-    '<p class=\"incoming-call-sub\">Incoming call...</p>'+
+    '<p class=\"incoming-call-sub\">邀请你语音通话...</p>'+
     '<div class=\"incoming-call-btns\">'+
-      '<button class=\"incoming-call-hangup\" onclick=\"_rejectCall()\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91\"/><line x1=\"1\" y1=\"1\" x2=\"23\" y2=\"23\"/></svg></button>'+
-      '<button class=\"incoming-call-answer\" onclick=\"_acceptCall()\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z\"/></svg></button>'+
+      '<div class=\"incoming-call-act\"><button class=\"incoming-call-hangup\" onclick=\"_rejectCall()\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91\"/><line x1=\"1\" y1=\"1\" x2=\"23\" y2=\"23\"/></svg></button><span>拒绝</span></div>'+
+      '<div class=\"incoming-call-act\"><button class=\"incoming-call-answer\" onclick=\"_acceptCall()\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z\"/></svg></button><span>接听</span></div>'+
     '</div></div>';
   document.body.appendChild(overlay);
   // 震动反馈
@@ -1604,7 +1623,131 @@ function _addStarBadgeToThumb(wrap){var badge=document.createElement('div');badg
 function _addStarBadgeToImages(url){if(!url)return;var imgs=document.querySelectorAll('.msg-you img');imgs.forEach(function(img){if(!img.src)return;var match=img.src===url||img.src.indexOf(url)>-1;if(!match){try{var fname=url.split('/').pop();if(fname&&img.src.indexOf(fname)>-1)match=true}catch(e){}}if(match){var wrap=img.closest('.msg-you');if(wrap&&!wrap.querySelector('.gal-star-badge'))_addBadgeToImg(img)}})}
 function _addBadgeToImg(img){var parent=img.parentElement;if(!parent)return;parent.style.position=parent.style.position||'relative';var badge=document.createElement('div');badge.className='gal-star-badge';badge.style.cssText='position:absolute;bottom:8px;right:8px;width:24px;height:24px;border-radius:50%;background:#E8A8B8;display:grid;place-items:center;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:5';badge.innerHTML='<svg width="12" height="11" viewBox="0 0 14 13" fill="none"><path d="M7 0l1.6 4.9h5.1l-4.1 3 1.6 4.9L7 9.8l-4.1 3 1.6-4.9-4.1-3h5.1z" fill="#fff"/></svg>';parent.appendChild(badge)}
 function _renderGalleryAlbumCard(ga,parent){if(!ga||!ga.title||!parent)return;var card=document.createElement('div');card.className='gallery-album-card-chat';card.onclick=function(){if(typeof openGalleryPanel==='function'){openGalleryPanel();setTimeout(function(){if(typeof _galleryAlbums!=='undefined'&&_galleryAlbumId!==ga.id){var a=_galleryAlbums.find(function(x){return x.id===ga.id});if(a&&typeof _openAlbum==='function')_openAlbum(a.id)}},600)}};var icon=document.createElement('span');icon.className='gs-icon';icon.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="6"/><path d="M3 9h18"/><path d="M9 3v18"/></svg>';var text=document.createElement('div');text.className='gs-text';text.innerHTML='<span class="gs-strong">Created album '+escHtml(ga.title)+'</span>'+(ga.mood?'<br><span class="gs-muted">'+escHtml(ga.mood)+'</span>':'');var arrow=document.createElement('span');arrow.className='gs-arrow';arrow.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>';card.append(icon,text,arrow);parent.appendChild(card)}
-function _renderActionReportCard(phases,traceRow,parent){if(!phases||!phases.length||!parent)return;var toolPhases=phases.filter(function(p){return p.type==='tool'});if(!toolPhases.length)return;var _CODE_TOOLS=['Read','Write','Edit','Grep','Glob','Bash'];toolPhases=toolPhases.filter(function(p){return _CODE_TOOLS.indexOf(p.toolName)!==-1});if(!toolPhases.length)return;var completed=toolPhases.filter(function(p){return p.status==='completed'}).length;var errored=toolPhases.filter(function(p){return p.status==='error'}).length;var allDone=errored===0;var countLabel=toolPhases.length+'个操作';var statusLabel=allDone?'完成':(errored>0?errored+'个失败':'');var fileMap={},files=[];toolPhases.forEach(function(p){var input=p.toolInput;if(!input)return;var name=p.toolName,fp=null;if(name==='Read'||name==='Write'||name==='Edit'){fp=typeof input==='string'?input:input.file_path||input.filePath||''}else if(name==='Grep'||name==='Glob'){fp=(input.path||'')}if(fp&&!fileMap[fp]){fileMap[fp]=true;files.push({path:fp,tool:name})}});var bashPhase=null;for(var i=toolPhases.length-1;i>=0;i--){if(toolPhases[i].toolName==='Bash'){bashPhase=toolPhases[i];break}}var card=document.createElement('div');card.className='action-report-card';card.style.cssText='margin:10px 0;width:100%;max-width:440px;border-radius:18px;overflow:hidden;background:var(--ar-bg,#FBF7F0);border:1px solid var(--ar-line,#E5DFD4);cursor:pointer;transition:box-shadow .15s';card.onmouseenter=function(){card.style.boxShadow='0 2px 12px rgba(0,0,0,.05)'};card.onmouseleave=function(){card.style.boxShadow='none'};card.onclick=function(e){if(e.target.tagName==='BUTTON')return;if(traceRow)openTraceSheet(traceRow)};var hdr=document.createElement('div');hdr.style.cssText='display:flex;align-items:center;gap:10px;padding:14px 16px';var statusCircle=document.createElement('span');statusCircle.style.cssText='width:22px;height:22px;border-radius:50%;background:'+(allDone?'#6BAF7B':'#E09068')+';display:grid;place-items:center;flex:none';statusCircle.innerHTML=allDone?'<svg width="11" height="9" viewBox="0 0 12 10" fill="none"><path d="M1 5l3 3 7-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>':'<span style="color:#fff;font-size:10px;font-weight:700">!</span>';var titleEl=document.createElement('span');titleEl.style.cssText='flex:1;font:600 14px/1.3 var(--font-sans);color:var(--ar-text,#2C2821)';titleEl.textContent=countLabel+' · '+statusLabel;var ownerEl=document.createElement('span');ownerEl.style.cssText='font:400 12px/1 var(--font-sans);color:var(--ar-muted,#A0988B)';ownerEl.textContent='Claude';hdr.append(statusCircle,titleEl,ownerEl);card.append(hdr);if(bashPhase){var term=document.createElement('div');term.style.cssText='margin:0 14px 10px;padding:12px 14px;background:#1E1B18;border-radius:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;color:#D4C8B8;max-height:110px;overflow:hidden;position:relative';var cmd='';try{cmd=typeof bashPhase.toolInput==='string'?bashPhase.toolInput:((bashPhase.toolInput||{}).command||JSON.stringify(bashPhase.toolInput||{}).slice(0,120));}catch(e){cmd='…';}var out='';try{out=typeof bashPhase.toolOutput==='string'?bashPhase.toolOutput.slice(0,380):JSON.stringify(bashPhase.toolOutput||'').slice(0,380);}catch(e){out='…';}term.innerHTML='<div style="color:#8AACA0">$ '+escHtml(cmd)+'</div>'+(out?'<div style="color:#A0988B;margin-top:4px">'+escHtml(out)+'</div>':'');term.innerHTML+='<div style="position:absolute;bottom:0;left:0;right:0;height:28px;background:linear-gradient(transparent,#1E1B18)"></div>';card.append(term)}if(files.length){var chips=document.createElement('div');chips.style.cssText='display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 10px';files.slice(0,5).forEach(function(f){var chip=document.createElement('span');chip.style.cssText='display:inline-flex;align-items:center;gap:5px;padding:5px 10px;background:var(--ar-card,#F2EFE7);border-radius:8px;font:400 12px/1.3 var(--font-sans);color:var(--ar-text,#2C2821)';var iconEl=f.tool==='Read'?'📄':f.tool==='Write'?'':f.tool==='Edit'?'✂️':'🔍';var shortName=f.path.replace(/^.*[\\/]/,'');if(shortName.length>22)shortName=shortName.slice(0,20)+'…';chip.innerHTML='<span style="font-size:10px">'+iconEl+'</span><span>'+escHtml(shortName)+'</span>';chips.append(chip)});if(files.length>5){var more=document.createElement('span');more.style.cssText='font:400 12px var(--font-sans);color:var(--ar-muted,#A0988B);display:grid;place-items:center';more.textContent='+'+((files.length)-5);chips.append(more)}card.append(chips)}var viewBtn=document.createElement('button');viewBtn.style.cssText='display:block;width:calc(100% - 28px);margin:0 14px 12px;padding:10px 0;border:none;border-top:1px solid var(--ar-line,#E5DFD4);background:transparent;font:500 13px/1 var(--font-sans);color:var(--ar-text,#2C2821);cursor:pointer;text-align:center;opacity:.7;transition:opacity .15s';viewBtn.onmouseenter=function(){viewBtn.style.opacity='1'};viewBtn.onmouseleave=function(){viewBtn.style.opacity='.7'};viewBtn.textContent='查看全部 →';viewBtn.onclick=function(e){e.stopPropagation();if(traceRow)openTraceSheet(traceRow)};card.append(viewBtn);parent.appendChild(card)}
+function _renderActionReportCard(phases,traceRow,parent){
+  if(!phases||!phases.length||!parent)return;
+  var toolPhases=phases.filter(function(p){return p.type==='tool'});
+  if(!toolPhases.length)return;
+  var _CODE_TOOLS=['Read','Write','Edit','Grep','Glob','Bash'];
+  toolPhases=toolPhases.filter(function(p){return _CODE_TOOLS.indexOf(p.toolName)!==-1});
+  if(!toolPhases.length)return;
+  var errored=toolPhases.filter(function(p){return p.status==='error'}).length;
+  var allDone=errored===0;
+  var countLabel=toolPhases.length+' 个操作';
+  var statusLabel=allDone?'完成':(errored+' 个失败');
+
+  // 每个操作一行：路径优先，Bash 就显示命令 —— 跟图上黑块里那串一样
+  var lines=[],fileMap={},files=[];
+  toolPhases.forEach(function(p){
+    var input=p.toolInput,name=p.toolName,fp='';
+    if(name==='Read'||name==='Write'||name==='Edit'){fp=typeof input==='string'?input:(input&&(input.file_path||input.filePath))||''}
+    else if(name==='Grep'||name==='Glob'){fp=(input&&input.path)||(input&&input.pattern)||''}
+    else if(name==='Bash'){try{fp=typeof input==='string'?input:((input||{}).command||'')}catch(e){fp=''}}
+    lines.push({text:fp||name,ok:p.status!=='error'});
+    if(fp&&name!=='Bash'&&!fileMap[fp]){fileMap[fp]=true;files.push({path:fp,tool:name})}
+  });
+
+  var CHK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px"><polyline points="20 6 9 17 4 12"/></svg>';
+  var EXPAND='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+  var DOCICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+
+  var card=document.createElement('div');
+  card.className='action-report-card';
+  card.style.cssText='margin:10px 0;width:100%;max-width:440px;border-radius:20px;overflow:hidden;background:var(--ar-bg,#F4F1EC);border:1px solid var(--ar-line,#E5DFD4);cursor:pointer;transition:box-shadow .15s';
+  card.onmouseenter=function(){card.style.boxShadow='0 2px 12px rgba(0,0,0,.05)'};
+  card.onmouseleave=function(){card.style.boxShadow='none'};
+  card.onclick=function(e){if(e.target.closest('button'))return;if(traceRow)openTraceSheet(traceRow)};
+
+  // ── 头：深色圆角勾 + 标题 + 「● Claude」+ 右上展开 ──
+  var hdr=document.createElement('div');
+  hdr.style.cssText='display:flex;align-items:flex-start;gap:12px;padding:15px 16px 12px';
+  var mark=document.createElement('span');
+  mark.style.cssText='width:30px;height:30px;border-radius:10px;background:'+(allDone?'var(--ar-mark,#2C2821)':'#C4622D')+';color:#fff;display:grid;place-items:center;flex:none;margin-top:1px';
+  mark.innerHTML=CHK;
+  var titleWrap=document.createElement('div');
+  titleWrap.style.cssText='flex:1;min-width:0';
+  var titleEl=document.createElement('div');
+  titleEl.style.cssText='font:600 15px/1.35 var(--font-sans);color:var(--ar-text,#2C2821)';
+  titleEl.textContent=countLabel+' · '+statusLabel;
+  var ownerEl=document.createElement('div');
+  ownerEl.style.cssText='display:flex;align-items:center;gap:5px;margin-top:3px;font:400 12px/1 var(--font-sans);color:var(--ar-muted,#A0988B)';
+  ownerEl.innerHTML='<span style="width:5px;height:5px;border-radius:50%;background:currentColor;display:block"></span>Claude';
+  titleWrap.append(titleEl,ownerEl);
+  var expandBtn=document.createElement('button');
+  expandBtn.type='button';
+  expandBtn.style.cssText='width:30px;height:30px;border-radius:50%;border:none;background:var(--ar-card,#E9E5DC);color:var(--ar-muted,#8A8276);display:grid;place-items:center;flex:none;cursor:pointer';
+  expandBtn.innerHTML=EXPAND;
+  expandBtn.onclick=function(){if(traceRow)openTraceSheet(traceRow)};
+  hdr.append(mark,titleWrap,expandBtn);
+  card.append(hdr);
+
+  // ── 「>_ 终端」pill 行 ──
+  var pillRow=document.createElement('div');
+  pillRow.style.cssText='display:flex;align-items:center;gap:8px;padding:0 16px 10px';
+  var pill=document.createElement('span');
+  pill.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:var(--ar-pill,#FFF);border-radius:10px;font:600 12px/1 var(--font-sans);color:var(--ar-text,#2C2821);box-shadow:0 1px 3px rgba(0,0,0,.05)';
+  pill.innerHTML='<span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;opacity:.55">&gt;_</span>终端';
+  var doneTag=document.createElement('span');
+  doneTag.style.cssText='margin-left:auto;display:flex;align-items:center;gap:5px;font:400 12px/1 var(--font-sans);color:'+(allDone?'#6BAF7B':'#C4622D');
+  doneTag.innerHTML='<span style="width:5px;height:5px;border-radius:50%;background:currentColor;display:block"></span>'+statusLabel;
+  pillRow.append(pill,doneTag);
+  card.append(pillRow);
+
+  // ── 黑块：每个操作一行，前面一个绿勾 ──
+  var term=document.createElement('div');
+  term.style.cssText='margin:0 16px 12px;padding:12px 14px;background:#1E1B18;border-radius:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.9;color:#D4C8B8;max-height:150px;overflow:hidden;position:relative';
+  term.innerHTML=lines.slice(0,6).map(function(l){
+    var t=l.text.length>52?l.text.slice(0,50)+'…':l.text;
+    return '<div style="display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden">'+
+           '<span style="color:'+(l.ok?'#7FBF8F':'#E09068')+';flex:none;display:flex">'+CHK+'</span>'+
+           '<span style="overflow:hidden;text-overflow:ellipsis">'+escHtml(t)+'</span></div>';
+  }).join('');
+  if(lines.length>6){
+    term.innerHTML+='<div style="position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(transparent,#1E1B18)"></div>';
+  }
+  card.append(term);
+
+  // ── 文件 chips（线描图标，不用 emoji）──
+  if(files.length){
+    var chips=document.createElement('div');
+    chips.style.cssText='display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 10px';
+    files.slice(0,5).forEach(function(f){
+      var chip=document.createElement('span');
+      chip.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:5px 10px;background:var(--ar-card,#E9E5DC);border-radius:9px;font:400 12px/1.3 var(--font-sans);color:var(--ar-text,#2C2821)';
+      var shortName=f.path.replace(/^.*[\\\/]/,'');
+      if(shortName.length>22)shortName=shortName.slice(0,20)+'…';
+      chip.innerHTML='<span style="opacity:.5;display:flex">'+DOCICON+'</span><span>'+escHtml(shortName)+'</span>';
+      chips.append(chip);
+    });
+    if(files.length>5){
+      var more=document.createElement('span');
+      more.style.cssText='font:400 12px var(--font-sans);color:var(--ar-muted,#A0988B);display:grid;place-items:center';
+      more.textContent='+'+(files.length-5);
+      chips.append(more);
+    }
+    card.append(chips);
+  }
+
+  // ── 进度条 + 「完成 · N 个操作」 ──
+  var barRow=document.createElement('div');
+  barRow.style.cssText='display:flex;align-items:center;gap:10px;padding:0 16px 12px';
+  var bar=document.createElement('span');
+  bar.style.cssText='flex:1;height:3px;border-radius:2px;background:'+(allDone?'#7FBF8F':'#E09068')+';display:block';
+  var barTxt=document.createElement('span');
+  barTxt.style.cssText='font:400 11px/1 var(--font-sans);color:var(--ar-muted,#A0988B);flex:none';
+  barTxt.textContent=statusLabel+' · '+countLabel;
+  barRow.append(bar,barTxt);
+  card.append(barRow);
+
+  // ── 查看全部 ──
+  var viewBtn=document.createElement('button');
+  viewBtn.type='button';
+  viewBtn.style.cssText='display:flex;align-items:center;justify-content:center;gap:7px;width:calc(100% - 32px);margin:0 16px 14px;padding:10px 0;border:none;border-radius:12px;background:var(--ar-card,#E9E5DC);color:var(--ar-text,#2C2821);font:500 13px var(--font-sans);cursor:pointer';
+  viewBtn.innerHTML='<span style="opacity:.6;display:flex">'+EXPAND+'</span>查看全部';
+  viewBtn.onclick=function(){if(traceRow)openTraceSheet(traceRow)};
+  card.append(viewBtn);
+
+  parent.appendChild(card);
+}
 function _renderToolFileCard(fc,parent){if(!fc||!fc.id||!parent)return;var name=fc.filename||'file';var id=fc.id;var sizeStr=fc.size?_formatFileSize(fc.size):'';var url='/api/files/'+id;var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var card=document.createElement('a');card.href=url;card.download=name;card.className='file-card';card.dataset.fileId=id;card.dataset.fileName=name;card.style.cssText='display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s';card.onmouseenter=function(){card.style.background='var(--bg-hover)'};card.onmouseleave=function(){card.style.background='var(--bg-surface)'};var iconSpan=document.createElement('span');iconSpan.style.cssText='display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none';iconSpan.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var infoSpan=document.createElement('span');infoSpan.style.cssText='flex:1;min-width:0';var nameEl=document.createElement('span');nameEl.style.cssText='display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';nameEl.textContent=name;var metaEl=document.createElement('span');metaEl.className='file-card-meta';metaEl.style.cssText='display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px';var parts=[ext.toLowerCase()];if(sizeStr)parts.push(sizeStr);metaEl.textContent=parts.join(' · ');var dlSpan=document.createElement('span');dlSpan.style.cssText='flex:none;color:var(--text-time)';dlSpan.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';infoSpan.append(nameEl,metaEl);card.append(iconSpan,infoSpan,dlSpan);parent.appendChild(card)}
 function _renderCmdCapsulesAfter(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html2=md.innerHTML;var re=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;var capsules=[];while((match=re.exec(html2))!==null){changed=true;var cid=match[1],ctype=match[2],ctitle=match[3];var cmdIcon=ctype==='quiz'?'\u{1F4DD}':ctype==='task'?'\u{1F4CB}':'\u23F1\uFE0F';var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',cid);cap.setAttribute('data-cmd-type',ctype);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.innerHTML='<span>'+cmdIcon+'</span><span>'+escHtml(ctitle)+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});capsules.push(cap);html2=html2.replace(match[0],'')}if(changed){md.innerHTML=html2;var bubbleEl=body.querySelector('.bubble');var after=bubbleEl||md;capsules.forEach(function(c){after.after(c);after=c})}var existing=md.querySelectorAll('.cmd-capsule[data-cmd-id]');if(existing.length){var bubbleEl2=body.querySelector('.bubble');var after2=bubbleEl2||md;existing.forEach(function(c){c.remove();after2.after(c);after2=c})}}
 function _renderFileCards(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;var re=/\[FILE:([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;while((match=re.exec(html))!==null){changed=true;var name=match[1];var id=match[2];var url='/api/files/'+id;var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var icon='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var card='<a href="'+url+'" download="'+escHtml(name)+'" class="file-card" data-file-id="'+id+'" data-file-name="'+escHtml(name)+'" style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s"><span class="file-card-icon" style="display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none">'+icon+'</span><span style="flex:1;min-width:0"><span class="file-card-name" style="display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span><span class="file-card-meta" style="display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px">'+ext.toLowerCase()+'</span></span><span style="flex:none;color:var(--text-time)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></a>';html=html.replace(match[0],card)}if(changed)md.innerHTML=html;var cards=md.querySelectorAll('.file-card[data-file-id]');cards.forEach(function(card){var fid=card.dataset.fileId;api('/api/files/'+fid+'/info').then(function(r){return r.json()}).then(function(info){var fn=card.dataset.fileName||'';var ext2=fn.lastIndexOf('.')>0?fn.slice(fn.lastIndexOf('.')+1).toUpperCase():'FILE';var sizeStr=info.size?_formatFileSize(info.size):'';var parts=[ext2.toLowerCase()];if(sizeStr)parts.push(sizeStr);var meta=card.querySelector('.file-card-meta');if(meta)meta.textContent=parts.join(' · ')}).catch(function(){})})}
@@ -2139,7 +2282,26 @@ const _CLAWD_SL_SVG=`    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 -2
 const _CLAWD_EGG_POOL=[_CLAWD_COFFEE_SVG,_CLAWD_LM_SVG,_CLAWD_GM_SVG,_CLAWD_SG_SVG,_CLAWD_RD_SVG,_CLAWD_ET_SVG,_CLAWD_EX_SVG,_CLAWD_SH_SVG,_CLAWD_SL_SVG];
 function _isBashMemorySave(input){const cmd=typeof input==='string'?input:(input&&input.command)||'';return cmd.includes('/api/profile/memory')}
 function _isMemoryOp(name,input){if(name==='Bash'&&_isBashMemorySave(input))return true;const fp=typeof input==='string'?input:(input&&(input.file_path||input.path||input.pattern))||'';return (name==='Read'||name==='Grep'||name==='Glob'||name==='Write'||name==='Edit')&&(/memories[\/\\]/.test(fp)||/CLAUDE\.md/.test(fp)||/profile\.json/.test(fp))}
-const _TOOL_ICONS={WebSearch:_SVG_GLOBE,Grep:_SVG_GLOBE,Glob:_SVG_GLOBE,WebFetch:_SVG_GLOBE,Read:_SVG_DOC,Write:_SVG_PEN,Edit:_SVG_PEN,Bash:_TOOL_SVG,TodoWrite:_SVG_LIST};
+const _SVG_SUN='<svg viewBox="0 0 256 256"><circle cx="128" cy="128" r="44" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M128 28v20M128 208v20M28 128h20M208 128h20M57 57l14 14M185 185l14 14M199 57l-14 14M71 185l-14 14" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_CLOCK2='<svg viewBox="0 0 256 256"><circle cx="128" cy="128" r="92" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M128 72v56l40 24" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_BRAIN='<svg viewBox="0 0 256 256"><path d="M100 44a36 36 0 00-36 36 32 32 0 00-16 60v20a36 36 0 0052 32M156 44a36 36 0 0136 36 32 32 0 0116 60v20a36 36 0 01-52 32" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><line x1="128" y1="44" x2="128" y2="212" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_NOTE='<svg viewBox="0 0 256 256"><rect x="48" y="36" width="160" height="184" rx="14" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M84 84h88M84 124h88M84 164h56" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_BOOK='<svg viewBox="0 0 256 256"><path d="M40 56a24 24 0 0124-24h56v192H64a24 24 0 00-24 24zM216 56a24 24 0 00-24-24h-56v192h56a24 24 0 0124 24z" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_CHAT='<svg viewBox="0 0 256 256"><path d="M48 40h160a16 16 0 0116 16v104a16 16 0 01-16 16H96l-48 40V56a16 16 0 010-16z" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_IMAGE='<svg viewBox="0 0 256 256"><rect x="36" y="52" width="184" height="152" rx="18" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><circle cx="92" cy="104" r="16" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M220 164l-52-52-84 84" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_MUSIC='<svg viewBox="0 0 256 256"><path d="M96 196V56l108-20v140" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><circle cx="68" cy="196" r="28" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><circle cx="176" cy="176" r="28" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_PHONE='<svg viewBox="0 0 256 256"><path d="M92 24H52a20 20 0 00-20 22c8 100 78 170 178 178a20 20 0 0022-20v-40a16 16 0 00-13-16l-40-8a16 16 0 00-16 6l-14 18a152 152 0 01-64-64l18-14a16 16 0 006-16l-8-40a16 16 0 00-16-13z" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_SMILE='<svg viewBox="0 0 256 256"><circle cx="128" cy="128" r="92" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><circle cx="100" cy="108" r="10" fill="currentColor"/><circle cx="156" cy="108" r="10" fill="currentColor"/><path d="M88 156a48 48 0 0080 0" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_LEAF='<svg viewBox="0 0 256 256"><path d="M60 196C36 128 76 52 208 44c8 128-64 168-132 148z" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><line x1="60" y1="196" x2="140" y2="116" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_TERM='<svg viewBox="0 0 256 256"><rect x="32" y="48" width="192" height="160" rx="18" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M80 108l28 24-28 24M132 168h48" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_WAVE='<svg viewBox="0 0 256 256"><path d="M24 128h28l20-52 28 112 28-136 28 112 20-36h56" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_BOTTLE='<svg viewBox="0 0 256 256"><path d="M104 28h48v40l32 44v112a12 12 0 01-12 12H84a12 12 0 01-12-12V112l32-44z" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M72 148h112" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_STAR2='<svg viewBox="0 0 256 256"><path d="M128 32l28 62 68 8-50 46 14 68-60-34-60 34 14-68-50-46 68-8z" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_ROAD='<svg viewBox="0 0 256 256"><path d="M96 32L64 224M160 32l32 192M128 56v24M128 116v24M128 176v24" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_FOLDER='<svg viewBox="0 0 256 256"><path d="M32 72a16 16 0 0116-16h48l24 28h88a16 16 0 0116 16v88a16 16 0 01-16 16H48a16 16 0 01-16-16z" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const _SVG_HAND='<svg viewBox="0 0 256 256"><path d="M96 120V52a16 16 0 0132 0v60M128 112V40a16 16 0 0132 0v72M160 112V60a16 16 0 0132 0v92c0 40-28 72-68 72s-68-32-68-72v-28a16 16 0 0132 0v20" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// 粥粥要的：工具一律用线描图标，不出 emoji。自定义工具没配就落回齿轮。
+const _TOOL_ICONS={WebSearch:_SVG_GLOBE,Grep:_SVG_GLOBE,Glob:_SVG_GLOBE,WebFetch:_SVG_GLOBE,Read:_SVG_DOC,Write:_SVG_PEN,Edit:_SVG_PEN,Bash:_TOOL_SVG,TodoWrite:_SVG_LIST,get_weather:_SVG_SUN,get_time:_SVG_CLOCK2,recall_memory:_SVG_BRAIN,search_chat_history:_SVG_BRAIN,nocturne_persona:_SVG_BRAIN,nocturne_slang:_SVG_CHAT,nocturne_hold:_SVG_HAND,nocturne_texture:_SVG_HAND,nocturne_moment:_SVG_STAR2,nocturne_story:_SVG_BOOK,nocturne_bottle:_SVG_BOTTLE,drive:_SVG_ROAD,wander:_SVG_ROAD,garden:_SVG_LEAF,save_note:_SVG_NOTE,read_diary:_SVG_BOOK,diary_comment:_SVG_CHAT,reading_context:_SVG_BOOK,reading_note:_SVG_NOTE,reading_highlight:_SVG_BOOK,project_write_file:_SVG_PEN,project_read_file:_SVG_DOC,project_list_files:_SVG_FOLDER,create_file:_SVG_PEN,read_uploaded_file:_SVG_DOC,create_artifact:_SVG_IMAGE,generate_image:_SVG_IMAGE,send_sticker:_SVG_SMILE,share_music:_SVG_MUSIC,call_her:_SVG_PHONE,issue_command:_SVG_TERM,toy_control:_SVG_WAVE,create_gallery_album:_SVG_FOLDER,save_to_gallery:_SVG_IMAGE,list_gallery_photos:_SVG_IMAGE,send_gallery_photo:_SVG_IMAGE};
 function _toolIconSvg(name,input){if(_isMemoryOp(name,input))return icon('history');return _TOOL_ICONS[name]||_SVG_GEAR}
 function _toolActionDescription(name,input){if(_isMemoryOp(name,input)){const w=['Write','Edit','Bash'];return w.includes(name)?'Saving memory\u2026':'Recalling memory\u2026'}const map={WebSearch:'Searching the web\u2026',WebFetch:'Fetching web page\u2026',Read:'Reading file\u2026',Grep:'Searching for pattern\u2026',Glob:'Finding files\u2026',Bash:'Running command\u2026',Write:'Writing file\u2026',Edit:'Editing file\u2026',TodoWrite:'Updating todo list\u2026'};return map[name]||(name?name+'\u2026':'Working\u2026')}
 function _maybeFetchToolCaption(row,d){const phases=_getPhases(row);if(phases.some(p=>p.type==='thinking'))return;const phase=phases.find(p=>p.toolUseId===d.tool_use_id);if(!phase)return;api('/api/tool-caption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_name:d.name||phase.toolName||'tool',tool_input:phase.toolInput,tool_output:typeof d.content==='string'?d.content.slice(0,4000):JSON.stringify(d.content||'').slice(0,4000)})}).then(r=>r&&r.ok?r.json():null).then(j=>{if(!j||!j.caption)return;const ps=_getPhases(row);const p=ps.find(x=>x.toolUseId===d.tool_use_id);if(!p)return;p.caption=j.caption;_setPhases(row,ps);_renderTraceRowActive(row)}).catch(()=>{})}
@@ -3221,14 +3383,10 @@ renderMessage=function(md,text){
     mCard.innerHTML='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="color:var(--accent)"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span style="font-weight:600;font-size:14px;color:var(--accent)">'+escHtml(mTitle)+'</span></div><div style="font-size:15px;line-height:1.6;color:var(--text-primary)">'+escHtml(mBody).replace(/\n/g,'<br>')+'</div>';
     md.innerHTML='';md.append(mCard);return;
   }
-  // [terminal:标题|命令|输出] — 终端代码卡
-  var termMatch=src.match(/\[terminal:([^|\]]+)\|([^|\]]+)\|?([^\]]*)\]/);
-  if(termMatch){
-    var tTitle=termMatch[1].trim(),tCmd=termMatch[2].trim(),tOut=termMatch[3]?termMatch[3].trim():'';
-    var tCard=document.createElement('div');tCard.style.cssText='width:100%;max-width:440px;border-radius:20px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06);margin:8px 0';
-    tCard.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:#2D2A26;color:#8BC34A;font-size:13px;font-family:var(--font-mono)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="flex:none"><polyline points="20 6 9 17 4 12"/></svg> '+escHtml(tTitle)+'</div><div style="padding:12px 16px;background:#1E1C1A;color:#D4CFC8;font-family:var(--font-mono);font-size:13px;line-height:1.7;white-space:pre-wrap">$ '+escHtml(tCmd)+(tOut?'\n'+escHtml(tOut):'')+'</div>';
-    md.innerHTML='';md.append(tCard);return;
-  }
+  // [terminal:…] 那张伪终端卡删了（2026-08-21，粥粥要的）：
+  // 它是模型在正文里打个标记就能凭空画出来的，内容全是编的、根本没跑过，
+  // 跟真实工具记录生成的 _renderActionReportCard 长得一模一样，会骗人。
+  // 现在他再打这个标记，就只当普通文字显示。
   // 📜 内心信笺 <想·渴>…</想>：从正文里抽出来，渲染成一张单独的信笺，跟说出口的气泡分开。
   // 他没打算讲出口、但心里真实转着的那一下。跟 <feel> 不同——feel 是隐藏痕迹，这个是要看见的。
   var _insideCards=[];
@@ -3820,14 +3978,16 @@ $('projectsBtn')?.addEventListener('click', async () => {
   showProjectList();
 });
 
-$('artifactsBtn')?.addEventListener('click', async () => {
+// 抽屉里这个是 workplace（opus 改代码），跟顶部那个作品集不是一回事
+$('artifactsBtn')?.addEventListener('click', () => {
   closeDrawer();
-  await _loadArtifactsFromDB();
-  _renderArtifactsSheet();
-  sheet('artifacts',true);
-  $('artifactsSheet').classList.add('expanded');
-  $('artifactsSheet').style.transform='';
+  if (typeof renderWorkplaceSheet === 'function') renderWorkplaceSheet();
+  sheet('workplace',true);
+  $('workplaceSheet').classList.add('expanded');
+  $('workplaceSheet').style.transform='';
 });
+$('closeWorkplace')?.addEventListener('click', () => sheet('workplace',false));
+$('workplaceOverlay')?.addEventListener('click', () => sheet('workplace',false));
 
 let currentProjectId = null;
 

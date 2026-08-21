@@ -900,15 +900,27 @@ html[data-theme="dark"] .composer-box{border-color:var(--border)}
 html[data-theme="dark"] .delete-confirm-popover,.rename-dialog{background:var(--bg-surface)}
 /* 来电浮窗 */
 .incoming-call-overlay{position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);animation:callFadeIn .3s ease}
-.incoming-call-card{background:rgba(255,255,255,.88);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);border-radius:28px;padding:40px 36px 32px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.15);width:min(320px,calc(100% - 48px))}
-.incoming-call-avatar{display:block;width:80px;height:80px;border-radius:50%;margin:0 auto 16px;overflow:hidden}
-.incoming-call-name{font:600 22px/1 var(--font-sans);color:#201F1D;margin:0 0 4px}
-.incoming-call-sub{font:400 14px/1 var(--font-sans);color:#8A8276;margin:0 0 28px}
-.incoming-call-btns{display:flex;justify-content:center;gap:24px}
-.incoming-call-hangup{width:60px;height:60px;border-radius:50%;border:0;background:#E54D2E;color:#fff;display:grid;place-items:center;cursor:pointer;box-shadow:0 4px 16px rgba(229,77,46,.3)}
-.incoming-call-hangup:active{background:#C04028}
-.incoming-call-answer{width:60px;height:60px;border-radius:50%;border:0;background:#34C759;color:#fff;display:grid;place-items:center;cursor:pointer;box-shadow:0 4px 16px rgba(52,199,89,.3)}
-.incoming-call-answer:active{background:#2DA84A}
+/* 卡片：图里那种浅灰哑光，不是半透明白 */
+.incoming-call-card{background:#EDEBE7;border-radius:32px;padding:22px 28px 26px;text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.22);width:min(330px,calc(100% - 44px))}
+html[data-theme="dark"] .incoming-call-card{background:#26241F}
+/* 顶部 ● INCOMING CALL */
+.incoming-call-tag{display:flex;align-items:center;justify-content:center;gap:6px;font:500 10px/1 var(--font-sans);letter-spacing:.18em;color:#8A8276;text-transform:uppercase;margin:0 0 18px}
+.incoming-call-tag i{width:5px;height:5px;border-radius:50%;background:#8A8276;display:block}
+/* 头像：白底大圆，占满卡片宽度的大半 */
+.incoming-call-avatar{display:grid;place-items:center;width:172px;height:172px;border-radius:50%;margin:0 auto 18px;overflow:hidden;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.05)}
+html[data-theme="dark"] .incoming-call-avatar{background:#F5F3EF}
+.incoming-call-name{font:400 30px/1.1 var(--font-serif,Georgia,'Songti SC',serif);color:#201F1D;margin:0 0 8px}
+html[data-theme="dark"] .incoming-call-name{color:#F0EDE7}
+.incoming-call-sub{font:400 13px/1 var(--font-sans);color:#8A8276;margin:0 0 26px}
+/* 按钮：更大、更开，底下带文字标签 */
+.incoming-call-btns{display:flex;justify-content:center;gap:44px}
+.incoming-call-act{display:flex;flex-direction:column;align-items:center;gap:8px}
+.incoming-call-act span{font:400 11px/1 var(--font-sans);color:#8A8276}
+.incoming-call-hangup,.incoming-call-answer{width:68px;height:68px;border-radius:50%;border:0;color:#fff;display:grid;place-items:center;cursor:pointer}
+.incoming-call-hangup{background:#D93A2B;box-shadow:0 6px 18px rgba(217,58,43,.32)}
+.incoming-call-hangup:active{background:#B92E21}
+.incoming-call-answer{background:#3EAE55;box-shadow:0 6px 18px rgba(62,174,85,.32)}
+.incoming-call-answer:active{background:#339146}
 @keyframes callFadeIn{from{opacity:0}to{opacity:1}}
 
 /* === Books 批注系统（Port 自 Rifugio + Ocean） === */
