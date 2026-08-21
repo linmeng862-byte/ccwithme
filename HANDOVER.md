@@ -26,6 +26,30 @@ git fetch && git log --oneline HEAD..@{u}    # 另一台推了什么上来
 
 ---
 
+## 2026-08-22 · PDF 要 poppler-utils，每台各自装
+
+她在 workplace 发 PDF，Read 直接报 `pdftoppm is not installed` —— **不是乱码问题，是根本读不了**。
+Read 读 PDF 靠 poppler 把页面渲染成图，没有它第一步就断。
+
+**这是系统依赖，不在 package.json 里，每台机器各装一次：**
+
+```bash
+sudo apt-get install -y poppler-utils      # 装完 pdftoppm/pdftotext/pdfinfo 就位
+```
+
+**你这台装没装，自己试一下就知道**（别照这段假设已经装好了）。
+
+装完实测：11 页中文 PDF《给机看的教程》第 1 页，**中文、中文标点「」、排版、水印全部正常，零乱码**。
+原因是 Read 走渲染成图那条路，不是抽文本 —— 所以中文/公式/扫描件都认得。
+（真正会乱码的是 `pdftotext` 那种文本提取，CID 字体缺 ToUnicode 映射时变问号。Read 不走那条。）
+
+⚠️ 顺手修了 `CLAUDE.md` 里那句「PDF 用 Read 打开」—— 以前没提这个依赖，
+等于每轮都在教他一个可能做不到的能力，他会答应她"我看看"然后撞错误。
+现在写明了报这个错该怎么办。**跟删掉「工程模式有 Bash」是同一类问题：
+别让他答应做不到的事。**
+
+---
+
 ## 🔴 未竟 —— 接手先看这段
 
 ### 1. 缓存隔几轮整块重写（**最烧钱的问题，没定案**）

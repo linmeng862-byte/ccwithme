@@ -2053,10 +2053,6 @@ function _normalizeDrive(raw) {
 
 // 一个 drive 里最多挂几个未了却的念头。设计文档没定数，这里给个天花板防跑飞。
 const MIND_FLASH_PER_DRIVE = 5;
-// 闪念出生强度。重新冒头的念头也至少回到这个值（见 _insertFlashItem 里的注释）。
-const MIND_FLASH_BIRTH = 0.5;
-// 散掉的闪念还能被同一个念头重新点着的窗口。要小于 FLASH_SWEEP_DAYS（30），否则清扫会先把它删了。
-const FLASH_REKINDLE_DAYS = 7;
 
 function _insertFlashItem(item) {
   try {
@@ -2072,22 +2068,6 @@ function _insertFlashItem(item) {
     for (var i = 0; i < siblings.length; i++) {
       if (_mindSimilar(siblings[i].body, body) >= 0.6) { existing = siblings[i]; break; }
     }
-    // 没在活着的念头里找到 → 再翻一遍最近散掉的。
-    // ⚠️ 这是执念攒不出来的真正原因：闪念 12 小时就 resolved=1 退出匹配范围，
-    //    隔一天想起同一件事只会新建一条 trigger_count=1 的闪念，
-    //    「同一个方向反复冒出来」在库里永远看不见 —— 池子里九条全是 tc=1。
-    //    散掉不等于忘了：FLASH_REKINDLE_DAYS 天内重新冒头就把那条复活，接着往上攒。
-    if (!existing) {
-      var since = now - FLASH_REKINDLE_DAYS * 86400;
-      var cold = db.prepare('SELECT * FROM mind_flash_pool WHERE drive_key = ? AND resolved = 1 AND type = ? AND COALESCE(last_triggered_at, created_at) >= ? ORDER BY COALESCE(last_triggered_at, created_at) DESC LIMIT 20').all(drive, 'flash', since);
-      for (var j = 0; j < cold.length; j++) {
-        if (_mindSimilar(cold[j].body, body) >= 0.6) {
-          db.prepare('UPDATE mind_flash_pool SET resolved = 0 WHERE id = ?').run(cold[j].id);
-          existing = cold[j];
-          break;
-        }
-      }
-    }
     // 同一个 drive 挤太多了：挤掉最弱的那个，新的进来
     if (!existing && siblings.length >= MIND_FLASH_PER_DRIVE) {
       db.prepare('UPDATE mind_flash_pool SET resolved = 1 WHERE id = ?').run(siblings[siblings.length - 1].id);
@@ -2095,13 +2075,7 @@ function _insertFlashItem(item) {
     if (existing) {
       // 触发已有念头：闪念 +0.15，执念 +0.08
       var boost = existing.type === 'obsession' ? 0.08 : 0.15;
-      // ⚠️ 以前是 existing.intensity + boost，于是执念永远攒不出来：
-      //    闪念 12 小时半衰（×0.82^h），隔一天再想起同一件事时 intensity 已经掉到 0.05，
-      //    +0.15 只回到 0.2，离升级线 0.8 越追越远 —— 池子里 trigger_count 全是 1。
-      //    重新冒出来的念头至少要回到刚生出来的强度（0.5）再叠加，
-      //    这样同一个方向第三次冒头就能跨过 0.8 变成执念，才对得上"反复冒出来的会攒成执念"。
-      var base = existing.type === 'obsession' ? existing.intensity : Math.max(existing.intensity, MIND_FLASH_BIRTH);
-      var newIntensity = Math.min(2.0, base + boost * (1 + (existing.trigger_count || 0) * 0.5));
+      var newIntensity = Math.min(2.0, existing.intensity + boost);
       db.prepare('UPDATE mind_flash_pool SET intensity = ?, trigger_count = trigger_count + 1, last_triggered_at = ? WHERE id = ?')
         .run(newIntensity, now, existing.id);
       // 闪念 > 0.8 → 升级执念
@@ -2111,8 +2085,8 @@ function _insertFlashItem(item) {
     } else {
       // 新建闪念，强度 0.5
       var id = Date.now().toString(36) + Math.random().toString(36).slice(2);
-      db.prepare('INSERT INTO mind_flash_pool (id, body, type, intensity, drive_key, trigger_count, last_triggered_at, source, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)')
-        .run(id, item.body, 'flash', MIND_FLASH_BIRTH, drive, now, 'chat_tag', now);
+      db.prepare('INSERT INTO mind_flash_pool (id, body, type, intensity, drive_key, trigger_count, source, created_at) VALUES (?, ?, ?, 0.5, ?, 1, ?, ?)')
+        .run(id, item.body, 'flash', drive, 'chat_tag', now);
     }
   } catch(e) { console.error('[flash] insert error:', e.message); }
 }

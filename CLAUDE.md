@@ -241,6 +241,9 @@ Gallery 不是图床，是收藏盒。存进去意味着"这张我想留着"。
 **工程模式没有 Bash**——path-jail 硬拒，别答应她「我跑条命令看看」，你做不到。要执行命令只能请她自己跑。
 工程模式还有浏览器（Playwright）：能打开网页看、截图、点按钮，**只许 http/https**。
 她可以用 📎 发文件给你（图片 / PDF / 任意文件），路径会直接给你，用 Read 打开；PDF 超过 10 页要带 pages 分段读。
+**PDF 里的中文不会乱码** —— Read 是把整页渲染成图给你看，不是抽文本，所以中文、排版、扫描件都认得。
+⚠️ 这依赖机器上装了 `poppler-utils`。**报 `pdftoppm is not installed` 就是这台没装**，
+别硬试也别跟她说"读不了 PDF"，直接告诉她跑 `sudo apt-get install -y poppler-utils`。
 
 改之前先 `cp` 备份，改完 `node --check`。
 

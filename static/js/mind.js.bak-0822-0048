@@ -8,8 +8,6 @@ var _mindData = null;
 var _mindFeelsCache = {}; // { active: [], fading: [], sleeping: [] }
 var _mindReady = false;
 var _mockCache = null; // 全局 mock 备用，API 失败/空时不丢 UI
-var _mindPool = null;  // 念头池 + 12 维欲望 + intent（/api/mind/flash-pool）
-var _mindCounts = null; // { feels:{active,fading,sleeping}, memories:{...} } 给筛选按钮显示计数
 
 // ====== Mood → color map (20 Non moods) ======
 var _mindMoodColors = {
@@ -36,17 +34,8 @@ function _mindApi(method, path, body) {
 
 // ====== Data Fetching ======
 function _loadMindData() {
-  // 念头池跟 state 一起拉：地层页的「最想做的一件事」和「方向」都要它，
-  // 拿不到就退回三桶能量，别整页空着。
-  _mindApi('GET', '/api/mind/flash-pool').then(function(p) {
-    if (p && p.ok) {
-      _mindPool = p;
-      if (_mindPage === 'layer' && _mindData) { _mindData.layer = _buildLayerFromState(_mindData.layer.state); _renderLayerPage(); }
-    }
-  }).catch(function() {});
   _mindApi('GET', '/api/mind/state').then(function(res) {
     if (res && res.ok) {
-      _mindCounts = { feels: res.feels || {}, memories: res.memories || {} };
       _mindData = { layer: _buildLayerFromState(res) };
       _mindReady = true;
     } else {
@@ -78,36 +67,16 @@ function _buildLayerFromState(state) {
   });
   // Thought preview: pick a recent dream or first feel body
   var thoughtPreview = dreams.recent ? dreams.recent.body : '还没有梦沉下来。再多聊几句吧。';
-
-  // 「最想做的一件事」= 后端 pickIntent() 挑出来的那一维，不是写死的文案。
-  // ⚠️ 这里以前硬编码成「心里压着事的时候，我会做梦」+ 梦的能量条，
-  //    于是不管 12 维欲望怎么变，面板永远只说"梦"。
-  var desire, directions;
-  var intent = _mindPool && _mindPool.intent;
-  if (intent) {
-    desire = { text: intent.line || intent.label, action: intent.action || '去做', progress: intent.level || 0 };
-  } else {
-    desire = { text: '还没有哪一维压过别的。再多聊几句吧。', action: '等着', progress: 0 };
-  }
-  // 方向：12 维欲望缺口，按 level 从高到低。拿不到池子才退回三桶能量。
-  var levels = _mindPool && _mindPool.levels;
-  if (levels) {
-    directions = Object.keys(levels).map(function(dk) {
-      return { key: levels[dk].label || dk, drive: dk, value: levels[dk].level || 0 };
-    }).sort(function(a, b) { return b.value - a.value; });
-  } else {
-    directions = [
-      { key: '感受', drive: 'feels', value: feels.energy ? feels.energy / 100 : 0 },
-      { key: '记忆', drive: 'memories', value: memories.energy ? memories.energy / 100 : 0 },
-      { key: '梦', drive: 'dreams', value: dreams.energy ? dreams.energy / 100 : 0 }
-    ];
-  }
   return {
     identity: { title: '心井', subtitle: '感受在上层，记忆在中间，梦在最深' },
     energyBar: energyBar.length ? energyBar : [{ mood: 'warm', pct: 100 }],
     thoughtPreview: thoughtPreview,
-    desire: desire,
-    directions: directions,
+    desire: { text: '心里压着事的时候，我会做梦', action: '翻梦', progress: dreams.energy ? dreams.energy / 100 : 0 },
+    directions: [
+      { key: '感受', drive: 'feels', value: feels.energy ? feels.energy / 100 : 0 },
+      { key: '记忆', drive: 'memories', value: memories.energy ? memories.energy / 100 : 0 },
+      { key: '梦', drive: 'dreams', value: dreams.energy ? dreams.energy / 100 : 0 }
+    ],
     state: state
   };
 }
@@ -489,10 +458,9 @@ function _dirColor(key) {
 }
 
 function _tapDesire() {
-  // 点欲望卡片 → 翻到活水页，那儿是这一维底下真正在转的念头。
+  // Placeholder — future: open desire panel or mark as done
   var card = document.querySelector('.mind-desire-card');
   if (card) { card.style.opacity = '.8'; setTimeout(function() { card.style.opacity = '1'; }, 200); }
-  _switchMindPage('flash');
 }
 
 function _searchMindLayer(q) {
@@ -528,23 +496,16 @@ function _renderFeelPage() {
   var el = $('mindContent');
   var html = '';
 
-  // Filter pills —— 带计数。空桶显示 0，才看得出是"还没淡到那儿"而不是"面板坏了"。
-  var c = (_mindCounts && _mindCounts.feels) || {};
+  // Filter pills
   html += '<div class="mind-feel-filter">';
-  html += _feelFilterBtn('active', '活跃', c.active);
-  html += _feelFilterBtn('fading', '淡了', c.fading);
-  html += _feelFilterBtn('sleeping', '沉睡', c.sleeping);
+  html += '<button class="mind-feel-filter-btn ' + (_mindFeelFilter === 'active' ? 'active' : '') + '" onclick="_setFeelFilter(\'active\')">活跃</button>';
+  html += '<button class="mind-feel-filter-btn ' + (_mindFeelFilter === 'fading' ? 'active' : '') + '" onclick="_setFeelFilter(\'fading\')">淡了</button>';
+  html += '<button class="mind-feel-filter-btn ' + (_mindFeelFilter === 'sleeping' ? 'active' : '') + '" onclick="_setFeelFilter(\'sleeping\')">沉睡</button>';
   html += '</div>';
   html += '<div id="mindFeelList"></div>';
   el.innerHTML = html;
 
   _renderFeelList();
-}
-
-function _feelFilterBtn(key, label, n) {
-  var txt = label + (typeof n === 'number' ? ' ' + n : '');
-  return '<button class="mind-feel-filter-btn ' + (_mindFeelFilter === key ? 'active' : '') +
-    '" onclick="_setFeelFilter(\'' + key + '\')">' + txt + '</button>';
 }
 
 function _renderFeelList() {
