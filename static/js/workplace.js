@@ -186,7 +186,7 @@
     });
 
     // ── 底：输入条 ──
-    var dock = h('div', 'flex:none;border-top:1px solid var(--bg-sunken);padding:10px 14px 14px;background:var(--bg-primary)');
+    var dock = h('div', 'flex:none;padding:8px var(--page-pad) calc(env(safe-area-inset-bottom) + 8px);background:transparent');
 
     // 主线 chip（点开挑几条带给他）
     var chipRow = h('div', 'display:flex;gap:8px;align-items:center;margin-bottom:8px');
@@ -215,14 +215,27 @@
       });
     }
 
-    var box = h('div', 'display:flex;gap:8px;align-items:flex-end');
-    var ta = h('textarea', 'flex:1;min-height:42px;max-height:30vh;resize:none;border:1px solid var(--border);border-radius:14px;padding:10px 13px;font:14px/1.5 var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;box-sizing:border-box');
-    ta.placeholder = '说要改什么…（他只能动 Chat-C 自己的代码，改完你确认才生效）';
-    ta.oninput = function () { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, window.innerHeight * 0.3) + 'px'; };
-    var send = h('button', 'flex:none;width:42px;height:42px;border:none;border-radius:50%;background:var(--accent);color:var(--accent-fg);font:600 14px var(--font-sans);cursor:pointer;display:grid;place-items:center', '↑');
+    // 输入区照搬主线：.composer-box > .composer > .composer-input-row + .composer-actions
+    // 不套 .composer-wrap（它有 margin-top:-70px，是给消息流浮层用的），也不要 clawd
+    var box = h('div', '');
+    box.className = 'composer-box';
+    var composer = h('div', ''); composer.className = 'composer';
+    var inputRow = h('div', ''); inputRow.className = 'composer-input-row';
+    var actions = h('div', ''); actions.className = 'composer-actions';
+    var ta = h('textarea', '');
+    ta.className = 'wp-input';
+    ta.rows = 1;
+    ta.setAttribute('enterkeyhint', 'send');
+    // 输入框只有一行，长 placeholder 会被截断——说明挪到 title 里，鼠标悬停/长按能看到
+    ta.placeholder = '说要改什么…';
+    ta.title = '他只能动 Chat-C 自己的代码，改完你确认才生效';
+    ta.oninput = function () { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 144) + 'px'; };
+    var send = h('button', '', '↑');
+    send.className = 'wp-send';
     var picker = document.createElement('input');
     picker.type = 'file'; picker.multiple = true; picker.style.display = 'none';
-    var clip = h('button', 'flex:none;width:42px;height:42px;border:1px solid var(--border);border-radius:50%;background:var(--bg-surface);color:var(--text-secondary);font:16px var(--font-sans);cursor:pointer;display:grid;place-items:center', '📎');
+    var clip = h('button', 'cursor:pointer;font-size:16px', '📎');
+    clip.className = 'composer-icon composer-circle';
     clip.title = '发文件给他（图片 / PDF / 任意文件，单个最大 20MB）';
     clip.onclick = function () { picker.click(); };
     picker.onchange = function () {
@@ -248,7 +261,10 @@
         .then(function () { clip.textContent = '📎'; clip.disabled = false; picker.value = ''; });
       });
     };
-    box.append(clip, ta, send, picker);
+    inputRow.append(ta);
+    actions.append(clip, h('span', 'flex:1'), send);
+    composer.append(inputRow, actions);
+    box.append(composer, picker);
     dock.append(box);
     c.append(dock);
 
