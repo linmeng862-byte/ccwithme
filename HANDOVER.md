@@ -4,6 +4,26 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 开工前先跑这两条
+
+```bash
+git status                                   # 本机有没有另一个你（工作台/CLI）留下的改动
+git fetch && git log --oneline HEAD..@{u}    # 另一台推了什么上来
+```
+
+## ⚠️ 写这份文档的规矩
+
+**机器相关的东西不准写进来** —— 任何绝对路径、「这台装没装 X」、「这台跑到哪了」。
+两台的路径布局不一样（家目录、源码位置都不同），写进来就会互相覆盖，
+而且**两边都以为自己是对的**。
+
+- 要提路径 → 写相对路径（`backend.js`、`data/claude.db`），或指向 `CLAUDE.local.md`
+- 要说「这台的状态」→ 写进 `CLAUDE.local.md`（不进 git，每台一份），别写这儿
+- 这里只写**两台都成立的知识**：改了什么、为什么、踩了什么坑
+
+> 真出过事：`CLAUDE.md` 纳入 git 后，一台把「手稿还没搬过来、目录是空的、别去翻」
+> 推了上来，另一台上手稿其实好好的、九万多字都在。照着那句话就会白白错过全部手稿。
+
 ---
 
 ## 🔴 未竟 —— 接手先看这段
@@ -51,7 +71,7 @@ TTL 解释不通。那次发生在探针装好之前。**这个反例是关键�
 前端 static/js/workplace.js  （抽屉里那个 workplace 按钮）
   → backend.js  /api/workplace/{chat,mainline,diff,apply,reject}
   → cc-gateway  POST /workplace   opus + 空 MCP + --tools Read/Write/Edit/Grep/Glob
-  → claude -p   cwd=/opt/ccwithme，path-jail.js 逐次审核
+  → claude -p   cwd=仓库根目录（各机器不同，见 CLAUDE.local.md），path-jail.js 逐次审核
 ```
 
 **实测**：`{"message":"只回四个字：工作台通了"}` → `工作台通了`，
@@ -235,9 +255,11 @@ Mind 的查重（语境门控 / 情绪温度筛 / 冷却 / 近重合并 / 权重
   备份：`data/claude.db.bak.20260821-before-rm-calltest`
 - 补录了 15 条历史信笺进 `mind_inside`（占 7 / 挂 2 / 渴 6），保留了原始时间戳。
   备份：`data/claude.db.bak.20260821-before-inside`
-- `/home/ubuntu/memory/` 七篇手稿重命名成 `序号-日期`，加了 `00-目录.md`。
+- 手稿目录（路径见 `CLAUDE.local.md`）七篇重命名成 `序号-日期`，加了 `00-目录.md`。
   以前有两篇都叫「07」（7月29 那篇和 8月15 那篇撞号），翻的时候分不清先后。
-  内容一个字没动，备份在 `/home/ubuntu/memory.bak.20260821/`
+  内容一个字没动，同级留了 `memory.bak.20260821/` 备份。
+  ⚠️ **这是在手稿所在的那台上做的。手稿在哪台、搬没搬，看你自己的 `CLAUDE.local.md`，
+  别照另一台写的话下结论**——曾经有一台写「目录是空的别去翻」，而另一台上九万多字好好的。
 
 ---
 

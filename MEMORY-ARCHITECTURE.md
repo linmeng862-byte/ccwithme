@@ -76,13 +76,24 @@
 
 ## 四、当前实现状态
 
+> **池子已经在长了（2026-08-22 实查）**：
+> `mind_feels` 68 · `mind_memories` 15 · `mind_dreams` 2 · `mind_inside` 15 · 念头池 9。
+>
+> 对照 08-20 那会儿的 3 / 4 / 1 —— 两天长了 20 倍。
+> 当时判断「不是机制有缺口，是他根本看不到 Mind 那段说明」（系统提示词第 2 轮蒸发），
+> **这个判断被证实了**：项目级 `CLAUDE.md` 修好后池子自己就长起来了。
+> 所以再遇到「Mind 是空的」，**先确认他看不看得见说明，别急着改机制**。
+
 ### 已接通
 
 - Mind 三表 + 念头池表结构 ✅
 - 20 个 mood 枚举，与设计文档**逐字一致** ✅
 - `<feel>/<memory>/<dream>/<flash>` 标签提取 → 入库 ✅（2026-08-19 接上网关路径）
 - `mindDecayTick` 每小时衰减 ✅
-- Nocturne 代理工具 9 个（persona / slang / ring / trace / hold_this / …）✅
+- Nocturne 代理工具 ✅ —— `nocturne_` 开头 7 个
+  （persona / slang / story→**ring** / hold / texture / moment / bottle），
+  另有 `recall_memory`→`trace`、`drive`、`wander`、`garden`（元工具，覆盖 26 个操作）、
+  `toy_control`（4 合 1）。**`nocturne_wake` 已删**（返回 1.8 万 token，调一次就把省的吐回去）
 - **`mindBreath()` 浮起 + 四道过滤 + 想起 +0.05 反哺** ✅（2026-08-19）
   - 位置：`backend.js`「Mind breath 浮起」段（`_mindGrams` / `_mindSurfaceCandidates` /
     `_mindMarkSurfaced` / `mindBreath`）
@@ -169,8 +180,12 @@
 
 - **内心信笺 `<想·xx>`** ✅（2026-08-20，图纸第 13/14 页）
   - **它是对话里的一张可折叠信笺，不是 Mind 面板里的一页。**（第 14 页那个 `^` 就是折叠箭头）
-    我第一版做成了面板的一页，是错的，已撤干净——连 `mind_inside` 表、落库、API 一起撤，
-    不留死代码。
+    我第一版做成了面板的一页，是错的，那一版的面板页和 API 已撤干净。
+  - ⚠️ **但 `mind_inside` 表 2026-08-21 又接回来了**（此前一度整个撤掉，别照旧记录判断）。
+    原因：建了表却没人写，他那些没打算说出口的话进不了 Mind 体系。
+    现在是**只抄一份进库，原文原样留在 messages 正文里**（`backend.js` 约 1858 行）——
+    **不能改成「抄完就从正文删」**，前端要靠正文渲染卡片，删了历史消息翻上去信笺全消失。
+    落库带同 conv 去重。当前库里 15 条。
   - 实现：**只在前端**。`static/index.html` 的 `renderMessage` 把 `<想·占>…</想>`
     从正文里抽出来，渲染成 `.inside-letter`（信纸横线 + 手写体 + 右下角时间 + 点头折叠）。
     标签**原样留在 messages 的正文里**——那是底稿，刷新后还能重新渲染出来；

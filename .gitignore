@@ -16,3 +16,6 @@ android/
 backups/
 .capacitor/
 .playwright-mcp/
+
+# 每台机器各自的路径，不共享
+CLAUDE.local.md
