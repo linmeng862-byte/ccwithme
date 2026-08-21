@@ -1081,10 +1081,11 @@ function _renderVoiceCards(row){
   while((m=re.exec(text))!==null){
     var parts=m[1].split("|");var id=parts[0];var dur=parts[1]||"0:00";
     var wrap=document.createElement("div");wrap.className="voice-msg";
-    wrap.style.cssText="display:flex;align-items:center;gap:10px;padding:10px 14px;margin:6px 0;background:var(--bg-surface);border-radius:14px;max-width:280px;cursor:pointer";
+    // 背景不写死——由 CSS 按 .msg-user / .msg-claude 给成各自的气泡色，做成一颗胶囊
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:9px;padding:7px 13px;margin:4px 0;border-radius:16px;max-width:240px;cursor:pointer";
     var playBtn=document.createElement("button");playBtn.className="voice-play-btn";
-    playBtn.style.cssText="width:34px;height:34px;border-radius:50%;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer;flex:none";
-    playBtn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><polygon points="6,3 20,12 6,21"/></svg>';
+    playBtn.style.cssText="width:15px;height:15px;border:0;background:transparent;color:var(--text-time);display:grid;place-items:center;cursor:pointer;flex:none;padding:0";
+    playBtn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="7,4 19,12 7,20"/></svg>';
     // ⚠️ <audio src> 由浏览器直接发请求，带不了 Authorization 头 → 必须把 token 放 query，
     //    后端 /api/files/:id 走 authFile 中间件专门认这个 ?t=
     playBtn.setAttribute("data-url","/api/files/"+id+"?t="+encodeURIComponent(state.token||""));
@@ -1093,10 +1094,14 @@ function _renderVoiceCards(row){
     playBtn.setAttribute("onclick","_toggleVoicePlay(this)");
     var barsWrap=document.createElement("div");barsWrap.style.cssText="flex:1;min-width:0";
     var bars=document.createElement("div");bars.style.cssText="display:flex;align-items:flex-end;gap:2px;height:24px";
-    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement("span");b.style.cssText="width:3px;height:"+(h*2)+"px;background:var(--text-time);border-radius:1px;flex:none";bars.appendChild(b)});
+    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement("span");b.style.cssText="width:2px;height:"+(h*1.6)+"px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55";bars.appendChild(b)});
     barsWrap.appendChild(bars);
-    var durSpan=document.createElement("span");durSpan.style.cssText="font:400 12px/1 var(--font-sans);color:var(--text-time);flex:none";durSpan.textContent=dur;
-    var tBtn=document.createElement("button");tBtn.style.cssText="border:0;background:transparent;color:var(--text-time);font:400 11px/1 var(--font-sans);cursor:pointer;padding:2px 6px";tBtn.textContent="转文字";
+    var durSpan=document.createElement("span");durSpan.style.cssText="font:400 11px/1 var(--font-sans);color:var(--text-time);flex:none";durSpan.textContent=dur;
+    // 转文字：一个小小的灰色箭头，不写字
+    var tBtn=document.createElement("button");tBtn.className="voice-tx-btn";
+    tBtn.style.cssText="border:0;background:transparent;color:var(--text-time);cursor:pointer;padding:0;width:13px;height:13px;display:grid;place-items:center;flex:none;opacity:.6";
+    tBtn.title="转文字";
+    tBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="11" height="11"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>';
     tBtn.setAttribute("onclick","event.stopPropagation();_transcribeVoice(this,'"+id.replace(/'/g,"")+"')");
     wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);
     md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);

@@ -1027,8 +1027,13 @@ html[data-theme="dark"] .inside-letter-head{color:#C89664}
 .wp-send{width:var(--input-btn-size);height:var(--input-btn-size);min-width:44px;min-height:44px;flex:none;display:grid;place-items:center;border:none;border-radius:var(--radius-full);background:var(--text-primary);color:var(--bg-primary);cursor:pointer;transition:background var(--transition)}
 .wp-send:disabled{opacity:.5}
 
-/* 只有语音条的消息：脱掉外层气泡，让语音条独立站着（2026-08-22）
-   否则粉色气泡裹一个自带底色的语音条 = 两层壳 */
+/* 语音条（2026-08-22）
+   语音条自己就是那颗胶囊气泡，颜色跟各自的说话气泡一致：
+   她 #FFF0F5（跟 .msg-user .bubble 同色）/ 他 var(--bg-surface)（跟 .msg-claude .bubble 同色）。
+   所以整条只有语音条时要把外层 .bubble 脱掉，否则是两层壳。 */
 .msg-user .bubble.voice-only,.msg-claude .bubble.voice-only{
   background:none;padding:0;max-width:none;border-radius:0;
 }
+.msg-user .voice-msg{background:#FFF0F5}
+.msg-claude .voice-msg{background:var(--bg-surface)}
+.voice-msg .voice-play-btn:hover,.voice-msg .voice-tx-btn:hover{opacity:1}
