@@ -3955,7 +3955,15 @@ app.get('/api/usage', (req, res) => {
     FROM usage_log ORDER BY id DESC LIMIT 12`).all().reverse();
   const limits = getLimits();
   const s = spentNow();
-  res.json({ today, week, total, daily, recent, limits, spent: s, blocked: !!limitBlock() });
+  // 真实订阅额度（5 小时窗口）——由 CLI 的 rate_limit_event 带下来，聊天时顺手存的。
+  // ⚠️ 跟上面那些 cost_usd 不是一回事：cost_usd 是"按 API 价格算这轮值多少钱"，
+  //    她走的是订阅，那个数只能当参考，真正会把她卡住的是这个 rate_limit。
+  let rate_limit = null;
+  try {
+    const raw = db.prepare("SELECT value FROM settings WHERE key = 'rate_limit_state'").get();
+    if (raw && raw.value) rate_limit = JSON.parse(raw.value);
+  } catch (e) { /* 没有就是还没聊过天，前端自己兜底 */ }
+  res.json({ today, week, total, daily, recent, limits, spent: s, rate_limit, blocked: !!limitBlock() });
 });
 
 app.post('/api/tools/list', (req, res) => {
@@ -4089,7 +4097,13 @@ async function handleGatewayChat(req, res, ctx) {
           if (parsed && parsed.command) res.write('event: cmd\ndata: ' + JSON.stringify({ id: parsed.command.id, type: parsed.command.type || 'timer', title: parsed.command.title || '' }) + '\n\n');
           res.write('event: tool_result\ndata: ' + JSON.stringify({ tool_use_id: ctt.tool_use_id, content: ctt.content, is_error: ctt.is_error }) + '\n\n');
         } else if (evt.rate_limit) {
+          // 这是**订阅额度**（5 小时窗口还剩多少、什么时候重置），从 CLI 的 rate_limit_event 一路传下来。
+          // ⚠️ 跟 usage_log 里的 cost_usd 完全是两回事：那个是"按 API 价格算这轮值多少钱"，
+          //    她走订阅，那个数跟她真实的额度消耗对不上——她说"用量跟真实用量不一致"就是这个。
+          //    以前这里只赋值给 lastRateLimit 然后再没人用过，前端也没接，数据流到一半就丢了。
           lastRateLimit = evt.rate_limit;
+          try { _setSetting('rate_limit_state', JSON.stringify({ ...evt.rate_limit, at: Math.floor(Date.now() / 1000) })); }
+          catch (e) { console.error('[usage] 额度状态存库失败:', e.message); }
           res.write('event: rate_limit\ndata: ' + JSON.stringify(evt.rate_limit) + '\n\n');
         } else if (evt.usage) {
           const u = evt.usage;
