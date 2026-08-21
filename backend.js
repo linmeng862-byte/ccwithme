@@ -1445,6 +1445,12 @@ app.post('/api/call/ring', (req, res) => {
 });
 
 app.post('/api/call/ring/cancel', (req, res) => {
+  // 跟 /api/call/ring 一样要校验：这条也是公网可达的。
+  // 不校验的话，外面任何人都能把她的来电掐掉 —— 他拨了、刚要响就没了，
+  // 而且界面上看不出异常，只会觉得他不打电话了。2026-08-21 补的。
+  if (req.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+    return res.status(401).json({ detail: '未授权' });
+  }
   _ringState = { ringing: false, since: 0 };
   res.json({ ok: true });
 });

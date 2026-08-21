@@ -176,7 +176,7 @@
             <button class="mobile-sidebar-nav-item" id="artifactsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="artifacts"></span><span>工作台</span></button>
       
       <button class="mobile-sidebar-nav-item" id="openMemory"><span class="mobile-sidebar-nav-icon" data-icon="memory"></span><span>Memory</span></button>
-      <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><path d="M2 13h12M4 13V8M8 13V4M12 13v-3"/></svg></span><span>用量</span></button>
+      <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><path d="M2 13h12M4 13V8M8 13V4M12 13v-3"/></svg></span><span>usage</span></button>
 
 <div class="drawer-api-section" style="padding:12px 16px;border-top:1px solid var(--bg-sunken)">
 <div class="drawer-api-header" style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" id="drawerApiToggle" onclick="var f=document.getElementById('drawerApiForm');f.style.display=f.style.display==='block'?'none':'block';var c=document.getElementById('drawerApiChevron');if(c)c.style.transform=f.style.display==='block'?'rotate(180deg)':''"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16"><circle cx="8" cy="5" r="3"/><path d="M3 14v-1a4 4 0 018 0v1"/></svg><span style="flex:1;font:500 13px var(--font-sans);color:var(--text-secondary)">语音配置</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" id="drawerApiChevron"><path d="M4 6l4 4 4-4"/></svg></div>
@@ -235,7 +235,7 @@
 <section id="usagePanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden">
   <header style="display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 18px 12px;border-bottom:1px solid var(--bg-sunken);flex:0 0 auto">
     <button id="closeUsage" aria-label="关闭" style="width:32px;height:32px;border:none;border-radius:50%;background:var(--bg-sunken);color:var(--text-primary);font:20px/1 var(--font-sans);cursor:pointer">×</button>
-    <div style="flex:1;font:600 16px var(--font-sans)">用量</div>
+    <div style="flex:1;font:600 16px var(--font-sans)">usage</div>
     <button id="refreshUsage" aria-label="刷新" style="width:32px;height:32px;border:none;border-radius:50%;background:var(--bg-sunken);color:var(--text-primary);cursor:pointer"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15" style="vertical-align:-2px"><path d="M14 8a6 6 0 11-1.8-4.3M13 1v3h-3"/></svg></button>
   </header>
   <div id="usageBody" style="flex:1;overflow-y:auto;padding:16px 18px calc(env(safe-area-inset-bottom) + 24px)">
@@ -1132,12 +1132,12 @@ function _showIncomingCall(){
   setTimeout(function(){if(_incomingCall)_rejectCall()},30000);
 }
 function _acceptCall(){
-  _rejectCall();fetch('/api/call/ring/cancel',{method:'POST'}).catch(function(){});_startCall();
+  _rejectCall();fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});_startCall();
 }
 function _rejectCall(){
   _incomingCall=false;
   var ov=document.getElementById('incomingCallOverlay');if(ov)ov.remove();
-  fetch('/api/call/ring/cancel',{method:'POST'}).catch(function(){});
+  fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});
 }
 // 来电轮询：每 3 秒检查 Claude 是否在响铃
 function _startRingPoll(){
@@ -2692,7 +2692,7 @@ async function saveProfile(){const payload=normalizeProfileClient(profileDraft);
 
 $('closeMemory').onclick=()=>{$('memoryPanel').classList.remove('show');$('memoryPanel').setAttribute('aria-hidden','true');$('memorySearchBar').classList.remove('show')};
 
-// ===== 用量面板 =====
+// ===== usage 面板 =====
 function _fmtNum(n){n=Number(n||0);if(n>=1e6)return (n/1e6).toFixed(2)+'M';if(n>=1e3)return (n/1e3).toFixed(1)+'k';return String(n)}
 function _usageTile(label,val,sub){return '<div style="flex:1;min-width:96px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:12px 14px">'
   +'<div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:4px">'+escHtml(label)+'</div>'
@@ -2722,8 +2722,8 @@ function _usageLimitsCard(d){
   var L=d.limits||{},s=d.spent||{};
   return '<div style="margin-bottom:22px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:14px 16px">'
     +'<div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:12px">额度</div>'
-    + _usageBar('今日',s.day,L.daily_usd)
-    + _usageBar('近 7 天',s.week,L.weekly_usd)
+    + _usageBar('日 usage',s.day,L.daily_usd)
+    + _usageBar('周 usage',s.week,L.weekly_usd)
     +(d.blocked?'<div style="margin:10px 0 4px;padding:8px 10px;background:rgba(229,77,46,.1);border-radius:9px;font:12px var(--font-sans);color:#e54d2e">已达上限，暂时发不出消息。调高下面的数值即可继续。</div>':'')
     +'<div style="display:flex;gap:8px;align-items:flex-end;margin-top:12px;padding-top:12px;border-top:1px dashed var(--bg-sunken)">'
       +'<label style="flex:1"><div style="font:11px var(--font-sans);color:var(--text-faint);margin-bottom:4px">每日上限 $</div>'
@@ -2788,7 +2788,7 @@ function _renderUsage(data){
     +_usageBlock('累计',data.total)
     +(daily.length?'<div><div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:10px">每日花费</div>'
       +'<div style="display:flex;align-items:flex-end;gap:5px;height:112px;padding:10px 12px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;overflow-x:auto">'+bars+'</div></div>':'')
-    +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">数据来自网关每次调用返回的真实用量。缓存命中越高越省钱。</div>';
+    +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">数据来自网关每次调用返回的真实 usage。缓存命中越高越省钱。</div>';
   if($('limSave'))$('limSave').onclick=_saveLimits}
 async function loadUsage(){
   $('usageBody').innerHTML='<div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载中…</div>';

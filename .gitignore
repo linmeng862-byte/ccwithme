@@ -1,5 +1,7 @@
 node_modules/
 data/
+.env
+.env.*
 参考/
 .codeflicker/
 package-lock.json
