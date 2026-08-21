@@ -3105,6 +3105,17 @@ const TOOLS = [
       required: []
     }
   },
+  {
+    name: 'hangup_call',
+    description: '挂断电话。两种情况都用它：①你打过去还在响铃、想取消（她还没接）；②正在通话中、你想结束这通电话。挂断后她那边的来电框会消失或通话界面关闭，聊天里会留一条通话记录。她说"挂了吧""不聊了"、或者话说完了该收尾时用。没有电话在响也没在通话时调用会告诉你不用挂。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: '为什么挂断（只给你自己看，不会显示给她）' }
+      },
+      required: []
+    }
+  },
   // === 音乐分享工具 ===
   {
     name: 'share_music',
@@ -3578,6 +3589,31 @@ async function executeTool(name, input) {
       _ringState = { ringing: true, since: Date.now() };
       console.log('[call] 他拨号了：' + (input.reason || '(没说原因)'));
       return { ok: true, message: '电话打出去了，她那边正在响铃（30 秒没接会自动挂断）。等她接。' };
+    }
+    // 挂断：分两种情况，都要处理
+    //   1) 还在响铃（他打过去她没接）→ 清 _ringState，她那边的来电框会消失
+    //   2) 已经接通 → 给通话中的 WS 连接推 {type:'hangup'}，前端收到就 _stopCall
+    case 'hangup_call': {
+      const wasRinging = _ringState.ringing;
+      _ringState = { ringing: false, since: 0 };
+      let notified = 0;
+      try {
+        wss.clients.forEach(c => {
+          if (c.readyState === 1) { // OPEN
+            try { c.send(JSON.stringify({ type: 'hangup', reason: input.reason || '' })); notified++; } catch (_) {}
+          }
+        });
+      } catch (_) {}
+      console.log('[call] 他挂断了：ringing=' + wasRinging + ' 通知了 ' + notified + ' 条通话连接');
+      if (!wasRinging && notified === 0) {
+        return { ok: false, message: '现在没有在响的铃，也没有正在通话——不用挂。' };
+      }
+      return {
+        ok: true,
+        message: wasRinging && notified === 0
+          ? '取消了，她那边的来电框已经消失（她还没接）。'
+          : '挂断了，通话已经结束。'
+      };
     }
     case 'issue_command': {
       const title = input.title || '';

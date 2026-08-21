@@ -78,7 +78,7 @@
           <span class="composer-spacer"></span>
 <button class="composer-icon" id="stickerButton" aria-label="表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
           <button class="composer-icon" id="micButton" aria-label="麦克风"></button>
-          <button class="composer-icon" id="callButton" aria-label="实时通话" title="按住说话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg></button>
+          <button class="composer-icon" id="callButton" aria-label="实时通话" title="点一下给他打电话 · 实时通话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg></button>
 	          <button id="send" aria-label="语音"></button>
         
       </div>
@@ -1252,7 +1252,7 @@ async function _startCall(){
   try{
     var wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/call';
     _callWs=new WebSocket(wsUrl);
-    _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='实时通话';};
+    _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话';};
     _callWs.onopen=function(){};
     _callWs.onmessage=function(e){
       var msg=JSON.parse(e.data);
@@ -1264,10 +1264,13 @@ async function _startCall(){
         // 也显示在聊天里
         var bubble=document.createElement('div');bubble.className='msg-claude';bubble.style.cssText='padding:8px 16px;margin:4px 0;background:var(--bubble-ai);border-radius:14px;font:14px var(--font-sans);color:var(--text-primary)';
         bubble.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg> '+escHtml(msg.text);streamInner.append(bubble);bubble.scrollIntoView({block:'end'});
+      }else if(msg.type==='hangup'){
+        // 他那边用 hangup_call 工具挂断的
+        toast('他挂断了');_stopCall();
       }else if(msg.type==='error'){toast('通话出错: '+msg.text)}
     };
-    _callWs.onclose=function(){_callWs=null;btn.style.color='';btn.title='实时通话'};
-    _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='实时通话'};
+    _callWs.onclose=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话'};
+    _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话'};
     // 开始录音
     var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){toast('这台设备不支持实时听写（iPhone 上的 Safari 就不支持），先用语音消息吧');_stopCall();return}
@@ -1304,7 +1307,7 @@ function _stopCall(){
   if(_callRecording){_callRecording.stop();_callRecording=null}
   if(_callMediaStream){_callMediaStream.getTracks().forEach(function(t){t.stop()});_callMediaStream=null}
   if(_callWs){_callWs.close();_callWs=null}
-  var btn=$('callButton');btn.style.color='';btn.title='实时通话';
+  var btn=$('callButton');btn.style.color='';btn.title='点一下给他打电话 · 实时通话';
   _stopCallTimer();
 }
 
@@ -1317,7 +1320,7 @@ function _startCallTimer(){
   },1000);
 }
 function _stopCallTimer(){
-  var btn=$('callButton');if(btn)btn.title='实时通话';
+  var btn=$('callButton');if(btn)btn.title='点一下给他打电话 · 实时通话';
 }
 
 // WebRTC 语音通话——P2P 原始音频，零延迟（需接线员运行中）
@@ -2588,7 +2591,10 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
   try{
     const attachments=existingAttachments.length?existingAttachments:await uploadPendingFiles(files);
     if(showUser){
-      await dismissEmpty();addUser(text,'',attachments);
+      await dismissEmpty();
+      // 发出去的当下也要渲染语音条/通话条 —— 历史那条路（_renderMessagesIntoFragment）
+      // 早就调了，唯独这里漏了，导致她刚发的语音显示成 [VOICE:xxx] 纯文字，刷新才变气泡
+      var _ur=addUser(text,'',attachments);_renderVoiceCards(_ur);_renderCallCards(_ur);
       if(state.currentTitle==='新对话'){state.currentTitle=(text||attachments[0]?.name||'附件').slice(0,40);updateSessionHeader()}
       input.value='';input.style.height='auto';clearPendingFiles();
     }
