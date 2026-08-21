@@ -1419,6 +1419,7 @@ window._toggleCall=function(){
 // 他说话的时候把麦克风的听写停掉——不然扬声器里他自己的声音会被听写成
 // 「她说的话」再发回去，两个人对着自己的回音聊起来。
 var _callSpeaking=false;
+var _ttsPlayedAny=false;   // 本次 TTS 有没有真的出过声（防止半途失败时兜底重念一遍）
 async function _speakWithMicPaused(text){
   _callSpeaking=true;
   if(_callRecording){try{_callRecording.abort?_callRecording.abort():_callRecording.stop()}catch(e){}}
@@ -1441,6 +1442,9 @@ async function _playStreamTTS(text){
     var reader=r.body.getReader();
     var decoder=new TextDecoder();
     var buf='',sampleRate=24000;
+    // ⚠️ 记住有没有真的出过声：MiniMax 播到一半才抛错时，前面放出去的声音收不回来，
+    //    这时再走 speechSynthesis 兜底 = 同一句话念两遍（她实际听到过）
+    _ttsPlayedAny=false;
     while(true){
       var chunk=await reader.read();
       if(chunk.done)break;
@@ -1451,7 +1455,7 @@ async function _playStreamTTS(text){
         if(!line.startsWith('data: '))continue;
         try{var obj=JSON.parse(line.slice(6));
           if(obj.type==='meta'){sampleRate=obj.sampleRate||24000}
-          else if(obj.type==='audio'){_feedPCMChunk(obj.data,sampleRate)}
+          else if(obj.type==='audio'){_feedPCMChunk(obj.data,sampleRate);_ttsPlayedAny=true}
           else if(obj.type==='error'){throw new Error(obj.message)}
         }catch(e){if(e.message!==''&&!e.message.startsWith('Unexpected'))throw e}
       }
@@ -1462,6 +1466,11 @@ async function _playStreamTTS(text){
       await new Promise(function(rs){setTimeout(rs,(_nextPlayTime-_audioCtx.currentTime)*1000+120)});
     }
   }catch(e){
+    // 已经出过声就绝不重念——宁可后半句被截断，也不要整句念两遍
+    if(_ttsPlayedAny){
+      console.warn('[tts] 播到一半失败，但已经出过声，不走兜底（避免念两遍）:',e.message);
+      return;
+    }
     console.warn('[tts] stream failed, fallback speechSynthesis:',e.message);
     await new Promise(function(rs){
       try{
