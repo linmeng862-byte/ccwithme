@@ -1279,6 +1279,71 @@ async function transcribeUpload(uploadId, durSec) {
 // 她发的语音消息在库里存成 [VOICE:f_xxx|0:07]，界面上渲染成语音气泡。
 // 但模型只吃文本——不展开的话他收到的就是这串字面量，等于没听见。
 // 这里在「交给模型的那份副本」上把它换成识别出的文字（存库的原文一个字不动）。
+// 他发语音条：把回复里 <voice>…</voice> 合成成真正的语音条。
+// 前端渲染完全复用她录音那套（[VOICE:id|时长] → _renderVoiceCards），一行前端都不用改。
+// ⚠️ 原文写进 uploads.transcript —— 点「转文字」时 /api/stt 直接命中缓存，
+//    不会拿他自己的声音再去跑一遍识别（那是白烧钱，而且识别还不如原文准）。
+async function synthVoiceTags(text, res) {
+  if (!text || text.indexOf('<voice>') === -1) return text;
+  const _origText = text;
+  const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
+  const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
+  // 没配好就把标签剥了当普通文字发 —— 宁可少个语音条，也不能让她收到一堆尖括号。
+  if (!apiKey || !voiceId) return text.replace(/<\/?voice>/g, '');
+
+  const re = /<voice>([\s\S]*?)<\/voice>/g;
+  const jobs = [];
+  let m;
+  while ((m = re.exec(text)) !== null) jobs.push({ tag: m[0], said: m[1].trim() });
+
+  for (const j of jobs) {
+    if (!j.said) { text = text.replace(j.tag, ''); continue; }
+    try {
+      const t0 = Date.now();
+      const resp = await fetch(minimaxUrl(), {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'speech-2.8-hd', text: j.said, stream: false,
+          voice_setting: { voice_id: voiceId, speed: 1.0 },
+          audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 }
+        }),
+        signal: AbortSignal.timeout(30000)
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + (await resp.text()).slice(0, 200));
+      const data = await resp.json();
+      if (data.base_resp?.status_code !== 0) throw new Error(data.base_resp?.status_msg || 'unknown');
+      const hex = data.data?.audio || data.audio;
+      if (!hex) throw new Error('没有返回音频数据');
+      logVoiceUsage('tts', data.extra_info?.usage_characters ?? j.said.length, Date.now() - t0);
+
+      const buf = Buffer.from(hex, 'hex');
+      const id = 'f_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const destPath = path.join(uploadDir, 'files', id + '.mp3');
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.writeFileSync(destPath, buf);
+      // MiniMax 报的 audio_length 是毫秒；没有就按 128kbps = 16000 字节/秒反推。
+      const secs = Math.max(1, Math.round((data.extra_info?.audio_length ?? (buf.length / 16000 * 1000)) / 1000));
+      const dur = Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+      db.prepare('INSERT INTO uploads (id, filename, path, size, transcript) VALUES (?,?,?,?,?)')
+        .run(id, 'voice-' + id + '.mp3', destPath, buf.length, j.said);
+      text = text.replace(j.tag, '[VOICE:' + id + '|' + dur + ']');
+      console.log('[tts] 他发了一条 ' + dur + ' 的语音');
+    } catch (e) {
+      // 合成失败不能把话吞了 —— 剥掉标签，让她至少能看到他说了什么。
+      console.warn('[tts] 语音条合成失败: ' + e.message);
+      text = text.replace(j.tag, j.said);
+    }
+  }
+  // 流式路径下 done 早就发出去了，前端屏幕上还是带标签的原文。
+  // 这里把最终文本回推一次，让它就地换成语音条 —— 不然要刷新才对。
+  if (res && text !== _origText && !res.writableEnded) {
+    try { res.write('event: voice_replace\ndata: ' + JSON.stringify({ content: text }) + '\n\n'); res.flush?.(); }
+    catch (e) { console.warn('[tts] voice_replace 回推失败: ' + e.message); }
+  }
+  return text;
+}
+
 async function expandVoiceTags(text) {
   if (!text || text.indexOf('[VOICE:') === -1) return text;
   const re = /\[VOICE:([a-zA-Z0-9_]+)\|([^\]|]*)\]/g;
@@ -1488,6 +1553,23 @@ app.post('/api/call/ring', (req, res) => {
   }
   _ringState = { ringing: true, since: Date.now() };
   console.log('[ring] Claude is calling...');
+  res.json({ ok: true });
+});
+
+// 通话记录条：只往消息流里落一条 [CALL:...]，**不触发他回复**。
+// 通话本身已经在电话里说完了，落库只是留个痕迹 —— 再走一遍模型既费钱又莫名其妙。
+app.post('/api/call/log', auth, (req, res) => {
+  const kind = String(req.body?.kind || '');
+  const dur = String(req.body?.dur || '');
+  if (!['ended', 'rejected', 'missed'].includes(kind)) {
+    return res.status(400).json({ error: 'bad kind' });
+  }
+  const convId = req.body?.conv_id;
+  if (!convId) return res.status(400).json({ error: 'conv_id required' });
+  // 通话记录挂在他那一侧（跟来电、去电都是他发起的对齐）
+  db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)')
+    .run(convId, 'assistant', '[CALL:' + kind + '|' + dur.replace(/[^0-9:]/g, '') + ']');
+  db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
   res.json({ ok: true });
 });
 
@@ -4420,6 +4502,7 @@ async function handleGatewayChat(req, res, ctx) {
       _mindGw.flashes.forEach(_insertMindItem);
     }
     if (assistantText) {
+      assistantText = await synthVoiceTags(assistantText, res);
       db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)').run(convId, 'assistant', assistantText);
     }
     // 正常情况这里已经在收到第一块数据时写过了（幂等，直接返回）。
@@ -4620,6 +4703,7 @@ async function handleAnthropicChat(req, res, ctx) {
         _mindExtracted.dreams.forEach(_insertMindItem);
         _mindExtracted.flashes.forEach(_insertMindItem);
         if (assistantText) {
+          assistantText = await synthVoiceTags(assistantText, res);
           db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
             .run(convId, 'assistant', assistantText, thinkingText);
           db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
@@ -4766,12 +4850,13 @@ async function handleAnthropicChat(req, res, ctx) {
           const fullThinking = (thinkingText || '') + (secondThinkingText || '');
           // Non 式标签提取：剥离 <feel>/<memory>/<dream> 并入库
           var _mindExtracted2 = extractMindTags(fullText, convId);
-          const cleanFullText = _mindExtracted2.cleanedText;
+          let cleanFullText = _mindExtracted2.cleanedText;
           _mindExtracted2.feels.forEach(_insertMindItem);
           _mindExtracted2.memories.forEach(_insertMindItem);
           _mindExtracted2.dreams.forEach(_insertMindItem);
           _mindExtracted2.flashes.forEach(_insertMindItem);
           if (cleanFullText || (stickerImgs && cleanFullText)) {
+            cleanFullText = await synthVoiceTags(cleanFullText, res);
             db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
               .run(convId, 'assistant', cleanFullText, fullThinking);
           }
@@ -4934,6 +5019,7 @@ async function handleOpenAIChat(req, res, ctx) {
         _mindExtracted3.dreams.forEach(_insertMindItem);
         _mindExtracted3.flashes.forEach(_insertMindItem);
         if (assistantText) {
+          assistantText = await synthVoiceTags(assistantText, res);
           db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
             .run(convId, 'assistant', assistantText, thinkingText);
           db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
@@ -5055,12 +5141,13 @@ async function handleOpenAIChat(req, res, ctx) {
           const oaiFullThinking = (thinkingText || '') + (secondThinkingText || '');
           // Non 式标签提取：剥离 <feel>/<memory>/<dream> 并入库
           var _mindExtracted4 = extractMindTags(oaiFullText, convId);
-          const cleanOaiText = _mindExtracted4.cleanedText;
+          let cleanOaiText = _mindExtracted4.cleanedText;
           _mindExtracted4.feels.forEach(_insertMindItem);
           _mindExtracted4.memories.forEach(_insertMindItem);
           _mindExtracted4.dreams.forEach(_insertMindItem);
           _mindExtracted4.flashes.forEach(_insertMindItem);
           if (cleanOaiText) {
+            cleanOaiText = await synthVoiceTags(cleanOaiText, res);
             db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
               .run(convId, 'assistant', cleanOaiText, oaiFullThinking);
           }

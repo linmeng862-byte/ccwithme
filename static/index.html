@@ -837,7 +837,7 @@ const chat=$('chat'),stream=$('stream'),streamInner=$('streamInner'),input=$('in
 $('openDrawer').innerHTML=icon('menu');
 $('topbarModelChevron').innerHTML=icon('chevron');
 $('attachButton').innerHTML=icon('plus');
-$('micButton').innerHTML=icon('mic');
+$('micButton').innerHTML=icon('mic');$('micButton').title='按住说话，松开发送 · 点一下是语音转文字';
 
 let toastTimer;
 function toast(message){const el=$('toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),1600)}
@@ -1063,9 +1063,19 @@ async function _sendVoiceMessage(blob,secs,type){
   }catch(e){console.error('[voice]',e);toast('语音发送失败：'+e.message)}
 }
 // 语音气泡渲染
+// 消息正文元素：他那边是 .msg-body .md，她那边是 .bubble 里的第一个 div。
+// 历史渲染走的是 _buildUserRow/_buildClaudeRow，跟流式那套结构不一样，两边都得认。
+function _msgContentEl(row){
+  if(!row)return null;
+  var md=row.querySelector('.msg-body .md');
+  if(md)return md;
+  var b=row.querySelector('.bubble');
+  if(b){for(var i=0;i<b.children.length;i++){var c=b.children[i];
+    if(c.tagName==='DIV'&&!c.classList.contains('message-attachments'))return c}}
+  return null;
+}
 function _renderVoiceCards(row){
-  var body=row.querySelector(".msg-body");if(!body)return;
-  var md=body.querySelector(".md");if(!md)return;
+  var md=_msgContentEl(row);if(!md)return;
   var text=md.textContent||"";
   var re=/\[VOICE:([^\]]+)\]/g;var m;
   while((m=re.exec(text))!==null){
@@ -1089,6 +1099,31 @@ function _renderVoiceCards(row){
     var tBtn=document.createElement("button");tBtn.style.cssText="border:0;background:transparent;color:var(--text-time);font:400 11px/1 var(--font-sans);cursor:pointer;padding:2px 6px";tBtn.textContent="转文字";
     tBtn.setAttribute("onclick","event.stopPropagation();_transcribeVoice(this,'"+id.replace(/'/g,"")+"')");
     wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);
+    md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
+  }
+}
+// 通话记录条：接完/拒了/没接到，都在消息流里留一条。
+function _logCall(kind,dur){
+  if(!state.convId)return;  // 还没开始过对话就没地方挂，直接算了
+  fetch('/api/call/log',{method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
+    body:JSON.stringify({kind:kind,dur:dur||'',conv_id:state.convId})}).catch(function(){});
+}
+// [CALL:kind|时长] → 一条通话记录气泡
+function _renderCallCards(row){
+  var md=_msgContentEl(row);if(!md)return;
+  var text=md.textContent||"";
+  var re=/\[CALL:(ended|rejected|missed)\|([^\]]*)\]/g;var m;
+  var PHONE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>';
+  var HANGUP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+  while((m=re.exec(text))!==null){
+    var kind=m[1],dur=m[2]||"";
+    var icon=kind==='ended'?PHONE:HANGUP;
+    var label=kind==='ended'?('语音通话'+(dur?' '+dur:'')):(kind==='rejected'?'已拒接':'未接来电');
+    var color=kind==='ended'?'var(--accent)':'var(--text-time)';
+    var wrap=document.createElement("span");wrap.className="call-msg";
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;margin:4px 0;background:var(--bg-surface);border-radius:14px;font:400 13px/1 var(--font-sans);color:"+color;
+    wrap.innerHTML=icon+'<span>'+label+'</span>';
     md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
   }
 }
@@ -1148,13 +1183,14 @@ function _showIncomingCall(){
   // 播放铃声
   try { var audio=new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACAf39/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+AfQ==');audio.loop=true;audio.play().catch(function(){}) } catch(e) {}
   // 30秒后自动挂断
-  setTimeout(function(){if(_incomingCall)_rejectCall()},30000);
+  setTimeout(function(){if(_incomingCall){_rejectCall(true);_logCall('missed')}},30000);
 }
 function _acceptCall(){
-  _rejectCall();fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});_startCall();
+  _rejectCall(true);fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});_startCall();
 }
-function _rejectCall(){
+function _rejectCall(silent){
   _incomingCall=false;
+  if(!silent)_logCall('rejected');
   var ov=document.getElementById('incomingCallOverlay');if(ov)ov.remove();
   fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});
 }
@@ -1259,6 +1295,9 @@ async function _startCall(){
   }catch(e){toast('请允许麦克风权限');_stopCall()}
 }
 function _stopCall(){
+  // ⚠️ _callSeconds 下面几行就被清零了，时长必须先取出来
+  if(_callSeconds>0){var _m=Math.floor(_callSeconds/60),_s=_callSeconds%60;
+    _logCall('ended',String(_m).padStart(2,'0')+':'+String(_s).padStart(2,'0'))}
   // 挂断时把还没发出去的半句丢掉，别等挂完了再补发一条
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}_speechBuf='';_speechFirstAt=0;
   if(_callTimer){clearInterval(_callTimer);_callTimer=null}_callSeconds=0;
@@ -1291,7 +1330,7 @@ async function _webCallStart(){
   _webCallFallbackTimer=setTimeout(function(){
     if(!_webPc||_webPc.connectionState!=="connected"){
       console.log("[webcall] 接线员未响应，切换到语音输入");
-      _webCallStop();
+      _webCallStop(true);
       _startCall();
     }
   },6000);
@@ -1331,9 +1370,14 @@ async function _webCallStart(){
       if(_webPc.connectionState==="connected")console.log("[webcall] 已接通");
       if(_webPc.connectionState==="disconnected"||_webPc.connectionState==="failed")_webCallStop();
     };
-  }catch(e){toast("WebRTC 通话失败: "+e.message);_webCallStop()}
+  }catch(e){toast("WebRTC 通话失败: "+e.message);_webCallStop(true)}
 }
-function _webCallStop(){
+function _webCallStop(silent){
+  // 记完再往下走 —— 下面几行就把 _callSeconds 清零了。
+  // 清零这件事顺带帮了个忙：1386 行手动挂断会连着调 _stopCall()，
+  // 那边看到 0 就不会再记一条，两个出口不会重复落库。
+  if(!silent&&_callSeconds>0){var _wm=Math.floor(_callSeconds/60),_ws=_callSeconds%60;
+    _logCall('ended',String(_wm).padStart(2,'0')+':'+String(_ws).padStart(2,'0'))}
   if(_webCallFallbackTimer){clearTimeout(_webCallFallbackTimer);_webCallFallbackTimer=null}
   if(_webPc){try{_webPc.close()}catch(e){}_webPc=null}
   if(_webWs){try{_webWs.close()}catch(e){}_webWs=null}
@@ -2384,7 +2428,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       setPhase('complete');
       row.dataset.raw=raw;row.dataset.timestamp=new Date().toISOString();
       _renderFileCards(row);_renderCmdCapsulesAfter(row);
-      _renderVoiceCards(row);
+      _renderVoiceCards(row);_renderCallCards(row);
       _splitMessages(row);
       delete $('thoughtSheet').dataset.live;
       if(currentTraceRow)_maybeFetchThinkingSummary(currentTraceRow);
@@ -2570,7 +2614,7 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
     }
     if(r.status===401){showGate();throw Error('登录已失效')}if(!r.ok||!r.body){const detail=await r.json().catch(()=>({}));throw Error(detail.detail||'请求失败')}
     const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='',finished=false;
-    const frame=f=>{let event='',data='';f.split('\n').forEach(line=>{if(line.startsWith('event:'))event=line.slice(6).trim();if(line.startsWith('data:'))data+=line.slice(5).trim()});if(!event||!data)return;const d=JSON.parse(data);if(event==='conversation'){state.convId=d.conversation_id;state.legacySessionId=null;localStorage.setItem('chat_conversation',state.convId);localStorage.removeItem('chat_session')}if(event==='thinking')msg.thinking(d.text||'');if(event==='delta')msg.text(d.text||'');if(event==='tool_use')msg.toolUse(d);if(event==='tool_result')msg.toolResult(d);if(event==='trace_summary')msg.traceSummary(d.text||'');if(event==='done'){state.convId=d.conversation_id||state.convId;localStorage.setItem('chat_conversation',state.convId);msg.finish();finished=true;if(d.usage)_showTokenUsage(d.usage)}if(event==='cmd'){if(d.type==='timer'){pollCommands()}else{var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',d.id);cap.setAttribute('data-cmd-type',d.type);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});var ci=d.type==='quiz'?'\u{1F4DD}':d.type==='task'?'\u{1F4CB}':'\u23F1\uFE0F';cap.innerHTML='<span>'+ci+'</span><span>'+escHtml(d.title||'')+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';var bEl=msg.row.querySelector('.bubble');if(bEl)bEl.after(cap);else(msg.row.querySelector('.md')||msg.row).appendChild(cap)}}if(event==='sticker'){var si=document.createElement('img');si.src=assetUrl(d.url);si.style.cssText='max-width:200px;max-height:200px;border-radius:12px;margin-top:8px;display:block';md.appendChild(si)}if(event==='rate_limit'){_updateRateLimit(d)}if(event==='error'){msg.fail(d.message);finished=true}};
+    const frame=f=>{let event='',data='';f.split('\n').forEach(line=>{if(line.startsWith('event:'))event=line.slice(6).trim();if(line.startsWith('data:'))data+=line.slice(5).trim()});if(!event||!data)return;const d=JSON.parse(data);if(event==='conversation'){state.convId=d.conversation_id;state.legacySessionId=null;localStorage.setItem('chat_conversation',state.convId);localStorage.removeItem('chat_session')}if(event==='thinking')msg.thinking(d.text||'');if(event==='delta')msg.text(d.text||'');if(event==='tool_use')msg.toolUse(d);if(event==='tool_result')msg.toolResult(d);if(event==='trace_summary')msg.traceSummary(d.text||'');if(event==='done'){state.convId=d.conversation_id||state.convId;localStorage.setItem('chat_conversation',state.convId);msg.finish();finished=true;if(d.usage)_showTokenUsage(d.usage)}if(event==='cmd'){if(d.type==='timer'){pollCommands()}else{var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',d.id);cap.setAttribute('data-cmd-type',d.type);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});var ci=d.type==='quiz'?'\u{1F4DD}':d.type==='task'?'\u{1F4CB}':'\u23F1\uFE0F';cap.innerHTML='<span>'+ci+'</span><span>'+escHtml(d.title||'')+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';var bEl=msg.row.querySelector('.bubble');if(bEl)bEl.after(cap);else(msg.row.querySelector('.md')||msg.row).appendChild(cap)}}if(event==='sticker'){var si=document.createElement('img');si.src=assetUrl(d.url);si.style.cssText='max-width:200px;max-height:200px;border-radius:12px;margin-top:8px;display:block';md.appendChild(si)}if(event==='voice_replace'){var _vr=msg.row;if(_vr){var _vmd=_vr.querySelector('.md');if(_vmd){_vr.dataset.raw=d.content||'';renderMessage(_vmd,d.content||'');_renderVoiceCards(_vr)}}}if(event==='rate_limit'){_updateRateLimit(d)}if(event==='error'){msg.fail(d.message);finished=true}};
     while(true){const{value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});const parts=buffer.split(/\r?\n\r?\n/);buffer=parts.pop()||'';parts.forEach(frame);if(done)break}
     if(buffer.trim())frame(buffer);if(!finished)await recoverAfterBreak(msg,state.convId,'连接意外结束，请重试。')
   }catch(e){if(msg)msg.fail(e.message||'连接失败，请稍后重试。');else toast(e.message||'文件上传失败')}
@@ -2795,6 +2839,7 @@ function _renderMessagesIntoFragment(slice){
       ?_buildUserRow(m.text,m.timestamp,m._la||[])
       :_buildClaudeRow(m.text,m._lu||'',m.thinking,m.timestamp,m._la||[],m.traces||[]);
     if(m.role!=='user')_renderCmdCapsulesAfter(row);
+    _renderVoiceCards(row);_renderCallCards(row);
     frag.appendChild(row);
   });
   return frag;
