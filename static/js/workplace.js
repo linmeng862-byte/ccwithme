@@ -99,41 +99,91 @@
       toBottom();
     }
 
-    // 他改完之后递过来的那张 diff 卡 —— 方案 1 的核心，确认/还原都在卡上
-    function diffCard(d) {
+    // 他改完之后递过来的那张卡：上半是「他干了哪些活」，下半是 diff + 确认/还原。
+    // ops 是这一轮的工具调用（Read/Edit/浏览器…），工作台没有 Bash，
+    // 所以「终端」块里列的是工具操作，不是 shell 命令。
+    var MONO = 'ui-monospace,SFMono-Regular,Menlo,monospace';
+    function diffCard(d, ops) {
+      ops = ops || [];
       var card = h('div', 'align-self:flex-start;width:100%;max-width:88%;background:var(--bg-surface);border:1px solid var(--border);border-radius:18px;overflow:hidden');
 
-      var hdr = h('div', 'display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;user-select:none');
-      var circle = h('span', 'width:24px;height:24px;border-radius:8px;background:' + (d.clean ? 'var(--text-faint)' : '#6BAF7B') + ';color:#fff;display:grid;place-items:center;flex:none');
+      // —— 头：深色圆角勾 + 标题 + 副标题 + 展开键
+      var hdr = h('div', 'display:flex;align-items:flex-start;gap:11px;padding:14px 14px 10px;cursor:pointer;user-select:none');
+      var circle = h('span', 'width:30px;height:30px;border-radius:10px;background:' + (d.clean ? 'var(--text-faint)' : 'var(--text-primary)') + ';color:#6BAF7B;display:grid;place-items:center;flex:none');
       circle.innerHTML = CHECK;
       var n = (d.changed || []).length;
       var titleWrap = h('div', 'flex:1;min-width:0');
-      titleWrap.append(h('div', 'font:600 14px var(--font-sans);color:var(--text-primary)', d.clean ? '没有改动' : (n + ' 个文件 · 待确认')));
-      var chev = h('span', 'font:12px var(--font-sans);color:var(--text-faint);transition:transform .15s', '▼');
+      titleWrap.append(h('div', 'font:600 15px var(--font-sans);color:var(--text-primary)',
+        d.clean ? '没有改动' : (ops.length ? ops.length + ' 个操作 · 完成' : n + ' 个文件 · 待确认')));
+      var sub = h('div', 'display:flex;align-items:center;gap:5px;margin-top:3px;font:12px ' + MONO + ';color:var(--text-faint)');
+      sub.append(h('span', 'width:6px;height:6px;border-radius:50%;background:var(--text-faint);flex:none'), h('span', '', 'opus'));
+      titleWrap.append(sub);
+      var chev = h('span', 'width:28px;height:28px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--bg-sunken);color:var(--text-secondary);font:12px var(--font-sans);transition:transform .15s', '⤢');
       hdr.append(circle, titleWrap, chev);
       card.append(hdr);
 
       if (d.clean) { flow.append(card); toBottom(); return; }
 
-      // 文件名 chips
-      var chips = h('div', 'display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 10px');
+      // —— 「终端」标签行
+      var tabRow = h('div', 'display:flex;align-items:center;gap:8px;padding:0 14px 8px');
+      var tab = h('span', 'display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:var(--bg-primary);border:1px solid var(--border);font:600 12px var(--font-sans);color:var(--text-primary)');
+      tab.append(h('span', 'font:11px ' + MONO + ';color:var(--text-faint)', '>_'), h('span', '', '终端'));
+      var st = h('span', 'margin-left:auto;display:inline-flex;align-items:center;gap:5px;font:12px var(--font-sans);color:var(--text-secondary)');
+      st.append(h('span', 'width:6px;height:6px;border-radius:50%;background:#6BAF7B;flex:none'), h('span', '', '完成'));
+      tabRow.append(tab, st);
+      card.append(tabRow);
+
+      // —— 黑底终端块：一行一个操作，绿勾 + 等宽，超长省略
+      var lines = ops.length
+        ? ops.map(function (t) { return t.name + ' ' + (t.input || ''); })
+        : (d.changed || []).map(function (x) { return x.status + ' ' + x.file; });
+      var term = h('div', 'margin:0 14px;padding:10px 12px;background:#1a1816;border-radius:14px;display:flex;flex-direction:column;gap:7px;max-height:38vh;overflow:auto');
+      lines.slice(0, 8).forEach(function (t) {
+        var row = h('div', 'display:flex;align-items:center;gap:9px;min-width:0');
+        var ck = h('span', 'color:#6BAF7B;flex:none;display:grid;place-items:center');
+        ck.innerHTML = CHECK;
+        row.append(ck, h('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/1.5 ' + MONO + ';color:#C9C3BB', t));
+        term.append(row);
+      });
+      if (lines.length > 8) term.append(h('div', 'font:12px ' + MONO + ';color:var(--text-faint);padding-left:22px', '… 还有 ' + (lines.length - 8) + ' 条'));
+      card.append(term);
+
+      // —— 文件 chips
+      var chips = h('div', 'display:flex;flex-wrap:wrap;gap:8px;padding:11px 14px 0');
       (d.changed || []).forEach(function (x) {
-        chips.append(h('span', 'font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-secondary);background:var(--bg-sunken);border-radius:7px;padding:3px 8px', x.status + ' ' + x.file));
+        var c = h('span', 'display:inline-flex;align-items:center;gap:5px;font:12px ' + MONO + ';color:var(--text-secondary);max-width:100%');
+        c.append(h('span', 'font-size:11px;opacity:.6', '📄'), h('span', 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap', x.file));
+        chips.append(c);
       });
       card.append(chips);
 
-      var fold = h('div', 'font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:38vh;overflow:auto;border-top:1px solid var(--bg-sunken);border-bottom:1px solid var(--bg-sunken)');
+      // —— 绿色进度条 + 汇总
+      var barRow = h('div', 'display:flex;align-items:center;gap:11px;padding:11px 14px 0');
+      var bar = h('div', 'flex:1;height:3px;border-radius:2px;background:#6BAF7B');
+      barRow.append(bar, h('span', 'font:12px var(--font-sans);color:var(--text-faint);flex:none',
+        ops.length ? ('完成 · ' + ops.length + ' 个操作') : (n + ' 个文件')));
+      card.append(barRow);
+
+      var fold = h('div', 'display:none;margin-top:11px;font:11px/1.55 ' + MONO + ';max-height:38vh;overflow:auto;border-top:1px solid var(--bg-sunken);border-bottom:1px solid var(--bg-sunken)');
       fold.innerHTML = renderDiff(d.diff || '(新文件，没有 diff)');
       card.append(fold);
 
-      hdr.onclick = function () {
+      // —— 查看全部
+      var moreWrap = h('div', 'padding:11px 14px 0');
+      var more = h('button', 'display:inline-flex;align-items:center;gap:7px;padding:9px 14px;border:none;border-radius:12px;background:var(--bg-sunken);color:var(--text-primary);font:600 13px var(--font-sans);cursor:pointer');
+      more.append(h('span', '', '⤢'), h('span', '', '查看全部'));
+      moreWrap.append(more); card.append(moreWrap);
+
+      function toggle() {
         var open = fold.style.display !== 'none';
         fold.style.display = open ? 'none' : '';
-        chips.style.display = open ? 'none' : 'flex';
-        chev.style.transform = open ? 'rotate(-90deg)' : '';
-      };
+        more.lastChild.textContent = open ? '查看全部' : '收起';
+        chev.style.transform = open ? '' : 'rotate(180deg)';
+      }
+      more.onclick = toggle;
+      hdr.onclick = toggle;
 
-      var acts = h('div', 'display:flex;gap:8px;padding:11px 14px');
+      var acts = h('div', 'display:flex;gap:8px;padding:11px 14px 13px');
       var apply = h('button', 'flex:1;padding:9px;border:none;border-radius:11px;background:#1a7f37;color:#fff;font:600 13px var(--font-sans);cursor:pointer', '确认生效并重启');
       var reject = h('button', 'padding:9px 13px;border:1px solid #cf222e;border-radius:11px;background:transparent;color:#cf222e;font:600 13px var(--font-sans);cursor:pointer', '一键还原');
       acts.append(apply, reject);
@@ -234,14 +284,17 @@
     send.className = 'wp-send';
     var picker = document.createElement('input');
     picker.type = 'file'; picker.multiple = true; picker.style.display = 'none';
-    var clip = h('button', 'cursor:pointer;font-size:16px', '📎');
+    // 用主线同一个加号图标（icon() 跟 state 一样是 const 声明的，裸调能拿到）
+    var clip = h('button', 'cursor:pointer');
     clip.className = 'composer-icon composer-circle';
+    clip.setAttribute('aria-label', '添加文件');
+    if (typeof icon === 'function') clip.innerHTML = icon('plus'); else clip.textContent = '+';
     clip.title = '发文件给他（图片 / PDF / 任意文件，单个最大 20MB）';
     clip.onclick = function () { picker.click(); };
     picker.onchange = function () {
       var fl = Array.prototype.slice.call(picker.files || []);
       if (!fl.length) return;
-      clip.textContent = '…'; clip.disabled = true;
+      var _clipHTML = clip.innerHTML; clip.innerHTML = '…'; clip.disabled = true;
       // 图片先过主线那套压缩（_shrinkImage：长边 1080 / quality 0.7）——
       // 模型按像素算 token，一张 1290x2796 的手机截图不压就是白烧额度。
       // 非图片（PDF 等）原样传；_shrinkImage 万一没定义就退回原文件，不阻断上传。
@@ -258,7 +311,7 @@
           syncStrip();
         })
         .catch(function (e) { toast(e.message || '上传失败'); })
-        .then(function () { clip.textContent = '📎'; clip.disabled = false; picker.value = ''; });
+        .then(function () { clip.innerHTML = _clipHTML; clip.disabled = false; picker.value = ''; });
       });
     };
     inputRow.append(ta);
@@ -317,15 +370,15 @@
     syncMlCount();
 
     // diff 只在「他刚改完」之后作为卡片落进对话流，不再常驻一块面板
-    function loadDiff() {
+    function loadDiff(ops) {
       fetch('/api/workplace/diff', { headers: authHeaders() })
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (d.error) { toast(d.error); return; }
           meter.textContent = 'workplace 今天已用 $' + Number(d.spent_today || 0).toFixed(3) + ' / 上限 $' + d.cap;
           if (d.clean) return;             // 没改动就不塞卡片，省得刷屏
-          convo.push({ who: 'diff', diff: d });
-          diffCard(d);
+          convo.push({ who: 'diff', diff: d, ops: ops || [] });
+          diffCard(d, ops);
         })
         .catch(function () {});
     }
@@ -360,7 +413,12 @@
         if (r.status === 429) return r.json().then(function (j) { throw new Error(j.error || '超出额度'); });
         if (!r.ok || !r.body) throw new Error('后端返回 ' + r.status);
         var reader = r.body.getReader(), dec = new TextDecoder(), buf = '', ev = '';
-        (function pump() {
+        // ⚠️ 必须 return —— 不返回 pump 的 Promise，外层 then 会立刻 resolve，
+        //    .finally() 在流还没读完时就跑：himRec.text 还是空的，于是塞进
+        //    「他没说话，直接改了」，后到的真文字再追加在它后面；
+        //    himRec.tools 也还是空的，卡片退回「N 个文件」列不出操作；
+        //    loadDiff() 还会提前拿到他没改完的中间状态。2026-08-21 修。
+        return (function pump() {
           return reader.read().then(function (res) {
             if (res.done) return;
             buf += dec.decode(res.value, { stream: true });
@@ -390,9 +448,13 @@
         if (!himRec.text) { himRec.text = '（他没说话，直接改了）'; him.body.textContent = himRec.text; }
         // 带过一次就清掉：会话是 --resume 的，他已经记住了，再带一遍是白花钱
         if (ids.length) { picked = {}; syncMlCount(); mlLoaded = false; if (mlOpen) loadMainline(); }
-        loadDiff();                       // 改完把 diff 当成他递过来的一张卡摆进流里
+        loadDiff(himRec.tools);           // 改完把 diff 当成他递过来的一张卡摆进流里，带上这轮干了什么
       });
     }
+
+    // 前端调试钩子：不用真发消息（花钱）就能把卡片渲染出来看样式。
+    // 用法：__wpTestCard({changed:[{status:"M",file:"a.js"}],diff:"..."}, [{name:"Edit",input:"..."}])
+    window.__wpTestCard = diffCard;
 
     send.onclick = doSend;
     // 回车发送、Shift+回车换行（手机上还是点按钮）
