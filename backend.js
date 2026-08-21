@@ -472,6 +472,32 @@ if (!fs.existsSync(galleryPhotoDir)) fs.mkdirSync(galleryPhotoDir, { recursive: 
 const multer = require('multer');
 const upload = multer({ dest: path.join(__dirname, 'data', 'uploads', 'tmp'), limits: { fileSize: 20 * 1024 * 1024 } });
 const readingUpload = multer({ dest: path.join(__dirname, 'data', 'uploads', 'tmp'), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// === 上传文件名中文乱码修正（2026-08-22）===
+// multipart 头里的 filename 按 RFC 2047/2231 是 latin1 传的，multer 交出来的
+// originalname 已经被按 latin1 解过一遍 → 中文变成 "æµè¯ææ¡£"。
+// 要拿回原始字节必须用 latin1 反编码，再按 utf8 解。
+// ⚠️ 曾经写成 Buffer.from(name, 'utf8')，那是把乱码又固化了一遍，
+//    后面再怎么做编码检测都救不回来（原始字节在上一步就丢了）。
+function fixUploadName(name) {
+  if (!name) return name;
+  // 已经是正确的中日文 → 客户端走了 RFC 5987 filename*，别再动它
+  if (/[一-鿿぀-ヿ가-힯]/.test(name)) return name;
+  try {
+    const buf = Buffer.from(name, 'latin1');
+    const utf8 = buf.toString('utf8');
+    if (!utf8.includes('�')) return utf8;
+    const gb = iconv.decode(buf, 'gb18030');   // Windows 中文客户端兜底
+    if (!gb.includes('�')) return gb;
+  } catch (_) {}
+  return name;
+}
+// 挂在每个 multer 之后，把 originalname 就地修好，下游代码不用各自处理
+function fixNames(req, res, next) {
+  if (req.file) req.file.originalname = fixUploadName(req.file.originalname);
+  if (Array.isArray(req.files)) req.files.forEach(f => { f.originalname = fixUploadName(f.originalname); });
+  next();
+}
 // === 中间件 ===
 app.use(express.json({ limit: '50mb' }));
 // CORS — 允许 Capacitor 原生 app 和 PWA 跨域访问
@@ -485,7 +511,7 @@ app.use((req, res, next) => {
 // ── 阅读器 API ──────────────────────────────────────────
 
 // 上传书籍
-app.post('/api/reading/upload', auth, readingUpload.single('file'), async (req, res) => {
+app.post('/api/reading/upload', auth, readingUpload.single('file'), fixNames, async (req, res) => {
   console.log('[upload] GOT REQUEST, file:', req.file?.originalname, 'size:', req.file?.size);
   try {
     if (!req.file) return res.status(400).json({ error: '请选择文件' });
@@ -497,12 +523,8 @@ app.post('/api/reading/upload', auth, readingUpload.single('file'), async (req, 
     fs.copyFileSync(req.file.path, filePath);
     try { fs.unlinkSync(req.file.path); } catch (_) {}
 
+    // originalname 已经被 fixNames 中间件修正过（latin1→utf8，见文件顶部 fixUploadName）
     let title = req.file.originalname.replace(ext, '');
-    // 文件名过编码检测（Express 用 UTF-8 解析 HTTP header）
-    try {
-      const bufName = Buffer.from(req.file.originalname, 'utf8');
-      title = _decodeBuffer(bufName).replace(ext, '');
-    } catch(_) {}
     console.log('[upload] title:', title);
     let author = '';
     let chapters = [];
@@ -1000,7 +1022,7 @@ app.delete('/api/reading/books/:id', auth, (req, res) => {
 // ── 表情包 API ──────────────────────────────────────────
 const stickerUpload = multer({ dest: path.join(__dirname, 'data', 'uploads', 'tmp'), limits: { fileSize: 10 * 1024 * 1024 } });
 
-app.post('/api/stickers/upload', auth, stickerUpload.single('file'), (req, res) => {
+app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: '请选择图片' });
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -5277,7 +5299,7 @@ setInterval(cleanupExpiredUploads, 3600000);
 const galleryUpload = multer({ dest: galleryPhotoDir, limits: { fileSize: 20 * 1024 * 1024 } });
 
 // Gallery 照片上传
-app.post('/api/gallery/upload', auth, galleryUpload.single('file'), (req, res) => {
+app.post('/api/gallery/upload', auth, galleryUpload.single('file'), fixNames, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const ext = path.extname(req.file.originalname || '.jpg') || '.jpg';
   const fname = 'gal_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + ext;
@@ -5299,7 +5321,7 @@ app.get('/api/files', auth, (req, res) => {
   res.json({ files });
 });
 
-app.post('/api/files/upload', auth, fileUpload.single('file'), (req, res) => {
+app.post('/api/files/upload', auth, fileUpload.single('file'), fixNames, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const id = 'f_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const ext = path.extname(req.file.originalname || '');
@@ -6241,7 +6263,7 @@ app.delete('/api/projects/:pid/files/:fid', auth, (req, res) => {
 });
 
 // === 文件上传 ===
-app.post('/api/upload', auth, upload.array('files', 10), (req, res) => {
+app.post('/api/upload', auth, upload.array('files', 10), fixNames, (req, res) => {
   if (!req.files?.length) return res.status(400).json({ detail: '没有文件' });
   const attachments = req.files.map(f => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -6426,6 +6448,7 @@ app.post('/api/cinema/upload', (req, res) => {
   cinemaUpload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: '请选择视频文件' });
+    req.file.originalname = fixUploadName(req.file.originalname);
     const ext = path.extname(req.file.originalname).toLowerCase();
     const destPath = req.file.path + ext;
     fs.renameSync(req.file.path, destPath);
@@ -6439,6 +6462,7 @@ app.post('/api/cinema/upload-image', (req, res) => {
   cinemaImageUpload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: '请选择图片文件' });
+    req.file.originalname = fixUploadName(req.file.originalname);
     const ext = path.extname(req.file.originalname).toLowerCase();
     const destPath = req.file.path + ext;
     fs.renameSync(req.file.path, destPath);
