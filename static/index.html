@@ -1077,7 +1077,7 @@ function _msgContentEl(row){
 function _renderVoiceCards(row){
   var md=_msgContentEl(row);if(!md)return;
   var text=md.textContent||"";
-  var re=/\[VOICE:([^\]]+)\]/g;var m;
+  var re=/\[VOICE:([^\]]+)\]/g;var m;var _hit=false;
   while((m=re.exec(text))!==null){
     var parts=m[1].split("|");var id=parts[0];var dur=parts[1]||"0:00";
     var wrap=document.createElement("div");wrap.className="voice-msg";
@@ -1100,6 +1100,16 @@ function _renderVoiceCards(row){
     tBtn.setAttribute("onclick","event.stopPropagation();_transcribeVoice(this,'"+id.replace(/'/g,"")+"')");
     wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);
     md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
+    _hit=true;
+  }
+  // 整条消息只有语音条（没有别的文字）时，把外层气泡脱掉——
+  // 否则粉色气泡裹着一个自带底色的语音条，是两层壳。参考图里语音条是独立站着的。
+  if(_hit){
+    // ⚠️ 必须用替换【前】的原文判断：替换后语音条自带「0:03 转文字」这些字，
+    //    md.textContent 永远不为空，会判不出「整条只有语音条」
+    var bare=text.replace(/\[VOICE:[^\]]+\]/g,'').replace(/\s/g,'')==='';
+    var bub=row.querySelector('.bubble');
+    if(bub)bub.classList.toggle('voice-only',bare);
   }
 }
 // 通话记录条：接完/拒了/没接到，都在消息流里留一条。

@@ -1026,3 +1026,9 @@ html[data-theme="dark"] .inside-letter-head{color:#C89664}
 .wp-input{width:100%;min-width:0;max-height:144px;padding:var(--space-1) 0 var(--space-1) 1px;border:0;outline:0;background:none;resize:none;font-size:18px;line-height:1.5;white-space:pre-wrap;color:var(--text-primary);font-family:var(--font-sans)}
 .wp-send{width:var(--input-btn-size);height:var(--input-btn-size);min-width:44px;min-height:44px;flex:none;display:grid;place-items:center;border:none;border-radius:var(--radius-full);background:var(--text-primary);color:var(--bg-primary);cursor:pointer;transition:background var(--transition)}
 .wp-send:disabled{opacity:.5}
+
+/* 只有语音条的消息：脱掉外层气泡，让语音条独立站着（2026-08-22）
+   否则粉色气泡裹一个自带底色的语音条 = 两层壳 */
+.msg-user .bubble.voice-only,.msg-claude .bubble.voice-only{
+  background:none;padding:0;max-width:none;border-radius:0;
+}
