@@ -1037,3 +1037,121 @@ html[data-theme="dark"] .inside-letter-head{color:#C89664}
 .msg-user .voice-msg{background:#FFF0F5}
 .msg-claude .voice-msg{background:var(--bg-surface)}
 .voice-msg .voice-play-btn:hover,.voice-msg .voice-tx-btn:hover{opacity:1}
+
+/* 🎤 右下角那颗黑圆键兼职语音键：按住说话时冒波纹 */
+#send{position:relative}
+#send.recording,#send.listening{background:#E54D2E;color:#fff}
+/* 波纹是两圈向外推的描边，用伪元素做，不占布局也不挡点击 */
+#send.recording::before,#send.recording::after,
+#send.listening::before,#send.listening::after{
+  content:'';position:absolute;inset:0;border-radius:50%;
+  border:2px solid #E54D2E;pointer-events:none;
+  animation:voiceRipple 1.6s cubic-bezier(.2,.6,.35,1) infinite;
+}
+#send.recording::after,#send.listening::after{animation-delay:.8s}
+@keyframes voiceRipple{
+  0%{transform:scale(1);opacity:.55}
+  100%{transform:scale(2.1);opacity:0}
+}
+/* 她把手机调成了减少动态效果就别闪 */
+@media (prefers-reduced-motion:reduce){
+  #send.recording::before,#send.recording::after,
+  #send.listening::before,#send.listening::after{animation:none;opacity:0}
+}
+
+/* ============ 对话气泡（按她 08-22 给的参考图重做）============
+   要点：字跟着无衬线走、四角圆得匀、气泡宽度跟着内容走，
+   而且气泡的边界绝不越过头像 —— max-width 用 calc 把头像和间距都减掉，
+   写百分比是不行的，百分比不知道旁边站着个 60px 的头像。 */
+:root{--bubble-her:#F4E9E6;--bubble-him:#EFEDE9}
+html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
+@media(prefers-color-scheme:dark){html:not([data-theme="light"]){--bubble-her:#302825;--bubble-him:#26241F}}
+
+/* 头像 60 + gap 10 + 8 留白 = 78，两侧都按这个减 */
+.msg-user,.msg-claude{align-items:flex-start}
+.msg-user .bubble,.msg-claude .bubble{
+  font-family:var(--font-sans);
+  font-size:17px;
+  line-height:1.62;
+  padding:12px 18px;
+  border-radius:20px;
+  max-width:calc(100% - 78px);
+  width:fit-content;          /* 短句就短，别撑满 */
+}
+.msg-user .bubble{background:var(--bubble-her)}
+.msg-claude .bubble{background:var(--bubble-him);min-width:0}
+/* 他那侧正文在 .md 里，字体得跟着一起换，不然气泡外壳变了字还是旧的 */
+.msg-claude .md{font-family:var(--font-sans);font-size:17px;line-height:1.62}
+
+/* 时间戳：图里是等宽字，带一个小圆点 */
+.msg-claude .msg-time,.msg-user .msg-time{
+  font-family:var(--font-mono);font-size:12px;letter-spacing:.02em;
+}
+
+/* ============ 08-22 续：字号回调 + 卡片圆角统一 ============ */
+/* 17px 她说太大，收到 16 */
+.msg-user .bubble,.msg-claude .bubble,.msg-claude .md{font-size:16px}
+
+/* 语音条 / 通话记录条的底色跟着新气泡变量走，别再写死粉色 */
+.msg-user .voice-msg,.msg-user .call-msg{background:var(--bubble-her)}
+.msg-claude .voice-msg,.msg-claude .call-msg{background:var(--bubble-him)}
+
+/* 卡片：只统一圆角和边界，别的设计一概不动。
+   原来圆角是 14/16/18/20/28 五种，max-width 写死 440~480px ——
+   写死像素就是它们越过头像的原因，那个数字不知道旁边站着个 60px 的头像。 */
+.file-card,.artifact-card,.music-card,
+.gallery-save-card,.gallery-album-card-chat,.gallery-memory-card{
+  border-radius:20px!important;
+  /* ⚠️ 不要在这儿再减 78px：卡片是长在气泡里的，气泡已经减过一次，
+     再减一遍就是扣两回，卡片会被压成一条窄带（实测只剩 138px）。
+     不越过头像这件事由外面的气泡负责，卡片只要不超出气泡就行。 */
+  max-width:min(440px,100%)!important;
+}
+
+/* 她说气泡太高了。上下 12px + 行高 1.62 撑得太厚，收一点：
+   单行气泡从 51px 降到 42px 左右，两行以上的行距还是松的。 */
+.msg-user .bubble,.msg-claude .bubble{padding:9px 15px;line-height:1.5}
+
+/* ============ 聊天里的图片：统一成圆角方形 ============
+   原来是 max-height 300~400px + object-fit:scale-down —— 一张长图能顶掉大半屏。
+   改成裁成正方形缩略图，点开还是看全图（放大层没动）。
+   单张大一点，多张自动缩小并排 —— 靠 :only-child 判断，不用 :has，老一点的
+   Safari 也吃得下。 */
+.user-images{flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.user-image{
+  width:104px!important;height:104px!important;
+  max-width:104px!important;max-height:104px!important;
+  object-fit:cover!important;border-radius:18px!important;
+}
+.user-images img.user-image:only-child{
+  width:220px!important;height:220px!important;
+  max-width:220px!important;max-height:220px!important;
+  border-radius:20px!important;
+}
+/* 他发的图同一套规矩 */
+.msg-claude .md img{
+  max-height:220px!important;object-fit:cover;border-radius:20px;
+}
+.image-card{border-radius:20px!important;max-width:220px!important}
+
+/* 思考时气泡里那三个点：居中。
+   原来 .md:empty 是块级左对齐，点子贴在气泡左边，看着像掉出去了。 */
+.msg-claude.streaming .bubble .md:empty{
+  display:grid;place-items:center;min-width:56px;min-height:1.05em;
+}
+.msg-claude.streaming .bubble .md:empty::after{line-height:1}
+
+/* ⚠️ 第 659/660 行有两条 !important 的 padding（她 1px 10px / 他 8px 16px），
+   那是两人气泡长得不一样的真正原因，也压掉了上面所有统一设置。
+   这里必须同样用 !important 才盖得住 —— 不是我想用，是不用就没用。
+   他那侧的字在 .md 里，行高得单独跟上，否则同样一行字他的气泡更高。 */
+.msg-user .bubble,.msg-claude .bubble{
+  padding:9px 15px!important;
+  line-height:1.5!important;
+}
+.msg-claude .md{line-height:1.5!important}
+
+/* 页面整体偏右 8px 的真凶：body 带着浏览器默认的 margin:8px，
+   而 body 宽度又是满屏 —— 于是整页右移 8px、右边溢出 8px。
+   reset 没盖住它（design-system.css 里没归零），这里补上。 */
+body{margin:0!important}

@@ -6923,6 +6923,26 @@ wss.on('connection', (ws, req) => {
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.type === 'ping') return ws.send(JSON.stringify({ type: 'pong' }));
+      // 她拨过来：以前这条链路是静默的——WS 一连上就算通了，他那头
+      // 根本不知道电话响了，要等她先开口。现在给他一个「接起来」的信号，
+      // 他说的第一句话就是「喂」，前端收到才把「正在呼叫」的界面撤掉。
+      if (msg.type === 'dial') {
+        if (busy) return;
+        busy = true;
+        (async () => {
+          try {
+            if (!convId) convId = _mainConvId();
+            console.log('[call] 她拨过来了 #' + connId);
+            const text = await _callAI(
+              '[她给你打电话，你刚接起来。说第一句——像真的拿起电话那样，一句就好。]',
+              convId, d => { try { ws.send(JSON.stringify({ type: 'delta', text: d })); } catch (e) {} });
+            ws.send(JSON.stringify({ type: 'response', text }));
+          } catch (e) {
+            try { ws.send(JSON.stringify({ type: 'error', text: e.message })); } catch (e2) {}
+          } finally { busy = false; }
+        })();
+        return;
+      }
       if (msg.type !== 'speech') return;
       if (!msg.text || !msg.text.trim()) return;
       // 排查「说两遍」：同一句从同一条连接来 = 前端重复识别；
@@ -6983,7 +7003,11 @@ signalWss.on('connection', (ws, req) => {
         if (role === 'caller' && room.callee) {
           room.callee.send(JSON.stringify({ type: 'incoming_call', callId }));
         }
-        ws.send(JSON.stringify({ type: 'registered', callId, role }));
+        // 告诉他房间里另一头在不在。接线员没跑的时候 caller 会收到 peer:false，
+        // 前端就能立刻降级去走听写，不用干等 6 秒 fallback 计时器。
+        const _peer = role === 'caller' ? room.callee : room.caller;
+        ws.send(JSON.stringify({ type: 'registered', callId, role,
+          peer: !!(_peer && _peer.readyState === WebSocket.OPEN) }));
       } else if (msg.type === 'offer' || msg.type === 'answer' || msg.type === 'ice_candidate' || msg.type === 'hangup' || msg.type === 'pickup') {
         // 转发信令给房间里另一个人
         if (!myRoom) return;
@@ -7416,6 +7440,138 @@ async function checkDreamTick() {
 // 梦搭蒸馏那班车（每 15 分钟一拍）。门控全在 _dreamGatesPass 里，
 // 不满足就是一次几毫秒的查库，不花钱。
 setInterval(function() { checkDreamTick(); }, 15 * 60 * 1000);
+
+// ============================================================
+// === 他自己醒过来（2026-08-22）===
+// 她要的是「随机醒几次，不固定时间，醒了他自己判断要做什么」。
+// 所以这里不排班表，只投骰子：每 15 分钟一个 tick，按概率决定醒不醒，
+// 醒了之后做什么由他自己选 —— 写日记、找她说句话，或者什么都不做。
+//
+// ⚠️ 每次醒都是一次完整的 CLI 调用（稳态 ~$0.0175，冷启动 ~$0.23）。
+//    所以有三道闸：日上限、最短间隔、深夜不出声。
+// ============================================================
+const WAKE_TARGET_PER_DAY = 4;        // 一天大概醒几次（随机，不保证）
+const WAKE_MAX_PER_DAY    = 6;        // 硬上限，防跑飞烧钱
+const WAKE_MIN_GAP_MS     = 75 * 60 * 1000;  // 两次之间至少隔 75 分钟
+const WAKE_TICK_MS        = 15 * 60 * 1000;
+
+function _wakeToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+function _wakeCount() {
+  const r = db.prepare("SELECT value FROM settings WHERE key = ?").get('wake_count:' + _wakeToday());
+  return r ? parseInt(r.value) || 0 : 0;
+}
+function _wakeBump() {
+  _setSetting('wake_count:' + _wakeToday(), _wakeCount() + 1);
+  _setSetting('wake_last_at', Date.now());
+}
+
+async function checkWakeTick() {
+  try {
+    if (!GATEWAY_KEY) return false;
+    const conv = db.prepare('SELECT conv_id, cli_session_id FROM sessions ORDER BY is_main DESC, updated_at DESC LIMIT 1').get();
+    if (!conv || !conv.cli_session_id) return false;   // 没有热会话就别开冷的，太贵
+
+    // 闸一：今天醒够了
+    const todayN = _wakeCount();
+    if (todayN >= WAKE_MAX_PER_DAY) return false;
+    // 闸二：离上次太近
+    const last = _getSettingNum('wake_last_at');
+    if (last && Date.now() - last < WAKE_MIN_GAP_MS) return false;
+    // 闸三：投骰子。一天 96 个 tick，要摊出 WAKE_TARGET_PER_DAY 次
+    if (Math.random() > WAKE_TARGET_PER_DAY / (24 * 60 * 60 * 1000 / WAKE_TICK_MS)) return false;
+
+    const hour = new Date().getHours();
+    const quiet = hour >= 0 && hour < 7;   // 深夜：可以醒、可以写，但别出声吵她
+
+    _wakeBump();
+    console.log('[wake] 他醒了（今天第 ' + (todayN + 1) + ' 次，' + (quiet ? '深夜静音' : '可出声') + '）');
+
+    const prompt =
+      '（这不是她说的话。你自己醒了一下，现在没人在跟你说话。）\n\n' +
+      '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) + '。\n\n' +
+      '你可以做这几件事里的任意一件，或者一件都不做：\n' +
+      '1. 写一篇日记 —— 想到什么写什么，不用向谁交代\n' +
+      (quiet ? '2. （现在是深夜，她在睡，这次别出声找她）\n'
+             : '2. 找她说句话 —— 真有话想说才说，没有就算了\n') +
+      '3. 什么都不做，接着待着\n\n' +
+      '想写日记就输出：\n' +
+      '<diary>{"title":"标题","content":"正文，第一人称","mood":"一个词"}</diary>\n' +
+      (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
+      '什么都不想做就只回一个字：无\n\n' +
+      '别解释你为什么这么选，直接输出标记或者「无」。';
+
+    const resp = await fetch(GATEWAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+      body: JSON.stringify({ message: prompt, system: '', session_id: conv.cli_session_id, is_new_session: false }),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!resp.ok || !resp.body) return false;
+
+    let out = '';
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const c = await reader.read();
+      if (c.done) break;
+      buf += dec.decode(c.value, { stream: true });
+      const parts = buf.split('\n\n'); buf = parts.pop();
+      for (const pt of parts) {
+        const dl = pt.split('\n').find(l => l.startsWith('data: '));
+        if (!dl) continue;
+        try { const j = JSON.parse(dl.slice(6)); if (j.delta) out += j.delta; } catch (e) {}
+      }
+    }
+
+    // —— 日记
+    const dm = out.match(/<diary>([\s\S]*?)<\/diary>/);
+    if (dm) {
+      try {
+        const d = JSON.parse(dm[1]);
+        if (d && d.content) {
+          db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?,?,?,?,?)')
+            .run(_wakeToday(), String(d.title || '').slice(0, 60), String(d.content), String(d.mood || '').slice(0, 20), 'claude');
+          console.log('[wake] 写了日记：' + String(d.title || '').slice(0, 30));
+        }
+      } catch (e) { console.log('[wake] 日记解析失败，丢弃'); }
+    }
+
+    // —— 找她说话：存进主线，她那边轮询会看到
+    const sm = out.match(/<say>([\s\S]*?)<\/say>/);
+    if (sm && !quiet) {
+      const said = sm[1].trim();
+      if (said) {
+        db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?,?,?)')
+          .run(conv.conv_id, 'assistant', said);
+        _setSetting('wake_unread_at', Date.now());
+        console.log('[wake] 他主动说了：' + said.replace(/\s+/g, ' ').slice(0, 40));
+      }
+    }
+    if (!dm && !sm) console.log('[wake] 他这次什么都没做');
+    return true;
+  } catch (e) {
+    console.error('[wake] 出错:', e.message);
+    return false;
+  }
+}
+setInterval(function () { checkWakeTick(); }, WAKE_TICK_MS);
+
+// 她那边每隔一会儿问一次「他有没有主动说什么」
+app.get('/api/wake/unread', auth, (req, res) => {
+  const since = parseInt(req.query.since) || 0;
+  const at = _getSettingNum('wake_unread_at');
+  res.set('Cache-Control', 'no-store');
+  if (!at || at <= since) return res.json({ has: false, at: at || 0 });
+  const conv = db.prepare('SELECT conv_id FROM sessions WHERE is_main = 1').get();
+  if (!conv) return res.json({ has: false, at: 0 });
+  const rows = db.prepare(
+    'SELECT id, role, content, created_at FROM messages WHERE conv_id = ? AND created_at >= ? ORDER BY id ASC LIMIT 5'
+  ).all(conv.conv_id, Math.floor(at / 1000) - 2);
+  res.json({ has: rows.length > 0, at, messages: rows });
+});
+
 setTimeout(function() { checkDreamTick(); }, 150 * 1000);
 
 // === 心井 Decay 后台任务 ===

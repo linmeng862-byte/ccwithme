@@ -77,7 +77,6 @@
           <button class="model-capsule" id="modelCapsule" aria-label="选择模型"><span id="modelCapsuleText">Sonnet 4.6</span></button>
           <span class="composer-spacer"></span>
 <button class="composer-icon" id="stickerButton" aria-label="表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
-          <button class="composer-icon" id="micButton" aria-label="麦克风"></button>
           <button class="composer-icon" id="callButton" aria-label="实时通话" title="点一下给他打电话 · 实时通话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg></button>
 	          <button id="send" aria-label="语音"></button>
         
@@ -837,7 +836,7 @@ const chat=$('chat'),stream=$('stream'),streamInner=$('streamInner'),input=$('in
 $('openDrawer').innerHTML=icon('menu');
 $('topbarModelChevron').innerHTML=icon('chevron');
 $('attachButton').innerHTML=icon('plus');
-$('micButton').innerHTML=icon('mic');$('micButton').title='按住说话，松开发送 · 点一下是语音转文字';
+$('send').title='按住说话，松开发送 · 点一下是语音转文字';
 
 let toastTimer;
 function toast(message){const el=$('toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),1600)}
@@ -990,34 +989,48 @@ $('fileInput').onchange=e=>addSelectedFiles([...e.target.files]);
 (()=>{const cb=document.querySelector('.composer-box');if(!cb)return;cb.addEventListener('dragover',e=>{if(!e.dataTransfer?.types?.includes('Files'))return;e.preventDefault();cb.classList.add('drag-over')});cb.addEventListener('dragleave',e=>{if(e.target===cb)cb.classList.remove('drag-over')});cb.addEventListener('drop',e=>{e.preventDefault();cb.classList.remove('drag-over');const files=[...(e.dataTransfer?.files||[])];if(files.length)addSelectedFiles(files)})})();
 $('input').addEventListener('paste',e=>{const items=e.clipboardData?.items;const files=e.clipboardData?.files;const collected=[];if(items){for(const it of items){if(it.kind==='file'){const f=it.getAsFile();if(!f)continue;if(it.type.startsWith('image/')){const ext=(it.type.split('/')[1]||'png').replace(/^jpeg$/,'jpg');collected.push(new File([f],`paste-${Date.now()}.${ext}`,{type:it.type}))}else{collected.push(f)}}}}if(!collected.length&&files?.length){for(const f of files)collected.push(f)}if(collected.length){e.preventDefault();addSelectedFiles(collected)}});
 // 🎤 语音：点击=转文字，长按=语音消息
-var _voiceTimer=null,_voiceRecorder=null,_voiceChunks=[],_voiceLongPress=false;
-$('micButton').onpointerdown=function(e){
+var _voiceTimer=null,_voiceRecorder=null,_voiceChunks=[],_voiceLongPress=false,_voiceCancelled=false;
+var _VOICE_TITLE='按住说话，松开发送 · 点一下是语音转文字';
+// 麦克风长在右下角这颗黑圆键上：输入框空着的时候它就是语音键，
+// 按住说话、松开发送；一旦框里有字（或者正在生成），它变回发送/停止键，
+// 这时候绝不能抢 click —— 所以下面每个入口都先问一遍 _voiceKeyIdle()。
+function _voiceKeyIdle(){return !state.busy&&!hasComposerContent()}
+$('send').addEventListener('pointerdown',function(e){
+  if(!_voiceKeyIdle())return;
   _voiceLongPress=false;
   _voiceTimer=setTimeout(function(){
     _voiceLongPress=true;
     _startVoiceRecord();
   },400);
-};
-$('micButton').onpointerup=function(e){
-  clearTimeout(_voiceTimer);
+});
+$('send').addEventListener('pointerup',function(e){
+  if(!_voiceTimer&&!_voiceLongPress)return;
+  clearTimeout(_voiceTimer);_voiceTimer=null;
   if(!_voiceLongPress){
     // 短按：语音转文字
     _startSpeechToText();
   }else if(_voiceRecorder&&_voiceRecorder.state==='recording'){
     _voiceRecorder.stop();
   }
-};
-$('micButton').onpointerleave=function(){clearTimeout(_voiceTimer)};
+});
+// 手指滑出按钮 = 反悔，别发出去
+$('send').addEventListener('pointerleave',function(){
+  clearTimeout(_voiceTimer);_voiceTimer=null;
+  if(_voiceLongPress&&_voiceRecorder&&_voiceRecorder.state==='recording'){
+    _voiceCancelled=true;_voiceRecorder.stop();toast('取消了');
+  }
+  _voiceLongPress=false;
+});
 function _startSpeechToText(){
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){toast('浏览器不支持语音识别');return}
-  var btn=$('micButton');
+  var btn=$('send');
   if(btn._recording){btn._recording.stop();return}
   var rec=new SR();rec.lang='zh-CN,en-US';rec.interimResults=true;rec.continuous=false;
-  btn._recording=rec;btn.style.color='var(--accent)';btn.title='录音中…';
+  btn._recording=rec;btn.classList.add('listening');btn.title='正在听…';
   rec.onresult=function(e){var t='';for(var i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;input.value=t;input.dispatchEvent(new Event('input'))};
-  rec.onend=function(){btn.style.color='';btn.title='麦克风';btn._recording=null;if(input.value.trim())input.focus()};
-  rec.onerror=function(e){btn.style.color='';btn.title='麦克风';btn._recording=null;if(e.error==='not-allowed')toast('请允许麦克风权限')};
+  rec.onend=function(){btn.classList.remove('listening');btn.title=_VOICE_TITLE;btn._recording=null;if(input.value.trim())input.focus()};
+  rec.onerror=function(e){btn.classList.remove('listening');btn.title=_VOICE_TITLE;btn._recording=null;if(e.error==='not-allowed')toast('请允许麦克风权限')};
   rec.start();
 }
 // iOS Safari / WKWebView 不支持 webm，只能给 mp4(aac)。挑一个浏览器真的录得出来的。
@@ -1039,13 +1052,16 @@ async function _startVoiceRecord(){
     _voiceRecorder.ondataavailable=function(e){if(e.data.size>0)_voiceChunks.push(e.data)};
     _voiceRecorder.onstop=function(){
       stream.getTracks().forEach(function(t){t.stop()});
+      var _b=$('send');_b.classList.remove('recording');_b.title=_VOICE_TITLE;
+      if(_voiceCancelled){_voiceCancelled=false;_voiceChunks=[];return}
       var secs=Math.max(1,Math.round((Date.now()-_voiceStartAt)/1000));
       var type=_voiceRecorder.mimeType||mime||'audio/webm';
       var blob=new Blob(_voiceChunks,{type:type});
       _sendVoiceMessage(blob,secs,type);
     };
     _voiceRecorder.start();
-    var btn=$('micButton');btn.style.color='#E54D2E';btn.title='松开发送';
+    _voiceCancelled=false;
+    var btn=$('send');btn.classList.add('recording');btn.title='松开发送 · 手指滑开取消';
   }catch(e){toast('麦克风权限未开启')}
 }
 function _fmtDur(s){var m=Math.floor(s/60);return m+':'+(s%60<10?'0':'')+(s%60)}
@@ -1082,7 +1098,7 @@ function _renderVoiceCards(row){
     var parts=m[1].split("|");var id=parts[0];var dur=parts[1]||"0:00";
     var wrap=document.createElement("div");wrap.className="voice-msg";
     // 背景不写死——由 CSS 按 .msg-user / .msg-claude 给成各自的气泡色，做成一颗胶囊
-    wrap.style.cssText="display:inline-flex;align-items:center;gap:9px;padding:7px 13px;margin:4px 0;border-radius:16px;max-width:240px;cursor:pointer";
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:8px;padding:5px 11px;margin:3px 0;border-radius:14px;max-width:200px;cursor:pointer";
     var playBtn=document.createElement("button");playBtn.className="voice-play-btn";
     playBtn.style.cssText="width:15px;height:15px;border:0;background:transparent;color:var(--text-time);display:grid;place-items:center;cursor:pointer;flex:none;padding:0";
     playBtn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="7,4 19,12 7,20"/></svg>';
@@ -1093,8 +1109,8 @@ function _renderVoiceCards(row){
     //    .onclick 这种属性式处理器**，必须写成 onclick 属性才活得下来。
     playBtn.setAttribute("onclick","_toggleVoicePlay(this)");
     var barsWrap=document.createElement("div");barsWrap.style.cssText="flex:1;min-width:0";
-    var bars=document.createElement("div");bars.style.cssText="display:flex;align-items:flex-end;gap:2px;height:24px";
-    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement("span");b.style.cssText="width:2px;height:"+(h*1.6)+"px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55";bars.appendChild(b)});
+    var bars=document.createElement("div");bars.style.cssText="display:flex;align-items:flex-end;gap:2px;height:16px";
+    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement("span");b.style.cssText="width:2px;height:"+(h*1.1)+"px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55";bars.appendChild(b)});
     barsWrap.appendChild(bars);
     var durSpan=document.createElement("span");durSpan.style.cssText="font:400 11px/1 var(--font-sans);color:var(--text-time);flex:none";durSpan.textContent=dur;
     // 转文字：一个小小的灰色箭头，不写字
@@ -1128,7 +1144,7 @@ function _logCall(kind,dur){
 function _renderCallCards(row){
   var md=_msgContentEl(row);if(!md)return;
   var text=md.textContent||"";
-  var re=/\[CALL:(ended|rejected|missed)\|([^\]]*)\]/g;var m;
+  var re=/\[CALL:(ended|rejected|missed)\|([^\]]*)\]/g;var m;var _hit=false;
   var PHONE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>';
   var HANGUP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
   while((m=re.exec(text))!==null){
@@ -1140,6 +1156,15 @@ function _renderCallCards(row){
     wrap.style.cssText="display:inline-flex;align-items:center;gap:7px;padding:8px 14px;margin:4px 0;background:var(--bg-surface);border-radius:14px;font:400 13px/1 var(--font-sans);color:"+color;
     wrap.innerHTML=icon+'<span>'+label+'</span>';
     md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
+    _hit=true;
+  }
+  // 通话记录条自带底色和圆角，外面再裹一层说话气泡就是两层壳 —— 跟语音条同一个毛病。
+  // ⚠️ 必须拿替换【前】的原文判断：替换后条子自带「语音通话 00:18」这些字，
+  //    md.textContent 永远不为空，判不出「整条只有一条通话记录」。
+  if(_hit){
+    var bare=text.replace(/\[CALL:[^\]]*\]/g,'').replace(/\s/g,'')==='';
+    var bub=row.querySelector('.bubble');
+    if(bub)bub.classList.toggle('voice-only',bare);
   }
 }
 // 语音播放
@@ -1200,6 +1225,44 @@ function _showIncomingCall(){
   // 30秒后自动挂断
   setTimeout(function(){if(_incomingCall){_rejectCall(true);_logCall('missed')}},30000);
 }
+// 她拨出去：等他接的那个界面。复用来电那套样式，只是没有接听键 —— 
+// 这通电话是她打的，能按的只有「取消」。
+function _showOutgoingCall(){
+  if(document.getElementById('outgoingCallOverlay'))return;
+  var overlay=document.createElement('div');overlay.id='outgoingCallOverlay';
+  overlay.className='incoming-call-overlay';
+  var avatar=localStorage.getItem('claude_avatar')||'';
+  var avatarHtml=avatar
+    ?'<span class="incoming-call-avatar"><img src="'+avatar+'" style="width:100%;height:100%;border-radius:50%;object-fit:cover"></span>'
+    :'<span class="incoming-call-avatar"><svg width="88" height="88" viewBox="0 0 16 16" fill="#2B2924"><use href="#claude-mark"/></svg></span>';
+  overlay.innerHTML='<div class="incoming-call-card">'+
+    '<div class="incoming-call-tag"><i></i>Calling</div>'+
+    avatarHtml+
+    '<h3 class="incoming-call-name">Claude</h3>'+
+    '<p class="incoming-call-sub" id="outgoingCallSub">正在呼叫，等他接…</p>'+
+    '<div class="incoming-call-btns">'+
+      '<div class="incoming-call-act"><button class="incoming-call-hangup" onclick="_cancelOutgoingCall()"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg></button><span>取消</span></div>'+
+    '</div></div>';
+  document.body.appendChild(overlay);
+  try{navigator.vibrate&&navigator.vibrate(80)}catch(e){}
+  // 他冷启动一次要 5 秒上下，别让她盯着一句不变的话干等
+  var subs=['正在呼叫，等他接…','他那边在响…','快了，他正拿起来…'],si=0;
+  overlay._t=setInterval(function(){
+    si++;var el=document.getElementById('outgoingCallSub');
+    if(el&&si<subs.length)el.textContent=subs[si];
+  },4000);
+  // 45 秒还没接通就别耗着了
+  overlay._to=setTimeout(function(){
+    if(document.getElementById('outgoingCallOverlay')){toast('他没接起来');_cancelOutgoingCall()}
+  },45000);
+}
+function _clearOutgoingCall(){
+  var ov=document.getElementById('outgoingCallOverlay');
+  if(!ov)return;
+  clearInterval(ov._t);clearTimeout(ov._to);ov.remove();
+}
+function _cancelOutgoingCall(){_clearOutgoingCall();_stopCall()}
+
 function _acceptCall(){
   _rejectCall(true);fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});_startCall();
 }
@@ -1226,6 +1289,40 @@ function _startRingPoll(){
   },3000);
 }
 _startRingPoll();
+
+// 他自己醒过来说的话 —— 后端 checkWakeTick 存进主线，这里把它接出来。
+// 不轮询的话，他说的话要等她下次刷新才看得见，那就不叫「他找我」了。
+// 60 秒一次：他一天也就醒几次，查太勤是白耗。
+var _wakeSeen=Number(localStorage.getItem('wake_seen_at')||0);
+function _startWakePoll(){
+  setInterval(async function(){
+    if(!state.token)return;
+    // 她正在跟他说话的时候别插队，等这轮完了再说
+    if(state.busy)return;
+    try{
+      var r=await fetch('/api/wake/unread?since='+_wakeSeen+'&t='+Date.now(),
+        {cache:'no-store',headers:{'Authorization':'Bearer '+state.token}});
+      if(!r.ok)return;
+      var d=await r.json();
+      if(!d.has||!d.messages||!d.messages.length)return;
+      _wakeSeen=d.at;localStorage.setItem('wake_seen_at',String(_wakeSeen));
+      d.messages.forEach(function(m){
+        if(m.role!=='assistant')return;
+        // 已经在流里的不重复摆（刷新过就可能已经渲染过了）
+        if(streamInner.querySelector('[data-wake-id="'+m.id+'"]'))return;
+        var row=_buildClaudeRow(m.content,'','',String(m.created_at*1000));
+        row.dataset.wakeId=m.id;
+        streamInner.append(row);
+        _renderVoiceCards(row);_renderCallCards(row);
+        if(typeof _splitMessages==='function')_splitMessages(row);
+        row.scrollIntoView({block:'end',behavior:'smooth'});
+      });
+      try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}
+      toast('他找你了');
+    }catch(e){}
+  },60000);
+}
+_startWakePoll();
 
 // 说话是碎的：「那个…嗯…我今天啊…」会被识别成三四段，每段发一次就是三四轮对话，
 // 而每轮的成本几乎是固定的（大头是把上下文重写进缓存，跟句子长短无关）。
@@ -1268,21 +1365,28 @@ async function _startCall(){
     var wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/call';
     _callWs=new WebSocket(wsUrl);
     _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话';};
-    _callWs.onopen=function(){};
+    _showOutgoingCall();
+    _callWs.onopen=function(){
+      // 告诉他电话响了 —— 不发这条他那头是静默的，得等她先开口
+      try{_callWs.send(JSON.stringify({type:'dial'}))}catch(e){}
+    };
     _callWs.onmessage=function(e){
       var msg=JSON.parse(e.data);
       if(msg.type==='busy'){toast('他还在说上一句，等一下');return}
-      if(msg.type==='delta'){return}   // 逐字来的，等 response 一次性念，别念半句
+      // 逐字来的：攒到一句话完整就先念，别等他整段写完 —— 感知延迟的大头在这儿
+      if(msg.type==='delta'){_feedCallDelta(msg.text);return}
       if(msg.type==='response'){
-        // 流式 TTS——MiniMax 边生成边播放，兜底浏览器
-        _speakWithMicPaused(msg.text);
+        _clearOutgoingCall();   // 他开口了 = 接通
+        // 尾巴收口：把 delta 阶段没凑成句的残句念掉。
+        // 已经念过的部分不会重念（_ttsSpokenLen 记着水位）。
+        _flushCallDelta(msg.text);
         // 也显示在聊天里
         var bubble=document.createElement('div');bubble.className='msg-claude';bubble.style.cssText='padding:8px 16px;margin:4px 0;background:var(--bubble-ai);border-radius:14px;font:14px var(--font-sans);color:var(--text-primary)';
         bubble.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg> '+escHtml(msg.text);streamInner.append(bubble);bubble.scrollIntoView({block:'end'});
       }else if(msg.type==='hangup'){
         // 他那边用 hangup_call 工具挂断的
         toast('他挂断了');_stopCall();
-      }else if(msg.type==='error'){toast('通话出错: '+msg.text)}
+      }else if(msg.type==='error'){_clearOutgoingCall();toast('通话出错: '+msg.text)}
     };
     _callWs.onclose=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话'};
     _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话'};
@@ -1318,6 +1422,8 @@ function _stopCall(){
     _logCall('ended',String(_m).padStart(2,'0')+':'+String(_s).padStart(2,'0'))}
   // 挂断时把还没发出去的半句丢掉，别等挂完了再补发一条
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}_speechBuf='';_speechFirstAt=0;
+  _resetTTSStream();
+  _clearOutgoingCall();
   if(_callTimer){clearInterval(_callTimer);_callTimer=null}_callSeconds=0;
   if(_callRecording){_callRecording.stop();_callRecording=null}
   if(_callMediaStream){_callMediaStream.getTracks().forEach(function(t){t.stop()});_callMediaStream=null}
@@ -1365,6 +1471,12 @@ async function _webCallStart(){
     _webWs.onmessage=async function(e){
       var msg=JSON.parse(e.data);
       if(msg.type==="registered"){
+        // 房间里没有接线员 —— 立刻降级去走听写。不这么判就得干等 6 秒
+        // fallback 计时器，表现是「点了通话键什么都不发生」。
+        if(!msg.peer){
+          console.log("[webcall] 接线员不在线，直接走语音输入");
+          _webCallStop(true);_startCall();return;
+        }
         var offer=await _webPc.createOffer();
         await _webPc.setLocalDescription(offer);
         _webWs.send(JSON.stringify({type:"offer",sdp:offer}));
@@ -1407,12 +1519,10 @@ function _webCallStop(silent){
 // 一键切换：WebRTC 优先，兜底 SpeechRecognition
 window._toggleCall=function(){
   if(_webPc||_callWs){_webCallStop();_stopCall();return}
-  // 试 WebRTC
-  if(window.RTCPeerConnection&&navigator.mediaDevices){
-    _webCallStart();
-  }else{
-    _startCall();
-  }
+  // 接线员（claude-operator.js）已删——WebRTC 那头永远没人接，
+  // 再去握一次手只是白等。直接走听写这条真正能用的路。
+  // 哪天接线员回来了，把下面这行换回 _webCallStart() 就行，信令和 _webCall* 都还在。
+  _startCall();
 };
 
 // 流式 TTS——PCM 音频块边收边播，不等整段生成
@@ -1420,6 +1530,110 @@ window._toggleCall=function(){
 // 「她说的话」再发回去，两个人对着自己的回音聊起来。
 var _callSpeaking=false;
 var _ttsPlayedAny=false;   // 本次 TTS 有没有真的出过声（防止半途失败时兜底重念一遍）
+
+// ============ 边生成边念 ============
+// 以前是等他整段写完才开口，实测 18 秒里有 12 秒是干等。现在攒到一句话
+// 完整就先念，后面的话排队跟上，感知延迟只剩「第一句写完」的时间。
+var _rawBuf='';          // 还没凑成句的原文（未清洗）
+var _spokenNorm='';      // 已经送去念的内容（去掉空白后的），用来给结尾收口对水位
+var _ttsQueue=[],_ttsPumping=false;
+
+function _norm(x){return (x||'').replace(/\s+/g,'')}
+
+// 念之前把只对眼睛有意义的东西剥掉。后端 _speakable 做过一遍，但 delta 是生的，
+// 前端得自己来一遍——两边规则要一致，改一边记得改另一边。
+function _speakableFront(x){
+  return (x||'')
+    .replace(/<(feel|memory|dream|flash)>[\s\S]*?<\/\1>/g,'')
+    .replace(/<想[·:][^>]*>([\s\S]*?)<\/想>/g,'$1')
+    .replace(/\[clawd:[^\]]*\]/g,'')
+    .replace(/\[music:[^\]]*\]/g,'')
+    .replace(/\[相册:[^\]]*\]/g,'')
+    .replace(/\[VOICE:[^\]]*\]/g,'')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g,'')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g,'$1')
+    .replace(/`([^`]*)`/g,'$1')
+    .replace(/^\s*#{1,6}\s*/gm,'')
+    .replace(/\*\*([^*]*)\*\*/g,'$1')
+    .replace(/(^|\s)\*([^*]+)\*/g,'$1$2')
+    .replace(/^\s*[-*+]\s+/gm,'');
+}
+
+// 手里这段还不能动的三种情况：标签开了没关、方括号开了没关、尖括号开了没关。
+// 这时候清洗会把后面的内容整片吃掉，必须等它闭合。
+function _bufHeld(b){
+  if(/<(feel|memory|dream|flash)>(?![\s\S]*<\/\1>)/.test(b))return true;
+  if(/<[^>]*$/.test(b))return true;
+  if(/\[[^\]]*$/.test(b))return true;
+  if(/```[\s\S]*$/.test(b)&&(b.split('```').length-1)%2===1)return true;
+  return false;
+}
+
+// 句末：中文标点、英文句末（后面得跟空白，"3.5" 里的点不算）
+var _SENT_RE=/[。！？…；!?;]+["'”’」』)）\]]*|[.]+["'”’)\]]*(?=\s)/g;
+
+function _feedCallDelta(t){
+  if(!t)return;
+  _rawBuf+=t;
+  if(_bufHeld(_rawBuf))return;
+  var clean=_speakableFront(_rawBuf);
+  // 找最后一个句末位置——一次可能攒了好几句，一起送走
+  var last=-1,m;_SENT_RE.lastIndex=0;
+  while((m=_SENT_RE.exec(clean))!==null)last=m.index+m[0].length;
+  if(last<0)return;
+  var head=clean.slice(0,last),tail=clean.slice(last);
+  // 第一句门槛放低（要快），后面的攒长一点，免得念得一顿一顿
+  var floor=_spokenNorm?12:4;
+  if(_norm(head).length<floor)return;
+  _rawBuf=tail;
+  _spokenNorm+=_norm(head);
+  _enqueueTTS(head.trim());
+}
+
+// 结尾收口：后端给的是清洗过的完整版，减掉已经念过的，剩下的补念。
+function _flushCallDelta(finalText){
+  var full=(finalText||'').trim();
+  var rest=full;
+  if(_spokenNorm){
+    // 用「去空白」的水位在完整文本里找对应的切点，逐字符走一遍最稳
+    var seen=0,cut=0;
+    for(var i=0;i<full.length&&seen<_spokenNorm.length;i++){
+      if(!/\s/.test(full[i]))seen++;
+      cut=i+1;
+    }
+    rest=(seen>=_spokenNorm.length)?full.slice(cut):'';
+    // 对不上（清洗差异之类）就宁可不念，也不要整段重念一遍给她听
+    if(seen<_spokenNorm.length)rest='';
+  }
+  _rawBuf='';_spokenNorm='';
+  if(rest.trim())_enqueueTTS(rest.trim());
+}
+
+// 每句进队列，串行播。麦克风是整队一起关、念完整队再开——
+// 一句一开关的话，两句之间的缝里会把他自己的尾音听成她说话。
+function _enqueueTTS(text){
+  if(!text||!text.trim())return;
+  _ttsQueue.push(text);
+  if(!_ttsPumping)_pumpTTS();
+}
+async function _pumpTTS(){
+  if(_ttsPumping)return;
+  _ttsPumping=true;_callSpeaking=true;
+  if(_callRecording){try{_callRecording.abort?_callRecording.abort():_callRecording.stop()}catch(e){}}
+  try{
+    while(_ttsQueue.length){
+      var next=_ttsQueue.shift();
+      try{ await _playStreamTTS(next) }catch(e){ console.warn('[tts] 这句没念成:',e.message) }
+    }
+  }finally{
+    _ttsPumping=false;_callSpeaking=false;
+    setTimeout(function(){
+      if(_callWs&&_callRecording&&!_ttsPumping){try{_callRecording.start()}catch(e){}}
+    },350);
+  }
+}
+// 挂断时把没念完的丢掉
+function _resetTTSStream(){_rawBuf='';_spokenNorm='';_ttsQueue.length=0}
 async function _speakWithMicPaused(text){
   _callSpeaking=true;
   if(_callRecording){try{_callRecording.abort?_callRecording.abort():_callRecording.stop()}catch(e){}}
@@ -2650,7 +2864,11 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
   }catch(e){if(msg)msg.fail(e.message||'连接失败，请稍后重试。');else toast(e.message||'文件上传失败')}
   finally{laStopThinking();state.busy=false;state.abortController=null;updateSendButton()}
 }
-send.onclick=()=>{if(state.busy&&state.abortController){state.abortController.abort();laStopThinking();toast('已停止生成');return}if(!hasComposerContent()){input.focus();return}sendMessage(input.value.trim(),true,[...state.pendingFiles])};
+send.onclick=()=>{if(state.busy&&state.abortController){state.abortController.abort();laStopThinking();toast('已停止生成');return}
+// 框里空着的时候这颗键是语音键，点击交给上面的 pointerup（短按=转文字）处理，
+// 这里不能再 focus —— 否则每次说话都顺手把键盘顶起来。
+if(!hasComposerContent())return;
+sendMessage(input.value.trim(),true,[...state.pendingFiles])};
 input.oninput=()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,144)+'px';updateSendButton();input.scrollTop=input.scrollHeight};
 let _keyboardTimers=[];
 function clearKeyboardTimers(){_keyboardTimers.forEach(clearTimeout);_keyboardTimers=[]}

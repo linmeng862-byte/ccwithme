@@ -105,6 +105,10 @@
     var MONO = 'ui-monospace,SFMono-Regular,Menlo,monospace';
     function diffCard(d, ops) {
       ops = ops || [];
+      // 他这轮什么都没干（没动文件、也没调一次工具）就别摆卡片。
+      // 每轮结束无条件 loadDiff → 纯聊天也会收到一张「没有改动」的空卡，
+      // 她说「他什么都没做也要展示终端卡片给我看」，就是这儿。
+      if (d.clean && !ops.length) return;
       var card = h('div', 'align-self:flex-start;width:100%;max-width:88%;background:var(--bg-surface);border:1px solid var(--border);border-radius:18px;overflow:hidden');
 
       // —— 头：深色圆角勾 + 标题 + 副标题 + 展开键
