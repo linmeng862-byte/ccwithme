@@ -52,6 +52,7 @@
       <span class="topbar-model-setting" id="topbarModelSetting">Medium</span>
     </button>
     <div class="topbar-actions">
+      <button class="icon-button" id="usageTopBtn" aria-label="用量" title="用量"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M3 17h4V9H3zM10 17h4V4h-4zM17 17h4v-5h-4z"/></svg></button>
       <button class="icon-button" id="artifactsTopBtn" aria-label="作品集" title="作品集"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg></button>
       <div class="capsule-group" id="capsuleGroup">
         <button class="capsule-btn" id="todoTopBtn" aria-label="待办" title="待办"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
@@ -3533,6 +3534,9 @@ async function loadUsage(){
 function openUsagePanel(){var p=$('usagePanel');p.style.display='flex';p.setAttribute('aria-hidden','false');loadUsage()}
 function closeUsagePanel(){var p=$('usagePanel');p.style.display='none';p.setAttribute('aria-hidden','true')}
 if($('openUsage'))$('openUsage').onclick=function(){try{closeDrawer()}catch(e){}openUsagePanel()};
+// 顶栏那个一按就开的（2026-08-22）——她说「加个按钮一按就相当于打了 /usage」。
+// 抽屉里那个入口还留着，两个都通向同一个面板。
+if($('usageTopBtn'))$('usageTopBtn').onclick=function(){openUsagePanel()};
 if($('closeUsage'))$('closeUsage').onclick=closeUsagePanel;
 if($('refreshUsage'))$('refreshUsage').onclick=loadUsage;
 ['profileSave','profileSaveMemories','profileSavePreferences'].forEach(id=>$(id).onclick=async()=>{try{await saveProfile()}catch(e){toast('保存失败')}});
