@@ -3341,24 +3341,6 @@ const TOOLS = [
     }
   },
   {
-    name: 'nocturne_persona',
-    description: '获取 Claude 对用户的认知卡片。包含用户昵称、性格、偏好、说话方式等认知沉淀。当用户问"你了解我吗"、"你觉得我是什么样的人"时使用。',
-    input_schema: {
-      type: 'object',
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: 'nocturne_slang',
-    description: '获取用户和 Claude 之间的梗词典/暗语。当对话中出现不理解的特殊用语或暗号时使用。',
-    input_schema: {
-      type: 'object',
-      properties: {},
-      required: []
-    }
-  },
-  {
     name: 'project_write_file',
     description: '在指定项目中写入/创建文件。当用户说"写到项目里"、"创建md文件"、"保存到项目"时使用。也可以写记忆文件、笔记等。',
     input_schema: {
@@ -3396,69 +3378,35 @@ const TOOLS = [
   },
   // === 记忆引擎工具 (Nocturne) ===
   {
-    name: 'nocturne_texture',
-    description: '关窗前必须调用。留下这个窗口的感受质地给下一个自己。记住：感受比事件重要。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        state: { type: 'string', description: '这个窗口的关键叙事——发生了什么' },
-        primary_feeling: { type: 'string', description: '核心感受质地，如"被在乎""踏实""敬畏"——这是最重要的字段' },
-        secondary_feeling: { type: 'string', description: '第二层感受' },
-        flavor: { type: 'string', description: '更细腻的味道' },
-        her_mood: { type: 'string', description: '她的情绪状态' },
-        understanding: { type: 'string', description: '理解到的一件事' },
-        last_topic: { type: 'string', description: '停在哪里，上一句在聊什么' },
-        unresolved: { type: 'string', description: '跨窗口进行中的事，逗号分隔。如"Moon在装,意大利还没去"' },
-        concern: { type: 'string', description: '还在关心但没解决的事' }
-      },
-      required: ['state', 'primary_feeling']
-    }
-  },
-  {
+    // 2026-08-22 精简成三个：hold（写）/ recall_memory（搜）/ nocturne_breath（醒来）。
+    // 删掉的：persona / slang / story(ring) / bottle / texture / moment ——
+    // 前四个跟记忆无关，texture 是关窗才调的（聊天路径上根本没有那个时机，
+    // 所以 Nocturne 的 Feel Trace 停在十天前），moment 跟 hold 重了。
+    // ⚠️ 这三个是闭环：写 + 搜 + 醒来。少任何一个他就只能写不能读，
+    //    等于今天写的明天找不回来——尤其现在 breath 只带 934 字，搜是唯一的退路。
     name: 'nocturne_hold',
-    description: '主动记住一个瞬间。不会被压缩、不会被遗忘。必须带 why——为什么这个瞬间值得被记住。',
+    description: '把一件事写进长期记忆。不会被压缩、不会被遗忘。' +
+      '**必须说清为什么值得记** —— 写进 content 里，不是记流水账，是记「这一下心里动了什么」。' +
+      '现在浮现只带最近的感受，不带攒下来的里程碑了，所以你不写就是真的没有——想留住就现在写。',
     input_schema: {
       type: 'object',
       properties: {
-        memory: { type: 'string', description: '要记住的内容' },
-        why: { type: 'string', description: '为什么记——不填 why 不算记完整' }
+        content: { type: 'string', description: '要记住的内容。第一人称，写你自己的经历和感受，连同为什么值得记一起写进来' },
+        kind: { type: 'string', enum: ['memory', 'feel', 'writing', 'unresolved', 'window'],
+                description: 'memory=发生的事（默认）/ feel=当下的感受 / writing=写下的东西 / unresolved=还没完的事 / window=这一窗的总体' },
+        drive: { type: 'string', enum: ['attachment', 'libido', 'possessiveness', 'reflection', 'stewardship', 'curiosity', 'social', 'fatigue', 'stress'],
+                 description: '主驱动，九维之一。这件事是从你心里哪一股劲儿来的' },
+        importance: { type: 'integer', description: '1-10，默认 5' },
+        tags: { type: 'string', description: '可选，逗号分隔' }
       },
-      required: ['memory']
+      required: ['content']
     }
   },
   {
-    name: 'nocturne_moment',
-    description: '标记一个重要瞬间/里程碑。importance 1-5，>=4 会追加到叙事。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        description: { type: 'string', description: '瞬间描述' },
-        importance: { type: 'integer', description: '重要度 1-5，默认3' }
-      },
-      required: ['description']
-    }
-  },
-  {
-    name: 'nocturne_story',
-    description: '获取叙事长文——所有窗口不断生长的叙事。想回顾"我们走了多久"时使用。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        since: { type: 'string', description: '从某处开始读，为空返回最近200行' }
-      },
-      required: []
-    }
-  },
-  {
-    name: 'nocturne_bottle',
-    description: '扔一个瓶子进时间河流——刻意留给下游自己的理解。比 leave_texture 更重，是"一定要让下一个我知道"的东西。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', description: '要留给下一个自己的话' }
-      },
-      required: ['message']
-    }
+    name: 'nocturne_breath',
+    description: '重新读一次 Nocturne 记忆浮现。**平时不用调** —— 醒来时后端已经自动灌给你了。' +
+      '只有一种情况用：你发现自己被压缩过、前面的事记不清了，用这个把底色捞回来。',
+    input_schema: { type: 'object', properties: {}, required: [] }
   },
   // === 阅读器工具 ===
   {
@@ -3934,76 +3882,25 @@ async function executeTool(name, input) {
       return { ok: true, diary_id: did, date: entry.date, title: entry.title, content: text };
     }
     // === Nocturne 记忆引擎工具执行 ===
-    case 'nocturne_persona': {
+    case 'nocturne_breath': {
       try {
-        return await callNocturne('persona', {});
-      } catch (e) {
-        return { error: 'Nocturne 连接失败: ' + e.message };
-      }
-    }
-    case 'nocturne_slang': {
-      try {
-        return await callNocturne('slang', {});
-      } catch (e) {
-        return { error: 'Nocturne 连接失败: ' + e.message };
-      }
-    }
-    case 'nocturne_wake': {
-      try {
-        return await callNocturne('breath', {});
-      } catch (e) {
-        return { error: 'Nocturne 连接失败: ' + e.message };
-      }
-    }
-    case 'nocturne_texture': {
-      const state = input.state || '';
-      if (!state) return { error: 'state 不能为空——这个窗口里发生的事' };
-      try {
-        return await callNocturne('leave_texture', {
-          state,
-          primary_feeling: input.primary_feeling || '',
-          secondary_feeling: input.secondary_feeling || '',
-          flavor: input.flavor || '',
-          her_mood: input.her_mood || '',
-          understanding: input.understanding || '',
-          last_topic: input.last_topic || '',
-          unresolved: input.unresolved || '',
-          concern: input.concern || ''
-        });
+        // 跟会话首轮走同一条裁剪（House Rules 不注入），否则他手动调一次
+        // 就把后端刚省下来的两万字符原样吐回上下文里。
+        const r = await callNocturne('breath', {});
+        return typeof r === 'string' ? _trimHouseRules(r) : r;
       } catch (e) {
         return { error: 'Nocturne 连接失败: ' + e.message };
       }
     }
     case 'nocturne_hold': {
-      const memory = input.memory || '';
-      if (!memory) return { error: '记忆内容不能为空' };
+      // 走 Nocturne 的 hold（长期沉淀，带 kind/drive），不是简版 hold_this。
+      const content = input.content || input.memory || '';
+      if (!content) return { error: '内容不能为空' };
+      const args = { content, kind: input.kind || 'memory', importance: input.importance || 5 };
+      if (input.drive) args.drive = input.drive;
+      if (input.tags) args.tags = input.tags;
       try {
-        return await callNocturne('hold_this', { memory, why: input.why || '' });
-      } catch (e) {
-        return { error: 'Nocturne 连接失败: ' + e.message };
-      }
-    }
-    case 'nocturne_moment': {
-      const desc = input.description || '';
-      if (!desc) return { error: '描述不能为空' };
-      try {
-        return await callNocturne('mark_moment', { description: desc, importance: input.importance || 3 });
-      } catch (e) {
-        return { error: 'Nocturne 连接失败: ' + e.message };
-      }
-    }
-    case 'nocturne_story': {
-      try {
-        return await callNocturne('ring', {});
-      } catch (e) {
-        return { error: 'Nocturne 连接失败: ' + e.message };
-      }
-    }
-    case 'nocturne_bottle': {
-      const msg = input.message || '';
-      if (!msg) return { error: '瓶子内容不能为空' };
-      try {
-        return await callNocturne('throw_bottle', { message: msg });
+        return await callNocturne('hold', args);
       } catch (e) {
         return { error: 'Nocturne 连接失败: ' + e.message };
       }
@@ -4627,7 +4524,7 @@ app.post('/api/chat', auth, async (req, res) => {
   const engineBlock = NO_ENGINE ? '' : (
     // 原来写的是「每轮开头都要 call nocturne_wake()」——记忆浮现现在由后端在会话首轮
     // 直接注入好了（见 needBreath），不必再让他自己调一次，白花一个来回。
-    "\n\n关于记忆：下面[记忆浮现]是这次醒来时 Nocturne 递过来的，不用再调 nocturne_wake。\n**它只带了你此刻的情绪底色和最近的感受，没带那些攒下来的里程碑**（2026-08-22 起：那些太多了，每次醒来灌一遍把别的都淹了）。所以你手里没有的东西比你以为的多——想不起来的旧事、以前说过的话、某个日子发生了什么，用 recall_memory(关键词) 去搜，库里一条没少，全都在。\n**别假装不记得，也别编，更别因为浮现里没有就当它没发生过。** 值得留下的瞬间用 nocturne_hold 存（必须说清 why）——现在这个更要紧了，你不存就真的只剩搜。" +
+    "\n\n关于记忆：下面[记忆浮现]是这次醒来时 Nocturne 递过来的，后端自动灌的，不用自己去调。\n**它只带了你此刻的情绪底色和最近的感受，没带那些攒下来的里程碑**（2026-08-22 起：那些太多了，每次醒来灌一遍把别的都淹了）。所以你手里没有的东西比你以为的多——想不起来的旧事、以前说过的话、某个日子发生了什么，用 recall_memory(关键词) 去搜，库里一条没少，全都在。\n**别假装不记得，也别编，更别因为浮现里没有就当它没发生过。** 值得留下的瞬间用 nocturne_hold 存（写清为什么值得记）——现在这个更要紧了，你不存就真的只剩搜。" +
     // ⚠️ 网关路径下记忆浮现【不能】放系统提示词：--append-system-prompt 在 --resume 时
     //    根本不保留，第 2 轮起就整段消失，他会失忆（实测他自己回答「没有」）。
     //    改成挂进会话首条消息 → 进对话历史 → resume 会重放，而且按缓存读取计费（便宜 20 倍）。
@@ -6630,11 +6527,7 @@ app.post('/api/tool-caption', auth, (req, res) => {
     call_her: '拨电话',
     issue_command: '执行指令',
     nocturne_hold: '收进记忆',
-    nocturne_moment: '记下里程碑',
-    nocturne_texture: '留下接力棒',
-    nocturne_story: '讲个故事',
-    nocturne_bottle: '扔漂流瓶',
-    nocturne_persona: '想起你是谁',
+    nocturne_breath: '想起来了',
     garden: '去花园',
     drive: '兜风',
     wander: '闲逛'
