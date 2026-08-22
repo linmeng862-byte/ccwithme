@@ -4066,6 +4066,22 @@ app.post('/api/chat', auth, async (req, res) => {
         ? '\n[图片附件，用 Read 工具查看：' + upload.path + ']'
         : '\n[文件附件：' + upload.filename + ']';
     }
+    // 让他知道现在几点。⚠️ 必须挂在 message 上，不能进 systemPrompt ——
+    // 系统提示是缓存前缀，每轮变一次就要重写 41k token（$0.25），
+    // 而挂在 message 上只是后缀，不动前缀，一轮几乎不要钱。
+    // 只在跟上一条隔了 20 分钟以上时才报时：连着聊的时候不用一直提醒他。
+    try {
+      const _lastMsg = db.prepare('SELECT created_at FROM messages WHERE conv_id = ? ORDER BY id DESC LIMIT 1').get(convId);
+      const _gapMin = _lastMsg ? (Date.now() / 1000 - _lastMsg.created_at) / 60 : 99999;
+      if (_gapMin >= 20) {
+        const _now = new Date();
+        const _wd = ['周日','周一','周二','周三','周四','周五','周六'][_now.getDay()];
+        gatewayMessage += '\n\n[现在是 ' + _now.toLocaleString('zh-CN', { hour12: false }) + ' ' + _wd +
+          '，距上一句隔了 ' + (_gapMin > 1440 ? Math.round(_gapMin / 1440) + ' 天' :
+            _gapMin > 60 ? Math.round(_gapMin / 60) + ' 小时' : Math.round(_gapMin) + ' 分钟') +
+          '。这条只是让你知道时间，不用特意回应。]';
+      }
+    } catch (e) {}
     if (mindTail) gatewayMessage += mindTail;
     if (timerFeedback) gatewayMessage += timerFeedback;
     // 通话：这句是她**说出口**的，你的回复会被念出来给她听。

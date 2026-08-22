@@ -15,7 +15,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1786184508">
+<link rel="stylesheet" href="/css/home.css?v=1786220900">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -1098,7 +1098,7 @@ function _renderVoiceCards(row){
     var parts=m[1].split("|");var id=parts[0];var dur=parts[1]||"0:00";
     var wrap=document.createElement("div");wrap.className="voice-msg";
     // 背景不写死——由 CSS 按 .msg-user / .msg-claude 给成各自的气泡色，做成一颗胶囊
-    wrap.style.cssText="display:inline-flex;align-items:center;gap:8px;padding:5px 11px;margin:3px 0;border-radius:14px;max-width:200px;cursor:pointer";
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:8px;padding:7px 12px;margin:3px 0;border-radius:15px;max-width:215px;cursor:pointer";
     var playBtn=document.createElement("button");playBtn.className="voice-play-btn";
     playBtn.style.cssText="width:15px;height:15px;border:0;background:transparent;color:var(--text-time);display:grid;place-items:center;cursor:pointer;flex:none;padding:0";
     playBtn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="7,4 19,12 7,20"/></svg>';
@@ -1109,8 +1109,8 @@ function _renderVoiceCards(row){
     //    .onclick 这种属性式处理器**，必须写成 onclick 属性才活得下来。
     playBtn.setAttribute("onclick","_toggleVoicePlay(this)");
     var barsWrap=document.createElement("div");barsWrap.style.cssText="flex:1;min-width:0";
-    var bars=document.createElement("div");bars.style.cssText="display:flex;align-items:flex-end;gap:2px;height:16px";
-    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement("span");b.style.cssText="width:2px;height:"+(h*1.1)+"px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55";bars.appendChild(b)});
+    var bars=document.createElement("div");bars.style.cssText="display:flex;align-items:flex-end;gap:2px;height:20px";
+    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement("span");b.style.cssText="width:2px;height:"+(h*1.4)+"px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55";bars.appendChild(b)});
     barsWrap.appendChild(bars);
     var durSpan=document.createElement("span");durSpan.style.cssText="font:400 11px/1 var(--font-sans);color:var(--text-time);flex:none";durSpan.textContent=dur;
     // 转文字：一个小小的灰色箭头，不写字
@@ -1811,7 +1811,8 @@ function _buildClaudeRow(text,userText='',thinking='',timestamp='',userAttachmen
     else if(thinking){body.append(thoughtSummary(thinking))}
   }else if(thinking){body.append(thoughtSummary(thinking))}
   var b=document.createElement('div');b.className='bubble';var md=document.createElement('div');md.className='md';renderMessage(md,text);b.append(md);body.append(b);
-  if(timestamp){var time=document.createElement('div');time.className='msg-time';time.textContent=formatMsgTime(timestamp);body.append(time)}
+  // 时间戳不再挂在每条气泡下面了 —— 改成隔了一段时间才在他这句上面摆一条分隔条，
+  // 见 _maybeTimeDivider()。row.dataset.timestamp 留着给它算间隔用。
   actions(body,text,userText,userAttachments);row.append(body);return row}
 function _fmtTokens(n){if(n>=1000000)return (n/1000000).toFixed(1)+'M';if(n>=1000)return (n/1000).toFixed(1)+'k';return String(n)}
 // 真实订阅额度（5 小时窗口）。跟 cost_usd 不是一回事——那个是按 API 价估的钱，
@@ -1845,8 +1846,29 @@ function _updateRateLimit(rl){
   if(el){var t=_rateLimitText(rl);el.textContent=t||'';el.style.display=t?'':'none'}
 }
 function _showTokenUsage(usage){if(!usage)return;var total=(usage.input_tokens||0)+(usage.output_tokens||0);if(!total)return;var parts=[];if(usage.cache_read_input_tokens||usage.cache_creation_input_tokens){var cacheTokens=usage.cache_read_input_tokens||usage.cache_creation_input_tokens||0;parts.push('<span class="cache-hit"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align:-2px;margin-right:2px"><path d="M13 2L3 14h6l-1 8 10-12h-6l1-8z"/></svg>缓存命中 '+_fmtTokens(cacheTokens)+'</span>');}parts.push('消耗 '+_fmtTokens(total));var row=streamInner.querySelector('.msg-user:last-of-type');if(!row)return;var old=row.querySelector('.token-usage');if(old)old.remove();var el=document.createElement('div');el.className='token-usage';el.innerHTML=parts.join(' · ');var bubble=row.querySelector('.bubble');if(bubble)bubble.after(el);else row.append(el)}
-var _lastMsgTime=0;function _maybeTimeSep(ts){if(!ts)return;var t=new Date(ts).getTime();if(t-_lastMsgTime<300000||_lastMsgTime===0){_lastMsgTime=t;return}var sep=document.createElement('div');sep.className='time-separator';var d=new Date(t);var h=d.getHours().toString().padStart(2,'0');var m=d.getMinutes().toString().padStart(2,'0');sep.innerHTML='<span class="dot"></span> '+h+':'+m;streamInner.append(sep);_lastMsgTime=t}
-function addUser(text,timestamp='',attachments=[]){_maybeTimeSep(timestamp);const row=_buildUserRow(text,timestamp,attachments);streamInner.append(row);row.scrollIntoView({block:'end'});return row}
+var _lastMsgTime=0;
+// 一段对话开始时摆一条时间。三条规矩（2026-08-22 按她的参考图调）：
+//   1) 只在「他」要说话之前摆 —— 她自己发的话上面不摆
+//   2) 隔 20 分钟以上才算新的一段（原来是 5 分钟，太碎）
+//   3) 格式带上日期，跟参考图一致：8/21 02:48:51
+function _fmtSepTime(t){
+  var d=new Date(t);
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+
+    d.getHours().toString().padStart(2,'0')+':'+
+    d.getMinutes().toString().padStart(2,'0')+':'+
+    d.getSeconds().toString().padStart(2,'0');
+}
+var _TIME_SEP_GAP=20*60*1000;
+function _maybeTimeSep(ts,who){
+  if(!ts)return;
+  var t=new Date(ts).getTime();if(!t||isNaN(t))return;
+  if(who&&who!=='claude'){_lastMsgTime=t;return}   // 她说话不摆，但要记时间
+  if(t-_lastMsgTime<_TIME_SEP_GAP||_lastMsgTime===0){_lastMsgTime=t;return}
+  var sep=document.createElement('div');sep.className='time-separator';
+  sep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
+  streamInner.append(sep);_lastMsgTime=t;
+}
+function addUser(text,timestamp='',attachments=[]){_maybeTimeSep(timestamp,'user');const row=_buildUserRow(text,timestamp,attachments);streamInner.append(row);row.scrollIntoView({block:'end'});return row}
 function plainConversation(){return[...streamInner.children].map(x=>x.classList.contains('msg-user')?`You: ${x.dataset.raw}`:x.classList.contains('msg-claude')?`Claude: ${x.dataset.raw||''}`:'').filter(Boolean).join('\n\n')}
 function actions(row,raw,userText,userAttachments=[]){const bar=document.createElement('div');bar.className='message-actions';const make=(name,title,fn)=>{const b=document.createElement('button');b.className='action-button';b.title=title;b.innerHTML=icon(name);b.onclick=e=>{e.stopPropagation();fn(b)};bar.append(b);return b};
   make('copy','复制',async b=>{await navigator.clipboard.writeText(raw);b.innerHTML="<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\"><polyline points=\"20 6 9 17 4 12\"/></svg>";setTimeout(()=>b.innerHTML=icon('copy'),1000)});
@@ -2597,7 +2619,7 @@ function _showThoughtProcess(phase){const s=$('thoughtSheet');const t=s.querySel
 function _showToolDetail(phase){const t=$('thoughtSheet').querySelector('.sheet-title');if(t)t.textContent=phase.toolName||'Tool';const c=$('thoughtContent');c.innerHTML='';const lab='font-weight:600;font-size:13px;opacity:.6;margin:0 0 6px';const pre='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;background:var(--bg-sunken);padding:8px 10px;border-radius:8px;color:var(--text-primary);margin:0';const inT=document.createElement('div');inT.style.cssText=lab;inT.textContent='Input';const inB=document.createElement('pre');inB.style.cssText=pre+';margin-bottom:14px;max-height:280px;overflow:auto';try{inB.textContent=typeof phase.toolInput==='string'?phase.toolInput:JSON.stringify(phase.toolInput,null,2)}catch(e){inB.textContent=String(phase.toolInput||'')}const outT=document.createElement('div');outT.style.cssText=lab;outT.textContent='Output';const outB=document.createElement('pre');outB.style.cssText=pre+';max-height:400px;overflow:auto';outB.textContent=phase.toolOutput||'(\u65e0\u8f93\u51fa)';c.append(inT,inB,outT,outB);sheet('thought',true);$('thoughtSheet').classList.add('expanded');$('thoughtSheet').style.transform=''}
 function _showSummary(phases){const t=$('thoughtSheet').querySelector('.sheet-title');if(t)t.textContent='Summary';const c=$('thoughtContent');c.innerHTML='';c.style.whiteSpace='normal';const list=document.createElement('div');list.style.cssText='display:flex;flex-direction:column;position:relative';phases.forEach((p,i)=>{const isLast=i===phases.length-1;const item=document.createElement('button');item.type='button';item.style.cssText='display:flex;align-items:stretch;gap:14px;width:100%;padding:0;border:0;background:transparent;text-align:left;cursor:pointer;color:var(--text-primary)';const rail=document.createElement('span');rail.style.cssText='width:20px;flex:0 0 auto;display:flex;flex-direction:column;align-items:center;align-self:stretch';const icon=document.createElement('span');icon.style.cssText='width:20px;height:20px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-secondary)';if(p.type==='thinking'){const d=document.createElement('span');d.style.cssText='width:7px;height:7px;border-radius:50%;background:var(--text-secondary)';icon.append(d)}else{icon.innerHTML=_toolIconSvg(p.toolName,p.toolInput);const sv=icon.querySelector('svg');if(sv){sv.setAttribute('width','16');sv.setAttribute('height','16');sv.style.opacity='.6'}}rail.append(icon);if(!isLast){const line=document.createElement('span');line.style.cssText='width:1.5px;flex:1;background:var(--border-strong);margin:4px 0';rail.append(line)}const txt=document.createElement('span');txt.style.cssText='flex:1;font-size:15px;line-height:1.4;color:inherit;padding:1px 0 '+(isLast?'0':'24px');txt.textContent=p.caption||p.summary||p.title||p.toolName||'?';if(p.type==='tool'&&!p.caption){txt.style.opacity='.5';api('/api/tool-caption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_name:p.toolName||'tool',tool_input:p.toolInput,tool_output:(p.toolOutput||'').slice(0,4000)})}).then(r=>r&&r.ok?r.json():null).then(j=>{if(j&&j.caption){p.caption=j.caption;txt.textContent=j.caption;txt.style.opacity='1'}else{txt.style.opacity='1'}}).catch(()=>{txt.style.opacity='1'})}const chev=document.createElement('span');chev.style.cssText='flex:0 0 auto;opacity:.4;font-size:18px;line-height:20px';chev.textContent='\u203A';item.append(rail,txt,chev);item.addEventListener('click',()=>{if(p.type==='thinking')_showThoughtProcess(p);else _showToolDetail(p)});list.append(item)});c.append(list);sheet('thought',true);$('thoughtSheet').classList.add('expanded');$('thoughtSheet').style.transform=''}
 function _buildToolRow(d){const row=document.createElement('div');row.className='tool-row';row.dataset.toolId=d.id||'';row.dataset.status='running';const summary=document.createElement('div');summary.className='tool-row-summary';const name=document.createElement('span');name.className='tool-row-name';name.textContent=d.name||'Tool';const inputPrev=document.createElement('span');inputPrev.className='tool-row-input';try{const s=typeof d.input==='string'?d.input:JSON.stringify(d.input||{});inputPrev.textContent=s.replace(/\s+/g,' ').slice(0,120)}catch(e){inputPrev.textContent=''}const status=document.createElement('span');status.className='tool-row-status';summary.append(name,inputPrev,status);const detail=document.createElement('div');detail.className='tool-row-detail hidden';const inT=document.createElement('div');inT.className='tool-row-section-title';inT.textContent='Input';const inB=document.createElement('pre');inB.className='tool-row-block';try{inB.textContent=typeof d.input==='string'?d.input:JSON.stringify(d.input,null,2)}catch(e){inB.textContent=String(d.input||'')}const outT=document.createElement('div');outT.className='tool-row-section-title';outT.textContent='Output';const outB=document.createElement('pre');outB.className='tool-row-block tool-row-output';outB.textContent='\u6b63\u5728\u6267\u884c\u2026';detail.append(inT,inB,outT,outB);summary.addEventListener('click',()=>detail.classList.toggle('hidden'));row.append(summary,detail);return row}
-function addClaude(text,userText='',thinking='',timestamp='',userAttachments=[]){_maybeTimeSep(timestamp);const row=_buildClaudeRow(text,userText,thinking,timestamp,userAttachments);streamInner.append(row);return row}
+function addClaude(text,userText='',thinking='',timestamp='',userAttachments=[]){_maybeTimeSep(timestamp,'claude');const row=_buildClaudeRow(text,userText,thinking,timestamp,userAttachments);streamInner.append(row);return row}
 function beginClaude(userText,userAttachments=[]){document.querySelector('.stream-disclaimer')?.remove();
   var row=document.createElement('div');row.className='msg-claude streaming';row.dataset.phase='submitted';row.dataset.timestamp=new Date().toISOString();
   row.innerHTML=_avatarClaude;
@@ -2693,7 +2715,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       var bodyEl=row.querySelector('.msg-body');
       // Artifact 内联渲染：遍历 tool phases 找 artifact
       if(currentTraceRow){var fps=_getPhases(currentTraceRow);fps.forEach(function(p){if(p.toolOutput){try{var po=JSON.parse(p.toolOutput);if(po&&po.artifact)_renderArtifactCard(po.artifact,bodyEl||body);if(po&&po.music)_renderMusicCard(po.music,bodyEl||body);if(po&&po.gallery_save)_renderGallerySaveCard(po.gallery_save,bodyEl||body);if(po&&po.gallery_share)_renderGalleryShareCard(po.gallery_share,bodyEl||body);if(po&&po.gallery_album)_renderGalleryAlbumCard(po.gallery_album,bodyEl||body);if(po&&po.file_card)_renderToolFileCard(po.file_card,bodyEl||body)}catch(e){}}});_renderActionReportCard(fps,currentTraceRow,bodyEl||body)}
-      if(bodyEl){var timeEl=document.createElement('div');timeEl.className='msg-time';timeEl.textContent=formatMsgTime(row.dataset.timestamp);var bubbleEl=bodyEl.querySelector('.bubble');if(bubbleEl)bubbleEl.after(timeEl);else bodyEl.append(timeEl)}
+      /* 时间戳改成上方的分隔条了，这里不再塞 */
       if(bodyEl)actions(bodyEl,raw,userText,userAttachments);
       appendDisclaimer();
       _maybeCompletionEgg();
@@ -3082,7 +3104,7 @@ function _preprocessMessages(messages){
 function _renderMessagesIntoFragment(slice){
   const frag=document.createDocumentFragment();
   slice.forEach(m=>{
-    if(m.timestamp)_maybeTimeSepFrag(frag,m.timestamp);
+    if(m.timestamp)_maybeTimeSepFrag(frag,m.timestamp,m.role==='user'?'user':'claude');
     const row=m.role==='user'
       ?_buildUserRow(m.text,m.timestamp,m._la||[])
       :_buildClaudeRow(m.text,m._lu||'',m.thinking,m.timestamp,m._la||[],m.traces||[]);
@@ -3092,13 +3114,15 @@ function _renderMessagesIntoFragment(slice){
   });
   return frag;
 }
-function _maybeTimeSepFrag(frag,ts){
+// 历史渲染那条路的同款 —— 规矩必须跟 _maybeTimeSep 一模一样，
+// 否则「刷新前」和「刷新后」看到的分隔条位置不一致（同一件事在两个地方各写一遍的老毛病）。
+function _maybeTimeSepFrag(frag,ts,who){
   if(!ts)return;
-  var t=new Date(ts).getTime();
-  if(t-_lastMsgTime<300000||_lastMsgTime===0){_lastMsgTime=Math.max(_lastMsgTime,t);return}
+  var t=new Date(ts).getTime();if(!t||isNaN(t))return;
+  if(who&&who!=='claude'){_lastMsgTime=Math.max(_lastMsgTime,t);return}
+  if(t-_lastMsgTime<_TIME_SEP_GAP||_lastMsgTime===0){_lastMsgTime=Math.max(_lastMsgTime,t);return}
   var sep=document.createElement('div');sep.className='time-separator';
-  var d=new Date(t);var h=d.getHours().toString().padStart(2,'0');var m=d.getMinutes().toString().padStart(2,'0');
-  sep.innerHTML='<span class="dot"></span> '+h+':'+m;
+  sep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
   frag.appendChild(sep);_lastMsgTime=t;
 }
 function _attachLoadMore(){

@@ -1155,3 +1155,35 @@ html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
    而 body 宽度又是满屏 —— 于是整页右移 8px、右边溢出 8px。
    reset 没盖住它（design-system.css 里没归零），这里补上。 */
 body{margin:0!important}
+
+/* ============ 08-22 再收一档：她说气泡还是太大 ============
+   字 16 → 15，内边距 9/15 → 7/13，行高 1.5 → 1.45。
+   单行气泡约 42px → 36px。改这三条必须带 !important——
+   上面 659/660 行那两条 padding 还在，不带就白写。 */
+.msg-user .bubble,.msg-claude .bubble{
+  font-size:15px!important;
+  padding:7px 13px!important;
+  line-height:1.45!important;
+}
+.msg-claude .md{font-size:15px!important;line-height:1.45!important}
+
+/* ============ 08-22 权威版 · 上面几层气泡规则以这条为准 ============
+   ⚠️ 他那侧的气泡长在 .msg-body 里，而 .msg-body 已经站在头像右边了 ——
+   再减 78px 就是扣两遍，实测同一句话她 304px 宽、他只剩 254px 还被挤高，
+   这就是「两人气泡不一样」和「没有以头像为界」的真正原因。
+   她那侧的 .bubble 直接挂在行上，100% 是整行宽，才需要减。 */
+.msg-user .bubble{max-width:calc(100% - 78px)!important}
+.msg-claude .bubble{max-width:100%!important}
+.msg-claude .msg-body{max-width:calc(100% - 70px)}
+
+/* 时间分隔条按参考图：居中、等宽字、前面一个小圆点，两侧不再拉横线 */
+.time-separator{
+  justify-content:center;gap:8px;margin:18px 0 10px;
+  font-family:var(--font-mono);font-size:12px;letter-spacing:.02em;
+  color:var(--text-time);
+}
+.time-separator::before,.time-separator::after{display:none}
+.time-separator .dot{
+  width:5px;height:5px;border-radius:50%;
+  background:var(--text-time);opacity:.7;flex:none;
+}
