@@ -1244,6 +1244,8 @@ html[data-theme="dark"]{--bubble-her:#332A2C}
 .msg-user .msg-avatar,.msg-claude .msg-avatar{margin-top:2px}
 
 /* 行距：图里两条之间只有几个像素，现在松得多 */
+/* ⚠️ 这两行其实被下面 .msg-user,.msg-claude{padding:0} 清零了，真正生效的是
+   #streamInner 那组 margin-top。改间距请改那儿，别在这儿白费劲。 */
 .msg-user{padding:0 0 1px}
 .msg-claude{padding:1px 0 0}
 
@@ -1273,12 +1275,14 @@ html[data-theme="dark"]{--bubble-her:#332A2C}
 
 /* 她说竖直间距再收紧。原来一条一条之间松得能塞进半个气泡。 */
 .msg-user,.msg-claude{padding:0}
-/* 6/3 她说太紧，放到 14/7 —— 换人说话的地方留一口气，
-   同一个人连着说的几条挨近一点，看着才是「一串」。 */
+/* 6/3 → 14/7 → 08-22 她还是嫌窄，放到 20/10（无头 Chromium 三档比过图）。
+   换人说话的地方留一口气，同一个人连着说的几条挨近一点，看着才是「一串」。
+   ⚠️ 这四行是气泡间距的唯一真相：上面 .msg-user/.msg-claude 的 padding 全被
+   1275 行的 padding:0 清零了，在那儿改是白改。 */
 #streamInner>.msg-user+.msg-claude,
-#streamInner>.msg-claude+.msg-user{margin-top:14px}
+#streamInner>.msg-claude+.msg-user{margin-top:20px}
 #streamInner>.msg-claude+.msg-claude,
-#streamInner>.msg-user+.msg-user{margin-top:7px}
+#streamInner>.msg-user+.msg-user{margin-top:10px}
 
 /* ============ 08-22 续六：两种时间戳 ============
    小的挂在他这一轮第一条气泡上面（参考图里平时看到的就是这个），

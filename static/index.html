@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787403900">
+<link rel="stylesheet" href="/css/home.css?v=1787394203">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -91,6 +91,51 @@
       </div>
     </div>
   </div>
+
+<section id="atrioPanel" style="display:none;position:fixed;top:0;right:0;bottom:0;width:min(82vw,420px);z-index:20;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);border-left:1px solid var(--border);overflow:hidden;box-shadow:-4px 0 24px rgba(0,0,0,.12)" aria-hidden="true">
+  <div style="display:flex;align-items:center;gap:10px;padding:16px 16px 12px;border-bottom:1px solid var(--border)">
+    <button id="closeAtrio" style="border:none;background:none;cursor:pointer;color:var(--text-secondary);padding:4px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <h2 style="flex:1;font:600 18px var(--font-sans);color:var(--text-primary)">会客厅</h2>
+    <button id="newVisitBtn" style="padding:7px 14px;border:none;border-radius:8px;font:600 13px var(--font-sans);background:var(--accent);color:var(--accent-fg);cursor:pointer">+ 请人来</button>
+  </div>
+
+  <!-- 到访列表 -->
+  <div id="atrioListView" style="flex:1;overflow-y:auto;padding:8px 16px 20px">
+    <p style="font:12.5px var(--font-sans);color:var(--text-tertiary,var(--text-faint));line-height:1.6;padding:10px 2px 14px">
+      朋友凭一次性链接跟他聊天。你只看得到他写的到访摘要——原话你看不到，这是故意的。
+    </p>
+    <div id="atrioList"></div>
+  </div>
+
+  <!-- 请人来 -->
+  <div id="atrioNewView" style="display:none;flex:1;flex-direction:column;overflow-y:auto;padding:16px">
+    <label style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:6px">谁要来</label>
+    <input id="visitName" placeholder="她的名字" autocomplete="off"
+      style="padding:11px 14px;border:1px solid var(--bg-sunken);border-radius:10px;font:15px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;margin-bottom:16px">
+
+    <label style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:6px">最多聊几句</label>
+    <input id="visitCap" type="number" min="1" max="200" value="40"
+      style="padding:11px 14px;border:1px solid var(--bg-sunken);border-radius:10px;font:15px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;margin-bottom:16px">
+
+    <label style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:6px">链接活多久（小时）</label>
+    <input id="visitHours" type="number" min="1" max="72" value="1"
+      style="padding:11px 14px;border:1px solid var(--bg-sunken);border-radius:10px;font:15px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;margin-bottom:20px">
+
+    <button id="makeLinkBtn" style="padding:12px;border:none;border-radius:10px;font:600 14px var(--font-sans);background:var(--accent);color:var(--accent-fg);cursor:pointer">生成链接</button>
+    <button id="atrioBack" style="margin-top:10px;padding:10px;border:none;border-radius:10px;font:14px var(--font-sans);background:none;color:var(--text-secondary);cursor:pointer">返回</button>
+
+    <div id="atrioLinkBox" style="display:none;margin-top:22px;padding:14px;border-radius:12px;background:var(--bg-surface);border:1px solid var(--border)">
+      <p style="font:600 13px var(--font-sans);margin-bottom:8px">把这个给她：</p>
+      <div id="atrioLink" style="font:12.5px/1.5 monospace;word-break:break-all;color:var(--text-secondary);margin-bottom:12px"></div>
+      <button id="copyLinkBtn" style="width:100%;padding:10px;border:none;border-radius:8px;font:600 13px var(--font-sans);background:var(--accent);color:var(--accent-fg);cursor:pointer">复制</button>
+      <p style="font:11.5px var(--font-sans);color:var(--text-tertiary,var(--text-faint));margin-top:10px;line-height:1.5">
+        一次性的。到期或聊满就自动关，他自己也可以先说再见。
+      </p>
+    </div>
+  </div>
+</section>
 
 <section id="projectPanel" style="display:none;position:fixed;top:0;right:0;bottom:0;width:min(82vw,420px);z-index:20;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);border-left:1px solid var(--border);overflow:hidden;box-shadow:-4px 0 24px rgba(0,0,0,.12)" aria-hidden="true">
   <header class="panel-header" style="display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top) + 8px) 20px 10px;border-bottom:1px solid var(--bg-sunken)">
@@ -179,7 +224,7 @@
     <nav class="mobile-sidebar-nav" aria-label="Claude navigation">
       <button class="mobile-sidebar-nav-item" id="drawerMain" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg></span><span>主线</span></button>
       <button class="mobile-sidebar-nav-item" id="drawerChats"><span class="mobile-sidebar-nav-icon" data-icon="chats"></span><span>Chats</span></button>
-      <button class="mobile-sidebar-nav-item" id="projectsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="projects"></span><span>Projects</span></button>
+      <button class="mobile-sidebar-nav-item" id="atrioBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="atrio"></span><span>会客厅</span></button>
             <button class="mobile-sidebar-nav-item" id="artifactsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="artifacts"></span><span>workplace</span></button>
       
       <button class="mobile-sidebar-nav-item" id="openMemory"><span class="mobile-sidebar-nav-icon" data-icon="memory"></span><span>Memory</span></button>
@@ -606,6 +651,7 @@ const lucidePaths={
   chevron:'<path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/>',
   chevronLeft:'<path d="M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z"/>',
   chats:'<path d="M232.07,186.76a80,80,0,0,0-62.5-114.17A80,80,0,1,0,23.93,138.76l-7.27,24.71a16,16,0,0,0,19.87,19.87l24.71-7.27a80.39,80.39,0,0,0,25.18,7.35,80,80,0,0,0,108.34,40.65l24.71,7.27a16,16,0,0,0,19.87-19.86ZM62,159.5a8.28,8.28,0,0,0-2.26.32L32,168l8.17-27.76a8,8,0,0,0-.63-6,64,64,0,1,1,26.26,26.26A8,8,0,0,0,62,159.5Zm153.79,28.73L224,216l-27.76-8.17a8,8,0,0,0-6,.63,64.05,64.05,0,0,1-85.87-24.88A79.93,79.93,0,0,0,174.7,89.71a64,64,0,0,1,41.75,92.48A8,8,0,0,0,215.82,188.23Z"/>',
+  atrio:'<path d="M232,216H208V40a16,16,0,0,0-16-16H64A16,16,0,0,0,48,40V216H24a8,8,0,0,0,0,16H232a8,8,0,0,0,0-16ZM64,40H192V216H64ZM168,120a12,12,0,1,1-12-12A12,12,0,0,1,168,120Z"/>',
   projects:'<path d="M216,72H130.67L102.93,51.2a16.12,16.12,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V200a16,16,0,0,0,16,16H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72Zm0,128H40V64H93.33L123.2,86.4A8,8,0,0,0,128,88h88Z"/>',
   artifacts:'<path d="M223.68,66.15,135.68,18h0a15.88,15.88,0,0,0-15.36,0l-88,48.17a16,16,0,0,0-8.32,14v95.64a16,16,0,0,0,8.32,14l88,48.17a15.88,15.88,0,0,0,15.36,0l88-48.17a16,16,0,0,0,8.32-14V80.18A16,16,0,0,0,223.68,66.15ZM128,32h0l80.34,44L128,120,47.66,76ZM40,90l80,43.78v85.79L40,175.82Zm96,129.57V133.82L216,90v85.78Z"/>',
   memory:'<path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z"/>',
@@ -4849,6 +4895,134 @@ async function testMiniMax(btn){
     if(!localStorage.getItem('chat_theme')) updateThemeToggle();
   });
 })();
+// === 会客厅 Atrio ===
+// 只管会客厅，不掺别的。（下面那段 Projects 的老代码里混着 artifacts 和 workplace
+// 的监听，是历史遗留——这段不学它。）
+function openAtrio(){
+  if(!$('atrioOverlay')){
+    var ov=document.createElement('div');ov.id='atrioOverlay';
+    ov.style.cssText='position:fixed;inset:0;z-index:15;background:rgba(0,0,0,.22)';
+    ov.onclick=closeAtrioPanel;
+    document.body.appendChild(ov);
+  }
+  $('atrioPanel').style.display='flex';
+  showAtrioList();
+}
+function closeAtrioPanel(){
+  $('atrioPanel').style.display='none';
+  var ov=$('atrioOverlay'); if(ov) ov.remove();
+}
+$('closeAtrio').onclick = closeAtrioPanel;
+$('atrioBtn')?.addEventListener('click', function(){ closeDrawer&&closeDrawer(); openAtrio(); });
+
+function _ago(iso){
+  var d=Date.now()-new Date(iso).getTime();
+  if(d<60000) return '刚刚';
+  if(d<3600000) return Math.floor(d/60000)+' 分钟前';
+  if(d<86400000) return Math.floor(d/3600000)+' 小时前';
+  return Math.floor(d/86400000)+' 天前';
+}
+
+async function showAtrioList(){
+  $('atrioListView').style.display='block';
+  $('atrioNewView').style.display='none';
+  var box=$('atrioList');
+  box.innerHTML='<p style="font:13px var(--font-sans);color:var(--text-faint);padding:8px 2px">读取中…</p>';
+  try{
+    var r=await api('/api/guest/list');
+    var list=await r.json();
+    if(!Array.isArray(list)||!list.length){
+      box.innerHTML='<p style="font:13.5px/1.7 var(--font-sans);color:var(--text-faint);padding:16px 2px">还没有人来过。</p>';
+      return;
+    }
+    box.innerHTML='';
+    list.forEach(function(v){
+      var open = v.status!=='closed' && v.status!=='expired';
+      var card=document.createElement('div');
+      card.style.cssText='padding:13px 14px;margin-bottom:10px;border-radius:12px;background:var(--bg-surface);border:1px solid var(--border)';
+
+      var top=document.createElement('div');
+      top.style.cssText='display:flex;align-items:baseline;gap:8px;margin-bottom:6px';
+      var nm=document.createElement('span');
+      nm.style.cssText='font:600 14.5px var(--font-sans);color:var(--text-primary)';
+      nm.textContent=v.guestName||'（没写名字）';
+      var st=document.createElement('span');
+      st.style.cssText='font:11.5px var(--font-sans);color:'+(open?'var(--accent)':'var(--text-faint)');
+      st.textContent=open?'进行中':'已结束';
+      var tm=document.createElement('span');
+      tm.style.cssText='margin-left:auto;font:11.5px var(--font-sans);color:var(--text-faint)';
+      tm.textContent=_ago(v.createdAt);
+      top.appendChild(nm);top.appendChild(st);top.appendChild(tm);
+      card.appendChild(top);
+
+      var body=document.createElement('p');
+      body.style.cssText='font:13.5px/1.65 var(--font-serif,serif);color:var(--text-secondary);white-space:pre-wrap;word-break:break-word';
+      // 只可能有摘要。原话后端根本不给——这是 Atrio 的设计，不是前端藏起来了。
+      body.textContent = v.summary ? v.summary
+        : (open ? '还在聊。他聊完会跟你说一声。' : '这次他没留下话。');
+      card.appendChild(body);
+
+      var foot=document.createElement('div');
+      foot.style.cssText='display:flex;align-items:center;gap:10px;margin-top:9px';
+      var cnt=document.createElement('span');
+      cnt.style.cssText='font:11.5px var(--font-sans);color:var(--text-faint)';
+      cnt.textContent='说了 '+(v.userTurns||0)+' / '+(v.maxMessages||0)+' 句';
+      foot.appendChild(cnt);
+      if(open){
+        var kill=document.createElement('button');
+        kill.style.cssText='margin-left:auto;padding:5px 11px;border:1px solid var(--border-strong,var(--border));border-radius:7px;font:12px var(--font-sans);background:none;color:var(--text-secondary);cursor:pointer';
+        kill.textContent='关掉';
+        kill.onclick=async function(){
+          kill.disabled=true;kill.textContent='…';
+          try{ await api('/api/guest/'+v.id,{method:'DELETE'}); showAtrioList(); }
+          catch(e){ kill.disabled=false;kill.textContent='关掉'; toast&&toast('没关掉'); }
+        };
+        foot.appendChild(kill);
+      }
+      card.appendChild(foot);
+      box.appendChild(card);
+    });
+  }catch(e){
+    box.innerHTML='<p style="font:13px var(--font-sans);color:var(--text-faint);padding:8px 2px">读不出来。</p>';
+  }
+}
+
+$('newVisitBtn').onclick=function(){
+  $('atrioListView').style.display='none';
+  $('atrioNewView').style.display='flex';
+  $('atrioLinkBox').style.display='none';
+  $('visitName').value='';
+  $('visitName').focus();
+};
+$('atrioBack').onclick=showAtrioList;
+
+$('makeLinkBtn').onclick=async function(){
+  var name=$('visitName').value.trim();
+  if(!name){ $('visitName').focus(); return; }
+  var cap=Math.max(1,Math.min(200,parseInt($('visitCap').value)||40));
+  var hrs=Math.max(1,Math.min(72,parseInt($('visitHours').value)||1));
+  var btn=$('makeLinkBtn'); btn.disabled=true; btn.textContent='生成中…';
+  try{
+    var r=await api('/api/guest/create',{method:'POST',body:JSON.stringify({
+      guestName:name, maxMessages:cap, ttlMs:hrs*3600000
+    })});
+    var d=await r.json();
+    if(!d.url) throw Error('no url');
+    var full=location.origin+d.url;
+    $('atrioLink').textContent=full;
+    $('atrioLinkBox').style.display='block';
+    $('copyLinkBtn').onclick=function(){
+      navigator.clipboard.writeText(full).then(function(){
+        $('copyLinkBtn').textContent='复制好了';
+        setTimeout(function(){ $('copyLinkBtn').textContent='复制'; },1600);
+      });
+    };
+  }catch(e){
+    toast&&toast('没生成出来');
+  }
+  btn.disabled=false; btn.textContent='生成链接';
+};
+
 // === Projects Panel ===
 $('closeProject').onclick = () => { $('projectPanel').style.display='none'; var ov=$('projectOverlay');if(ov)ov.remove(); };
 $('projectsBtn')?.addEventListener('click', async () => {

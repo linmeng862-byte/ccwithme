@@ -8117,6 +8117,12 @@ function stopOWC() {
 process.on('SIGINT', () => { stopOWC(); process.exit(); });
 process.on('SIGTERM', () => { stopOWC(); process.exit(); });
 
+// === Atrio 会客厅 ===
+// 朋友凭一次性链接跟 Noct 聊天，她只看得到他写的到访摘要。
+// 全部实现在 atrio-wire.js + atrio/ 里；这里只有这三行。
+const { wireAtrio } = require('./atrio-wire');
+wireAtrio(app, { db, auth, callNocturne });
+
 startOWC();
 
 // === 启动 ===

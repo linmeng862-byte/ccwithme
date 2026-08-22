@@ -19,3 +19,8 @@ backups/
 
 # 每台机器各自的路径，不共享
 CLAUDE.local.md
+
+# Atrio 会客厅：对外人格 prompt 是私人内容，ccwithme 是 PUBLIC 仓库，不进
+# （仓库里只留上游的 *.example.md 作为结构参考；真正生效的这两份备份进 zxz）
+atrio/prompts/system-prompt.md
+atrio/prompts/memorize-prompt.md

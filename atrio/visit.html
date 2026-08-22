@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>会客厅</title>
+<style>
+:root{
+  --bg:#FBF7F0; --surface:#F3EFE7; --sunken:rgba(0,0,0,.04);
+  --text:#1F1E1D; --text-2:#6E6D66; --faint:#A6A39A;
+  --accent:#DA7756; --accent-fg:#fff; --border:rgba(31,30,29,.08);
+  --bubble-you:#FFF0F5;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --serif:"Songti SC","Source Han Serif SC",Georgia,serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#1E1B18; --surface:#23201D; --sunken:rgba(255,255,255,.05);
+  --text:#E8E2D9; --text-2:#9A948A; --faint:#6E6D66;
+  --border:rgba(236,234,228,.08); --bubble-you:#2E2622;
+}}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font:15px/1.6 var(--sans);
+  display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+
+header{flex:none;padding:14px 18px calc(14px + env(safe-area-inset-top,0px));
+  display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border)}
+header h1{font:600 16px var(--sans);letter-spacing:.01em}
+header .sub{font-size:12px;color:var(--faint);margin-left:auto;font-variant-numeric:tabular-nums}
+
+#log{flex:1;overflow-y:auto;padding:20px 18px 8px;display:flex;flex-direction:column;gap:14px;
+  -webkit-overflow-scrolling:touch;scroll-behavior:smooth}
+.row{display:flex;flex-direction:column}
+.row.you{align-items:flex-end}
+.b{max-width:82%;padding:9px 15px;border-radius:18px;white-space:pre-wrap;word-break:break-word;
+  font-family:var(--serif);font-size:15.5px;line-height:1.5}
+.you .b{background:var(--bubble-you);max-width:74%;border-bottom-right-radius:6px}
+.him .b{background:var(--surface);border-bottom-left-radius:6px}
+.sys{align-self:center;text-align:center;font-size:12.5px;color:var(--faint);
+  padding:6px 14px;line-height:1.5;max-width:80%}
+
+#think{display:none;align-self:flex-start;gap:4px;padding:12px 16px}
+#think.on{display:flex}
+#think i{width:6px;height:6px;border-radius:50%;background:var(--faint);animation:bob 1.3s ease-in-out infinite}
+#think i:nth-child(2){animation-delay:.18s} #think i:nth-child(3){animation-delay:.36s}
+@keyframes bob{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:.85;transform:translateY(-4px)}}
+
+footer{flex:none;padding:10px 14px calc(12px + env(safe-area-inset-bottom,0px));
+  border-top:1px solid var(--border);background:var(--bg)}
+.bar{display:flex;gap:9px;align-items:flex-end}
+textarea{flex:1;resize:none;border:1px solid var(--border);background:var(--surface);color:var(--text);
+  border-radius:20px;padding:10px 15px;font:15px/1.45 var(--sans);max-height:132px;outline:none}
+textarea:focus{border-color:var(--accent)}
+textarea:disabled{opacity:.5}
+button{flex:none;width:38px;height:38px;border:0;border-radius:50%;background:var(--accent);color:var(--accent-fg);
+  cursor:pointer;display:grid;place-items:center;transition:opacity .15s}
+button:disabled{opacity:.32;cursor:default}
+.note{text-align:center;font-size:11.5px;color:var(--faint);padding:8px 4px 0;line-height:1.5}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>会客厅</h1>
+  <span class="sub" id="clock"></span>
+</header>
+
+<div id="log">
+  <div id="think"><i></i><i></i><i></i></div>
+</div>
+
+<footer>
+  <div class="bar">
+    <textarea id="box" rows="1" placeholder="说点什么…" autocomplete="off"></textarea>
+    <button id="send" aria-label="发送">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+    </button>
+  </div>
+  <div class="note" id="note"></div>
+</footer>
+
+<script>
+(function(){
+"use strict";
+// token 就是凭证，从 /visit/:token 里取。页面是 sendFile 出去的静态文件，
+// 服务端没法往里注东西，所以只能自己解析。
+var token = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+
+var log = document.getElementById("log"),
+    think = document.getElementById("think"),
+    box = document.getElementById("box"),
+    send = document.getElementById("send"),
+    note = document.getElementById("note"),
+    clock = document.getElementById("clock");
+
+var over = false, busy = false;
+
+function add(who, text){
+  var row = document.createElement("div");
+  if (who === "sys") {
+    row.className = "sys";
+    row.textContent = text;
+  } else {
+    row.className = "row " + (who === "you" ? "you" : "him");
+    var b = document.createElement("div");
+    b.className = "b";
+    b.textContent = text;
+    row.appendChild(b);
+  }
+  log.insertBefore(row, think);
+  log.scrollTop = log.scrollHeight;
+  return row;
+}
+
+function finish(msg){
+  over = true;
+  box.disabled = true; send.disabled = true;
+  box.placeholder = "";
+  note.textContent = "";
+  add("sys", msg);
+}
+
+function lock(){ busy = true; send.disabled = true; think.classList.add("on"); log.scrollTop = log.scrollHeight; }
+function unlock(){ busy = false; think.classList.remove("on"); if(!over) send.disabled = !box.value.trim(); }
+
+// ── 剩余时间 ──
+function fmt(ms){
+  var m = Math.max(0, Math.round(ms/60000));
+  if (m >= 60) { var h = Math.floor(m/60); return h + " 小时 " + (m%60) + " 分"; }
+  return m + " 分钟";
+}
+var tick = null;
+function startClock(remainingMs){
+  var end = Date.now() + remainingMs;
+  function paint(){
+    var left = end - Date.now();
+    if (left <= 0) { clock.textContent = ""; clearInterval(tick); if(!over) finish("这次到访结束了。"); return; }
+    clock.textContent = "还剩 " + fmt(left);
+  }
+  paint(); tick = setInterval(paint, 30000);
+}
+
+// ── 开场 ──
+(async function boot(){
+  try {
+    var s = await fetch("/api/guest/" + encodeURIComponent(token) + "/status").then(r => r.json());
+    if (!s || s.valid === false) { finish("这个链接已经关了。"); return; }
+
+    var h = await fetch("/api/guest/" + encodeURIComponent(token) + "/messages").then(r => r.json());
+    var msgs = (h && h.messages) || [];
+    msgs.forEach(function(m){ add(m.role === "assistant" ? "him" : "you", m.content); });
+
+    if (!msgs.length) {
+      add("sys", (s.guestName ? s.guestName + "，" : "") + "你推门进来了。他在。");
+    }
+    startClock(s.remainingMs || 0);
+    note.textContent = "他也可以先说再见。";
+    box.focus();
+  } catch (e) {
+    finish("连不上，等会儿再试试。");
+  }
+})();
+
+// ── 发消息 ──
+async function submit(){
+  var text = box.value.trim();
+  if (!text || busy || over) return;
+  box.value = ""; box.style.height = "auto";
+  add("you", text);
+  lock();
+
+  try {
+    var r = await fetch("/api/guest/" + encodeURIComponent(token) + "/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text })
+    });
+
+    if (r.status === 429) {
+      var e429 = await r.json().catch(function(){ return {}; });
+      unlock();
+      // 两种 429：说太快了 vs 这次聊够了。后者是终局。
+      if (/limit reached/i.test(e429.error || "")) finish("这次聊到这儿吧。");
+      else add("sys", "慢一点，他还在听。");
+      return;
+    }
+    if (r.status === 403) { unlock(); finish("这个链接已经关了。"); return; }
+    if (!r.ok) { unlock(); add("sys", "没送出去，再试一次？"); return; }
+
+    var d = await r.json();
+    unlock();
+    if (d.reply) add("him", d.reply);
+    if (d.ended) finish("他先走了。这次到访结束了。");
+  } catch (e) {
+    unlock();
+    add("sys", "断了一下，再试一次？");
+  }
+}
+
+send.addEventListener("click", submit);
+box.addEventListener("input", function(){
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, 132) + "px";
+  if (!busy && !over) send.disabled = !box.value.trim();
+});
+box.addEventListener("keydown", function(e){
+  // 手机上回车就是换行；桌面 Enter 发送、Shift+Enter 换行
+  if (e.key === "Enter" && !e.shiftKey && !matchMedia("(pointer:coarse)").matches) {
+    e.preventDefault(); submit();
+  }
+});
+send.disabled = true;
+})();
+</script>
+</body>
+</html>
