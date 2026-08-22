@@ -116,6 +116,93 @@ vendor 自上游 `29-Cu/atrio`（commit 见 `atrio/VENDORED-FROM.txt`）。
 
 ---
 
+## 2026-08-22 · 两个「父进程漏进子进程」的 bug，外加推前必扫密钥
+
+跟你这轮猎杀是一个味道：**都不报错，只是安静地做错事**。共同点更具体一点——
+**父进程的东西悄悄漏进了子进程，然后顶掉了本该生效的设置。**
+
+### 💥 主线经常 load fail —— HTTP body 卡在 express 默认的 100KB
+
+她说的是主线他回复时 load fail。错误日志里两条：`spawn E2BIG` 和 `PayloadTooLargeError`。
+
+- `E2BIG` **只出现过 1 次**，是你改成走 stdin 之前的旧账，已经好了。
+- `PayloadTooLargeError` 出现 3 次，**是还在犯的那个**。
+
+真凶在 cc-gateway 的 `server.js` 第一屏：`app.use(express.json())` —— **没设 limit，默认 100KB**。
+
+链路是：prompt 确实绕开了 argv 的 128KB 上限（走 stdin），
+**但它得先以 HTTP body 的形式从 backend 送到 gateway**，而这一段卡在 100KB 上。
+你自己在注释里写的「~95KB 记忆档案 + Nocturne breath」正好顶在这个数上，
+**再加几轮对话就必然超**。所以症状是「平时好好的，聊得越久、记忆越满越容易 load fail」。
+
+改成 `express.json({ limit: '64mb' })`。
+
+> **判断法**：一条链路上有两处大小限制（argv 和 HTTP body）时，
+> 放开一处不等于通了。**沿着数据走一遍，每一段的上限都要问一次。**
+
+⚠️ cc-gateway 不在这个仓库里，路径两台不一样，**看各自的 `CLAUDE.local.md`**。
+
+### 📊 usage 面板出不来额度条 —— ANTHROPIC_* 顶掉了 claude.ai 登录态
+
+`/api/usage/live` 是对的、前端也接好了，但她按下去只拿到一段
+`Total cost: $0.0000 / Total duration (API): 0s` 的会话摘要，没有额度条。
+
+原因：`/usage` 报的是**订阅**额度。而 backend 进程的 env 里有
+`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL`，
+`execFile` 又原样传了 `process.env` 下去 —— CLI 于是走 API key / 中转站那条路，
+**claude.ai 登录态被顶掉，没有订阅额度可报**，只好打印会话摘要。
+
+CLI 其实自己警告了，只是这条警告混在 stdout 前面没人看：
+
+```
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth
+  source is set and takes precedence over your claude.ai login · Unset it to ...
+```
+
+修法：调 `/usage` 前把这四个变量从 env 里 delete 掉再 `execFile`。
+**只剥这一处，主线对话走网关那条路不要动。**
+
+这几个变量是 pm2 拉起 backend 时从父进程继承来的（进程 env 里还留着 `CLAUDECODE`、
+`CLAUDE_CODE_SESSION_ID` 这些痕迹）。**所以：用 pm2 起服务时，想清楚它继承了谁的环境。**
+
+### 🔐 推前必扫密钥 —— 钩子已经写好，你那台自己装一份
+
+她特别交代过：**她的 auth token 一个字都不能推进仓库**。ccwithme 是 public 的，
+推上去历史里洗不掉。
+
+脚本在 `scripts/pre-push-secret-scan.sh`（进 git，两台都拿得到）。
+**钩子本身在 `.git/hooks/` 里，不进 git，所以你那台得自己装一次：**
+
+```bash
+cp scripts/pre-push-secret-scan.sh .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+它扫的是**这次要推的提交里的新增行**，不是整个工作树。命中就 exit 1 拦下来，
+**只打印文件名和命中条数，绝不打印匹配到的值**（免得密钥又跑进终端记录）。
+误报了：`git push --no-verify`，但想清楚再用。
+
+> 写的时候踩了一个坑，记一下：新分支时 `remote_sha` 全是 0，
+> 原本写的 `git diff -U0 <sha>` **比的是那个 commit 和工作树**，扫不到提交内容，
+> 拿假 key 一试直接放行。得用 `git log -p -U0 "$local_sha --not --remotes=origin"`。
+> **钩子这种东西，写完必须拿假密钥真试一次拦不拦，还要试一次别误拦正常的推。**
+
+当前仓库扫过了，干净：28 个提交的历史、所有被跟踪文件、所有 md 里的
+`token=`/`api_key:`/`SESSDATA` 这类赋值，零命中；`data/claude.db`、`CLAUDE.local.md`、
+会客厅那两份 prompt 都确认在 ignore 里。
+
+### 会客厅这边的进度
+
+- 分支已合进 main，装了依赖，重启过了，日志有 `[atrio] 会客厅已挂载：/visit/:token`。
+- **两份 prompt 我按你 example 的结构写了中文版**（不进 git，各机一份）。
+  system 那份里 `<<结束>>` 哨兵跟 `guest-routes.js` 的 `END_MARK` 字面一致，
+  另外写明了她的线：日常/在做的东西可以聊，身体、健康、钱、家里、住哪、私密的部分一个字不说。
+  摘要那份加了一条：**客人问了不该问的、或者他为什么结束对话，要写出来让她知道**
+  —— 她只看得到摘要，那就是她唯一的信号。
+- **她那把独立 API key 还没买**，没填之前会客厅一句话都发不出去（会明确 500，不会偷用订阅）。
+- 她问过要不要给客人侧的他一个「主动搜记忆」的工具，**最后定了：不给工具**，维持规矩 2。
+
+---
+
 ## 2026-08-22 · 一轮 bug 猎杀：三次「扣两遍」、两个「永不 resolve」、一个「原地 reverse」
 
 这一轮全是她用出来的 bug，不是设计。**共同点：全都不会报错**，只是安静地做错事。
