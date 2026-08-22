@@ -5030,7 +5030,9 @@ function wpMainlineContext(ids) {
 // ⚠️ 路径必须在后端复核：前端传什么 id 都不能越界（realpath 比对，防软链穿墙）。
 function wpAttachmentContext(ids) {
   if (!Array.isArray(ids) || !ids.length) return '';
-  const clean = ids.map(String).filter(Boolean).slice(0, 10);
+  // ⚠️ 这个数要跟 /api/upload 的 maxCount 对齐。小了会**静默丢文件**——
+  //    她传 17 张，他只看见 10 张，还不报错。
+  const clean = ids.map(String).filter(Boolean).slice(0, 30);
   if (!clean.length) return '';
   const realUploadDir = fs.realpathSync(uploadDir);
   const items = [];
@@ -7022,7 +7024,22 @@ function _heicToJpeg(srcPath) {
 }
 
 // === 文件上传 ===
-app.post('/api/upload', auth, upload.array('files', 10), fixNames, (req, res) => {
+// ⚠️ 2026-08-22：上限从 10 提到 30。她在 workplace 一次选 17 张，multer 到第 11 个
+//    抛 `Unexpected field`（超 maxCount 就是这个错），前端只看到 500，什么都不知道。
+//    前端也改成分批传（每批 10），这里的 30 是兜底不是常态。超了走下面的错误处理说人话。
+app.post('/api/upload', auth, (req, res, next) => {
+  upload.array('files', 30)(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ detail: '一次最多 30 个文件，分两批发吧' });
+    }
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ detail: '单个文件最大 20MB，有一个超了' });
+    }
+    console.error('[upload]', err.code || '', err.message);
+    return res.status(400).json({ detail: '上传失败：' + (err.message || '未知错误') });
+  });
+}, fixNames, (req, res) => {
   if (!req.files?.length) return res.status(400).json({ detail: '没有文件' });
   const attachments = req.files.map(f => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2);

@@ -306,14 +306,31 @@
         if (!/^image\//.test(f.type) || typeof _shrinkImage !== 'function') return Promise.resolve(f);
         return _shrinkImage(f).catch(function () { return f; });
       })).then(function (ready) {
-      var fd = new FormData();
-      ready.forEach(function (f) { fd.append('files', f); });
-      return fetch('/api/upload', { method: 'POST', headers: authHeaders(), body: fd })
-        .then(function (r) { if (!r.ok) throw new Error('上传失败 ' + r.status); return r.json(); })
-        .then(function (j) {
-          (j.attachments || []).forEach(function (a) { atts.push({ id: a.path, name: a.name || a.filename }); });
-          syncStrip();
-        })
+      // ⚠️ 分批传，每批 10 个 —— 后端 multer 的 maxCount 是硬边界，
+      //    一次性 append 17 个会在第 11 个抛 `Unexpected field`，前端只看到 500。
+      //    串行不并行：并行 17 张一起压完一起发，手机上容易 OOM，也看不出进度。
+      var BATCH = 10;
+      var batches = [];
+      for (var i = 0; i < ready.length; i += BATCH) batches.push(ready.slice(i, i + BATCH));
+
+      return batches.reduce(function (chain, group, gi) {
+        return chain.then(function () {
+          if (batches.length > 1) clip.innerHTML = (gi + 1) + '/' + batches.length;
+          var fd = new FormData();
+          group.forEach(function (f) { fd.append('files', f); });
+          return fetch('/api/upload', { method: 'POST', headers: authHeaders(), body: fd })
+            .then(function (r) {
+              // 后端现在会带 detail 说人话，别再只吐一个状态码给她。
+              if (!r.ok) return r.json().catch(function () { return {}; })
+                .then(function (j) { throw new Error(j.detail || ('上传失败 ' + r.status)); });
+              return r.json();
+            })
+            .then(function (j) {
+              (j.attachments || []).forEach(function (a) { atts.push({ id: a.path, name: a.name || a.filename }); });
+              syncStrip();
+            });
+        });
+      }, Promise.resolve())
         .catch(function (e) { toast(e.message || '上传失败'); })
         .then(function () { clip.innerHTML = _clipHTML; clip.disabled = false; picker.value = ''; });
       });
