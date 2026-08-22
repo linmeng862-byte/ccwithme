@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787402400">
+<link rel="stylesheet" href="/css/home.css?v=1787403900">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -3381,7 +3381,10 @@ function _usageBar(label,spent,limit){
 function _usageLimitsCard(d){
   var L=d.limits||{},s=d.spent||{};
   return '<div style="margin-bottom:22px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:14px 16px">'
-    +'<div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:12px">额度</div>'
+    +'<div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:2px">花费上限</div>'
+    // 这两根条是按 API 单价折算的**估算**，不是订阅真实消耗。留着是因为它真的会拦截发送——
+    // 只显示不拦的话可以关掉下面那个勾。别让她以为这是真花的钱。
+    +'<div style="font:11px/1.5 var(--font-sans);color:var(--text-faint);margin-bottom:10px">按 API 单价折算的估算值，不是你订阅真实消耗。留着是因为它会真的拦截发送。</div>'
     + _usageBar('日 usage',s.day,L.daily_usd)
     + _usageBar('周 usage',s.week,L.weekly_usd)
     +(d.blocked?'<div style="margin:10px 0 4px;padding:8px 10px;background:rgba(229,77,46,.1);border-radius:9px;font:12px var(--font-sans);color:#e54d2e">已达上限，暂时发不出消息。调高下面的数值即可继续。</div>':'')
@@ -3434,6 +3437,55 @@ function _cacheCard(recent){
       +'连着聊命中率高；隔一小时以上回来，第一条必定是重写。</div></div>'}
 // 订阅额度卡片——放在用量面板最上面，因为这才是真正会把她卡住的那个数。
 // 下面那些 $ 都是按 API 价估的，她走订阅，那些只能当"这轮值多少钱"的参考。
+// 2026-08-22 重写：一次显示所有窗口（five_hour / seven_day），并且**必须说清这个数有多旧**。
+// 以前只显示一条、时间还把日期切掉了，13 小时前的快照看着像刚更新的——她说"真实 usage 也不是真实的"就是这个。
+function _staleNote(sec){
+  if(sec===null||sec===undefined)return{txt:'不知道是什么时候的',dim:true};
+  var h=sec/3600;
+  if(h<1)return{txt:Math.round(sec/60)+' 分钟前',dim:false};
+  if(h<3)return{txt:h.toFixed(1)+' 小时前',dim:false};
+  return{txt:h.toFixed(1)+' 小时前 · 已经很旧了，只能当参考',dim:true};
+}
+function _fmtAbs(v){
+  if(v===undefined||v===null||v==='')return'';
+  var d=typeof v==='number'?new Date(v<1e12?v*1000:v):new Date(v);
+  if(isNaN(d.getTime()))return String(v);
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+var _WINDOW_NAME={five_hour:'5 小时窗口',seven_day:'7 天窗口'};
+function _subscriptionCards(list){
+  list=list||[];
+  if(!list.length){
+    return '<div style="margin-bottom:20px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-surface)">'
+      +'<div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:8px">订阅额度</div>'
+      +'<div style="font:13px var(--font-sans);color:var(--text-faint);line-height:1.6">'
+      +'还没收到额度信息。<br>Claude 不是每轮都报这个——额度宽裕时它可能一直不说话，'
+      +'等接近上限了才会带下来。<b>所以这里空着通常是好事。</b></div></div>';
+  }
+  var rows=list.map(function(r){
+    var warn=r.status==='rejected'||r.status==='allowed_warning';
+    var st=_staleNote(r.stale_sec);
+    var map={allowed:'额度正常',allowed_warning:'⚠️ 快用完了',rejected:'❌ 已用完'};
+    var label=map[r.status]||r.status||'未知';
+    // 数据一旧就整条压暗——宁可她觉得"这不准"，也不要她信一个过期的数
+    var op=st.dim?'.5':'1';
+    return '<div style="padding:12px 14px;border:1px solid '+((warn&&!st.dim)?'#C4704F':'var(--border)')+';border-radius:12px;background:var(--bg-surface);margin-bottom:10px;opacity:'+op+'">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
+        +'<span style="font:600 14px var(--font-sans);color:'+((warn&&!st.dim)?'#C4704F':'var(--text-primary)')+'">'+escHtml(label)+'</span>'
+        +'<span style="font:11px var(--font-sans);color:var(--text-faint)">'+escHtml(_WINDOW_NAME[r.type]||r.type||'')+'</span>'
+      +'</div>'
+      +(r.resets_at?'<div style="font:12px var(--font-sans);color:var(--text-secondary);margin-top:5px">重置于 '+escHtml(_fmtAbs(r.resets_at))+'</div>':'')
+      +'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:4px">📷 快照：'+escHtml(st.txt)+'</div>'
+    +'</div>';
+  }).join('');
+  return '<div style="margin-bottom:20px">'
+    +'<div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:8px">订阅额度 —— 真正会卡住你的</div>'
+    +rows
+    +'<div style="font:11px/1.6 var(--font-sans);color:var(--text-faint)">'
+    +'这是 Claude 自己报上来的额度快照，不是实时值。它只在接近上限时才报，'
+    +'所以你看到的可能是几小时前的——上面每条都标了。</div>'
+    +'<div id="rateLimitLine" style="display:none"></div></div>';
+}
 function _subscriptionCard(rl){
   var body,tone;
   if(!rl){
@@ -3465,15 +3517,14 @@ function _renderUsage(data){
       +'<div style="width:100%;max-width:26px;height:'+h+'px;background:var(--accent);border-radius:5px 5px 2px 2px;opacity:.85"></div>'
       +'<div style="font:10px var(--font-sans);color:var(--text-faint);white-space:nowrap">'+escHtml(String(x.day).slice(5))+'</div></div>'}).join('');
   $('usageBody').innerHTML=
-     _subscriptionCard(data.rate_limit)
+     _subscriptionCards(data.rate_limits&&data.rate_limits.length?data.rate_limits:(data.rate_limit?[data.rate_limit]:[]))
     +_usageLimitsCard(data)
     +_cacheCard(data.recent)
-    +_usageBlock('今天',data.today)
-    +_usageBlock('近 7 天',data.week)
-    +_usageBlock('累计',data.total)
-    +(daily.length?'<div><div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:10px">每日花费</div>'
-      +'<div style="display:flex;align-items:flex-end;gap:5px;height:112px;padding:10px 12px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;overflow-x:auto">'+bars+'</div></div>':'')
-    +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">数据来自网关每次调用返回的真实 usage。缓存命中越高越省钱。</div>';
+    +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">缓存命中越高越省钱。</div>';
+  // 2026-08-22 她说「api 估算的不要，只要真实的」：
+  // 今天/近7天/累计那三块和每日花费柱状图都是按 API 单价折算的，她走订阅，那些数不是她真花的钱。
+  // 全部撤掉，只留上面的订阅额度（真实）+ 日限卡（那个还管着真的拦截）+ 缓存命中。
+  // _usageBlock() 和 bars 的代码留着没删 —— 哪天想看估算，接回来就行。
   if($('limSave'))$('limSave').onclick=_saveLimits}
 async function loadUsage(){
   $('usageBody').innerHTML='<div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载中…</div>';

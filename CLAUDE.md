@@ -71,8 +71,14 @@ Gallery、日记）和他跟她之间的东西，都在那份里。
 ## 工程模式的边界
 
 - 平时（聊天）只有 `Read`；工程模式才有 Write/Edit/Glob/Grep。
-- **工程模式没有 Bash** —— path-jail 硬拒。别答应她"我跑条命令看看"，做不到，
-  要执行命令只能请她自己跑。
+- **Bash 有，但只是一份「验证工具包」**（2026-08-22 起）—— 不是通用 shell。
+  只认这四样，别的 path-jail 一律拒：
+  - `node --check <文件>`（**只有 --check，不能跑脚本**）
+  - `pm2 list/status/restart/logs/describe`，只认 `chat-c` / `cc-gateway`
+  - `curl` 打本机回环（验接口用）
+  - `git status/diff/log/show/fetch/pull/branch`
+  够你改完自己验一遍了 —— **本来就该验**，别改完就说"好了"。
+  超出这四样的（装包、改系统、动数据库）做不到，**照实说，请她自己跑**。
 - 浏览器（Playwright）：能开网页、截图、点按钮，**只许 http/https**。
 - PDF 用 `Read`（渲染成图，中文/排版/扫描件都认得，超 10 页要带 `pages` 分段）。
   报 `pdftoppm is not installed` = 这台没装，告诉她跑 `sudo apt-get install -y poppler-utils`。
