@@ -1381,6 +1381,15 @@ function _logCall(kind,dur){
 function _renderCallCards(row){
   var md=_msgContentEl(row);if(!md)return;
   var text=md.textContent||"";
+  // 拨号提示不是她说的话，整条不摆。挂断时那条 [CALL:ended] 才是通话记录。
+  // 第二个判断是给改标记之前的旧数据兜底——库里那些提示词原文也一起藏掉。
+  // ⚠️ 不能用 row.remove()：渲染这条的时候它还没插进页面，remove() 对没有父节点的
+  //    元素是空操作，紧接着 append 回去照样显示（她截图里那条 [CALL_DIAL] 就是这么漏出来的）。
+  //    改成藏起来，进没进 DOM 都作数。
+  var _bare=text.trim();
+  if(_bare==='[CALL_DIAL]'||_bare.indexOf('[她给你打电话，你刚接起来')===0){
+    row.style.display='none';return;
+  }
   // missed_back = 漏接了、但她后来打回来了 → 图里那条「未接来电 已回拨」
   var re=/\[CALL:(ended|rejected|missed_back|missed)\|([^\]]*)\]/g;var m;var _hit=false;
   var PHONE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>';
@@ -1389,6 +1398,10 @@ function _renderCallCards(row){
   var MISSED='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/><polyline points="22 3 22 8 17 8"/><line x1="22" y1="3" x2="16.5" y2="8.5"/></svg>';
   while((m=re.exec(text))!==null){
     var kind=m[1],dur=m[2]||"";
+    // 接通了的通话不再单独摆一条「语音通话 00:42」—— 说过的话本身已经
+    // 一条条语音条躺在记录里了，再来一条摘要就是重复。
+    // 未接 / 拒接留着：那两种情况没有内容，不摆就什么都看不见了。
+    if(kind==='ended'){row.style.display='none';return}
     // 按她给的参考图：图标带颜色，字是正常文字色（不是整条染色）。
     // 接通=中性电话、拒接=挂断、未接=带下箭头的来电（红的，一眼看得出漏掉了）。
     var icon=kind==='ended'?PHONE:(kind==='rejected'?HANGUP:MISSED);
@@ -1411,6 +1424,97 @@ function _renderCallCards(row){
     var bub=row.querySelector('.bubble');
     if(bub)bub.classList.toggle('voice-only',bare);
   }
+  _renderCallVoiceCards(row);
+}
+// 语音条本体（通话中就地替换、刷新后历史渲染，共用这一个）。
+// 「转文字」在这儿是白拿的：原文一直跟着标记存在同一条消息里，
+// 不像她平时发的语音那样要现去识别一次。
+function _voiceCardEl(id,dur,body){
+  var box=document.createElement('div');
+  box.className='voice-card-box';
+  var pending=!id;   // 还没上传完：占位态
+  var wrap=document.createElement('div');wrap.className='voice-msg';
+  wrap.style.cssText='display:inline-flex;align-items:center;gap:8px;padding:7px 12px;margin:3px 0;border-radius:15px;max-width:215px;cursor:pointer';
+  var playBtn=document.createElement('button');playBtn.className='voice-play-btn';
+  playBtn.style.cssText='width:15px;height:15px;border:0;background:transparent;color:var(--text-time);display:grid;place-items:center;cursor:pointer;flex:none;padding:0';
+  playBtn.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><polygon points="7,4 19,12 7,20"/></svg>';
+  // ⚠️ <audio src> 带不了 Authorization 头，token 只能进 query（后端 authFile 认这个 ?t=）
+  if(!pending)playBtn.setAttribute('data-url','/api/files/'+id+'?t='+encodeURIComponent(state.token||''));
+  playBtn.addEventListener('click',function(){if(this.getAttribute('data-url'))_toggleVoicePlay(this)});
+  var barsWrap=document.createElement('div');barsWrap.style.cssText='flex:1;min-width:0';
+  var bars=document.createElement('div');bars.style.cssText='display:flex;align-items:flex-end;gap:2px;height:20px';
+  [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement('span');
+    b.style.cssText='width:2px;height:'+(h*1.4)+'px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55';bars.appendChild(b)});
+  barsWrap.appendChild(bars);
+  var durSpan=document.createElement('span');durSpan.className='voice-dur';
+  durSpan.style.cssText='font:400 11px/1 var(--font-sans);color:var(--text-time);flex:none';
+  durSpan.textContent=pending?'··':dur;
+  if(pending)wrap.style.opacity='.5';   // 灰着，等音频回来才点亮
+  var txt=document.createElement('div');
+  txt.style.cssText='display:none;font:400 13px/1.5 var(--font-sans);color:var(--text-primary);padding:2px 4px 4px';
+  txt.textContent=body||'';
+  var tBtn=document.createElement('button');tBtn.className='voice-tx-btn';
+  tBtn.style.cssText='border:0;background:transparent;color:var(--text-time);cursor:pointer;padding:0;width:13px;height:13px;display:grid;place-items:center;flex:none;opacity:.6';
+  tBtn.title='转文字';
+  tBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="11" height="11"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>';
+  tBtn.addEventListener('click',function(e){e.stopPropagation();
+    txt.style.display=txt.style.display==='none'?'block':'none'});
+  wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);
+  box.appendChild(wrap);box.appendChild(txt);
+  return box;
+}
+// 通话中先摆一个占位语音条（灰的、不能点、时长显示 ··），文字收在里面。
+// 这样等音频上传回来，只是把它【点亮】—— 高度一个像素都不变，不会重排、不会跳。
+function _pendingVoiceRow(row,text){
+  var md=_msgContentEl(row);if(!md)return;
+  md.innerHTML='';
+  md.appendChild(_voiceCardEl(null,'',text));
+  var bub=row.querySelector('.bubble');if(bub)bub.classList.add('voice-only');
+}
+// 通话中新出现的消息一律走这里。
+// ⚠️ 免责声明（.stream-disclaimer）是 streamInner 的最后一个孩子，
+//    直接 append 会插到它【后面】—— 她看到的「语音条跑到小花和免责声明下面」
+//    就是这么来的。必须插在它前面。
+function _callAppend(row){
+  var note=streamInner.querySelector('.stream-disclaimer');
+  if(note)streamInner.insertBefore(row,note);
+  else streamInner.append(row);
+  scrollBottom();
+  return row;
+}
+// 通话中就地把临时气泡换成真语音条。
+// 音频得等录完/合成完再上传，所以先摆文字占位，拿到文件再换 —— 中间那几秒
+// 她能看见自己说了什么，不至于对着空白等。
+function _swapToVoiceCard(row,id,dur,text){
+  if(!row||!row.parentNode)return;
+  var md=_msgContentEl(row);if(!md)return;
+  // 占位语音条已经在那儿了 → 只把它点亮：填播放地址、写上真实时长、去掉灰。
+  // ⚠️ 别重建 DOM。重建 = 高度重算 = 她看到的那一「顿」。
+  var wrap=md.querySelector('.voice-msg');
+  var btn=md.querySelector('.voice-play-btn');
+  var dr=md.querySelector('.voice-dur');
+  if(wrap&&btn&&dr){
+    btn.setAttribute('data-url','/api/files/'+id+'?t='+encodeURIComponent(state.token||''));
+    dr.textContent=dur;
+    wrap.style.opacity='';
+    return;   // 高度没变，不用滚
+  }
+  // 没有占位的情况（理论上不该走到）：老办法重建一次
+  md.innerHTML='';
+  md.appendChild(_voiceCardEl(id,dur,text));
+  var bub=row.querySelector('.bubble');if(bub)bub.classList.add('voice-only');
+  scrollBottom();
+}
+// 通话语音条：[VOICEC:文件|时长] 后面紧跟着原文。
+// 跟她平时发的 [VOICE:] 长得一样，差别在「转文字」——那边要现去识别一次，
+// 这边原文就在标记后面躺着，点开直接展开，一分钱不花。
+function _renderCallVoiceCards(row){
+  var md=_msgContentEl(row);if(!md)return;
+  var m=/^\[VOICEC:([a-zA-Z0-9_]+)\|([^\]]*)\]([\s\S]*)$/.exec((md.textContent||'').trim());
+  if(!m)return;
+  md.innerHTML='';
+  md.appendChild(_voiceCardEl(m[1],m[2]||'0:00',(m[3]||'').trim()));
+  var bub=row.querySelector('.bubble');if(bub)bub.classList.add('voice-only');
 }
 // 语音播放
 var _currentVoiceAudio=null;
@@ -1534,7 +1638,11 @@ function _clearOutgoingCall(){
 function _cancelOutgoingCall(){_clearOutgoingCall();_stopCall()}
 
 function _acceptCall(){
-  _rejectCall(true);fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});_startCall();
+  _rejectCall(true);fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});
+  // ⚠️ 传 true：这通是**他**打来的，她刚按下接听。_startCall 默认会摆「正在呼叫，
+  //    等他接…」那张卡——那是她拨出去才该看到的。不传的话，她点接听的瞬间
+  //    屏幕上跳出的是「我在给他打电话」，而他其实已经在响铃了。
+  _startCall(true);
 }
 function _rejectCall(silent){
   _incomingCall=false;
@@ -1599,6 +1707,112 @@ _startWakePoll();
 // 而每轮的成本几乎是固定的（大头是把上下文重写进缓存，跟句子长短无关）。
 // 所以先攒进 buffer，静默 _SPEECH_GAP 毫秒——也就是她真的说完了——才发一次。
 // 上限 12 秒兜底：她要是一口气讲个不停，也别把他一直晾着。
+// ============ 通话语音条 ============
+// 通话说过的话本来就以文字存进主线了，这里再给它补一段音频，
+// 在聊天记录里长成跟她平时发的语音消息一样的胶囊。
+// 她那边：麦克风本来就开着，并行挂一个 MediaRecorder，按「她说完一句」切段。
+// 他那边：TTS 的 PCM 本来就流过前端，顺手攒下来编成 WAV，不多花一次合成。
+var _segRec=null,_segChunks=[],_segStart=0;
+var _ttsPCM=[],_ttsPCMRate=24000,_hisPendingText='',_hisPendingEl=null;
+
+function _startSeg(){
+  if(!_callMediaStream)return;
+  try{
+    _segChunks=[];_segStart=Date.now();
+    _segRec=new MediaRecorder(_callMediaStream);
+    _segRec.ondataavailable=function(e){if(e.data&&e.data.size)_segChunks.push(e.data)};
+    _segRec.start();
+  }catch(e){_segRec=null;console.warn('[call] 录音起不来:',e.message)}
+}
+// 切一段：停掉当前这条，立刻续上新的（别在她下一句开口前留空档）
+function _cutSeg(text,el){
+  if(!_segRec||_segRec.state==='inactive'){_segRec=null;return}
+  var rec=_segRec;
+  var secs=Math.max(1,Math.round((Date.now()-_segStart)/1000));
+  var type=rec.mimeType||'audio/webm';
+  var chunks=_segChunks;
+  _segRec.onstop=function(){
+    var blob=new Blob(chunks,{type:type});
+    _uploadCallVoice(blob,secs,type,'user',text,el);
+  };
+  _segRec=null;
+  try{rec.stop()}catch(e){}
+}
+function _stopSeg(){
+  if(_segRec&&_segRec.state!=='inactive'){_segRec.onstop=null;try{_segRec.stop()}catch(e){}}
+  _segRec=null;_segChunks=[];
+}
+// 他说话的时候把录音按停：不然录进去的是扬声器里他自己的声音，
+// 她的语音条里会混着他的回音。
+function _pauseSeg(){if(_segRec&&_segRec.state==='recording'){try{_segRec.pause()}catch(e){}}}
+function _resumeSeg(){if(_segRec&&_segRec.state==='paused'){try{_segRec.resume()}catch(e){}}}
+
+// 整段念完了 —— 攒下来的 PCM 就是他这条回复的完整原声，编成 wav 挂上去。
+// ⚠️ 一条回复会拆成好几句念，必须整段念完才挂一次：一句一挂的话聊天记录里
+//    会冒出好几条语音，而库里只有一条消息，对不上。
+// force=true 是挂断时用的：手里有多少音频就挂多少，宁可挂半句也别整句丢。
+// ⚠️ 她那两通电话里，最后一句「Bye 宝宝」就是这么丢的 —— 他念完的那一刻她挂断，
+//    撞上下面「还在念」的判断直接 return，紧接着 _stopCall 就把 PCM 清空了。
+function _flushHisVoice(force){
+  if(!_hisPendingText||!_ttsPCM.length){
+    if(force&&_hisPendingText)console.warn('[call] 最后一句没有音频可挂:',_hisPendingText.slice(0,24));
+    return;
+  }
+  if(!force&&(_ttsPumping||_ttsQueue.length))return;   // 还没念完，等最后那一轮
+  var pcm=_ttsPCM,rate=_ttsPCMRate,txt=_hisPendingText,el=_hisPendingEl;
+  _ttsPCM=[];_hisPendingText='';_hisPendingEl=null;
+  var n=0;for(var i=0;i<pcm.length;i++)n+=pcm[i].length;
+  _uploadCallVoice(_pcmToWav(pcm,rate),Math.max(1,Math.round(n/rate)),'audio/wav','assistant',txt,el);
+}
+
+// 16bit 小端 PCM → wav。TTS 那头给的就是这个格式，加个 44 字节头就能当文件存。
+function _pcmToWav(chunks,rate){
+  var total=0,i;for(i=0;i<chunks.length;i++)total+=chunks[i].length;
+  var buf=new ArrayBuffer(44+total*2),v=new DataView(buf);
+  function str(off,x){for(var j=0;j<x.length;j++)v.setUint8(off+j,x.charCodeAt(j))}
+  str(0,'RIFF');v.setUint32(4,36+total*2,true);str(8,'WAVE');
+  str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);
+  str(36,'data');v.setUint32(40,total*2,true);
+  var off=44;
+  for(i=0;i<chunks.length;i++){var c=chunks[i];
+    for(var k=0;k<c.length;k++){v.setInt16(off,c[k],true);off+=2}}
+  return new Blob([buf],{type:'audio/wav'});
+}
+// 把这段音频挂到库里那条已经存在的消息上（不新写消息，否则同一句会出现两遍）
+async function _uploadCallVoice(blob,secs,type,role,text,el){
+  if(!text||!text.trim()||!blob||blob.size<1200)return;
+  if(!state.convId)return;
+  var ext=/wav/.test(type)?'.wav':(/mp4|aac/.test(type)?'.m4a':(/ogg/.test(type)?'.ogg':'.webm'));
+  try{
+    var form=new FormData();form.append('file',blob,'call-'+Date.now()+ext);
+    var r=await fetch('/api/files/upload',{method:'POST',body:form,
+      headers:{'Authorization':'Bearer '+(state.token||'')}});
+    if(!r.ok)throw Error('upload '+r.status);
+    var d=await r.json();
+    await fetch('/api/call/attach-voice',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
+      body:JSON.stringify({conv_id:state.convId,role:role,file_id:d.id,
+        dur:_fmtDur(secs),text:text.trim()})});
+    _swapToVoiceCard(el,d.id,_fmtDur(secs),text.trim());
+  }catch(e){console.warn('[call] 语音条没挂上:',e.message)}
+}
+
+// 「正在听」的草稿气泡：灰的、半透明，跟真正发出去的那条长得不一样，
+// 免得她以为已经发了。final 一到就被 _flushSpeech 收掉换成实心的那条。
+var _interimEl=null;
+function _showInterim(t){
+  if(!t){if(_interimEl){_interimEl.remove();_interimEl=null}return}
+  if(!_interimEl){
+    _interimEl=document.createElement('div');
+    _interimEl.className='msg-user msg-interim';
+    _interimEl.style.cssText='padding:8px 16px;margin:4px 0;background:var(--bubble-user);border-radius:14px;font:14px var(--font-sans);color:var(--text-time);text-align:right;opacity:.55;font-style:italic';
+    _callAppend(_interimEl);   // 同样得插在免责声明前面（这里会滚一次）
+  }
+  // ⚠️ 不要每个字都 scrollBottom：浏览器一秒吐好几次草稿，每次都强制滚到底
+  //    就是她看到的「页面一顿一顿」。草稿气泡高度基本不变，第一次滚过就够了。
+  _interimEl.textContent=t+'…';
+}
 var _SPEECH_GAP=1500,_SPEECH_MAX=12000;
 var _speechBuf='',_speechTimer=null,_speechFirstAt=0;
 var _lastSpeechText='',_lastSpeechAt=0;
@@ -1610,6 +1824,7 @@ function _queueSpeech(t){
   _speechTimer=setTimeout(_flushSpeech,_SPEECH_GAP);
 }
 function _flushSpeech(){
+  _showInterim('');   // 草稿收掉，下面摆真正发出去的那条
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}
   var t=_speechBuf.trim();_speechBuf='';_speechFirstAt=0;
   if(!t)return;
@@ -1623,20 +1838,24 @@ function _flushSpeech(){
   }
   _lastSpeechText=t;_lastSpeechAt=Date.now();
   _callWs.send(JSON.stringify({type:'speech',text:t}));
-  var bubble=document.createElement('div');bubble.className='msg-user';bubble.style.cssText='padding:8px 16px;margin:4px 0;background:var(--bubble-user);border-radius:14px;font:14px var(--font-sans);color:var(--text-primary);text-align:right';
-  bubble.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg> '+escHtml(t);
-  streamInner.append(bubble);bubble.scrollIntoView({block:'end'});
+  // ⚠️ 用 _buildUserRow 造，别手搓裸 div —— 手搓的没有头像，
+  //    而且结构对不上 _msgContentEl，语音条换进去也找不到地方放。
+  var bubble=_buildUserRow(t,String(Date.now()),[]);
+  _pendingVoiceRow(bubble,t);   // 一出现就是语音条（灰的），不走「先文字后变」那一步
+  _callAppend(bubble);
+  // 这段音频对应的就是这句话。切下来上传，回来就把上面这条换成语音条。
+  _cutSeg(t,bubble);
 }
 
 // 外部可调用来电：window._triggerIncomingCall()
-async function _startCall(){
+async function _startCall(incoming){
   if(_callWs){_stopCall();return;}
   var btn=$('callButton');btn.style.color='#E54D2E';btn.title='通话中…点击结束';_startCallTimer();
   try{
     var wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/call';
     _callWs=new WebSocket(wsUrl);
     _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话';};
-    _showOutgoingCall();
+    if(!incoming)_showOutgoingCall();
     _callWs.onopen=function(){
       // 告诉他电话响了 —— 不发这条他那头是静默的，得等她先开口
       try{_callWs.send(JSON.stringify({type:'dial'}))}catch(e){}
@@ -1648,12 +1867,18 @@ async function _startCall(){
       if(msg.type==='delta'){_feedCallDelta(msg.text);return}
       if(msg.type==='response'){
         _clearOutgoingCall();   // 他开口了 = 接通
+        _hisPendingText=(msg.text||'').trim();   // 等 TTS 念完，把原声挂到这条上
         // 尾巴收口：把 delta 阶段没凑成句的残句念掉。
         // 已经念过的部分不会重念（_ttsSpokenLen 记着水位）。
         _flushCallDelta(msg.text);
         // 也显示在聊天里
-        var bubble=document.createElement('div');bubble.className='msg-claude';bubble.style.cssText='padding:8px 16px;margin:4px 0;background:var(--bubble-ai);border-radius:14px;font:14px var(--font-sans);color:var(--text-primary)';
-        bubble.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg> '+escHtml(msg.text);streamInner.append(bubble);bubble.scrollIntoView({block:'end'});
+        var bubble=_buildClaudeRow(msg.text,'','',String(Date.now()));
+        _pendingVoiceRow(bubble,msg.text);
+        _callAppend(bubble);
+        _hisPendingEl=bubble;   // 原声挂上去之后，这个气泡就地变成语音条
+        // 他最后一句正好在 delta 阶段念完的话，收口不会有新句子入队，
+        // 也就不会再有一轮播放 —— 那这里就是最后的机会。
+        _flushHisVoice();
       }else if(msg.type==='hangup'){
         // 他那边用 hangup_call 工具挂断的
         toast('他挂断了');_stopCall();
@@ -1666,16 +1891,27 @@ async function _startCall(){
     if(!SR){toast('这台设备不支持实时听写（iPhone 上的 Safari 就不支持），先用语音消息吧');_stopCall();return}
     _callMediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
     var rec=new SR();
-    rec.lang='zh-CN';rec.interimResults=false;rec.continuous=true;
+    // interimResults=true：浏览器边听边吐草稿。**只拿来显示，不拿来发**——
+    // 发送还是等 final + 静默 _SPEECH_GAP。以前关着它，她说完话屏幕上一动不动，
+    // 要等浏览器攒够一整句才蹦出字，感觉像「他没听见」。延迟其实没变，
+    // 但看得见「正在听」和干等着，是两件事。
+    rec.lang='zh-CN';rec.interimResults=true;rec.continuous=true;
     rec.onresult=function(e){
       // ⚠️ continuous 模式下 e.results 是**累积**的，从 0 遍历会把之前说过的话
-      //    一遍遍重新发出去。只取这次新出现的、且已经 final 的那几段。
-      var t='';
+      //    一遍遍重新发出去。只取这次新出现的那几段。
+      var t='',interim='';
       for(var i=e.resultIndex;i<e.results.length;i++){
         if(e.results[i].isFinal)t+=e.results[i][0].transcript;
+        else interim+=e.results[i][0].transcript;
       }
+      if(!_segRec)_startSeg();   // 没收到 onspeechstart 的浏览器走这条
       if(t.trim())_queueSpeech(t.trim());
+      _showInterim(interim.trim()||(t.trim()?'':''));
     };
+    // 录音跟着「她开口」走，不跟着通话走：语音条里只该有她说话那几秒。
+    // onspeechstart 是浏览器判定「有人声了」的最早时机；有些浏览器不给这个事件，
+    // 用第一次识别结果兜底（会晚一点，可能吃掉半个字，但不会录进整段沉默）。
+    rec.onspeechstart=function(){if(!_segRec)_startSeg()};
     rec.onerror=function(e){if(e.error!=='no-speech')console.error('[call]',e.error)};
     // 浏览器会在静默一段时间后自己结束听写。通话还没挂就自动接上，
     // 否则说着说着他就聋了。
@@ -1693,6 +1929,10 @@ function _stopCall(){
     _logCall('ended',String(_m).padStart(2,'0')+':'+String(_s).padStart(2,'0'))}
   // 挂断时把还没发出去的半句丢掉，别等挂完了再补发一条
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}_speechBuf='';_speechFirstAt=0;
+  _showInterim('');
+  _stopSeg();
+  _flushHisVoice(true);   // 他最后一句的原声还在手里，先挂上去再清场
+  _ttsPCM=[];_hisPendingText='';
   _resetTTSStream();
   _clearOutgoingCall();
   if(_callTimer){clearInterval(_callTimer);_callTimer=null}_callSeconds=0;
@@ -1816,6 +2056,8 @@ function _norm(x){return (x||'').replace(/\s+/g,'')}
 function _speakableFront(x){
   return (x||'')
     .replace(/<(feel|memory|dream|flash)>[\s\S]*?<\/\1>/g,'')
+    .replace(/<(feel|memory|dream|flash)>[\s\S]*$/g,'')          // 未闭合的中间态（后端也这么做）
+    .replace(/```[\s\S]*?```/g,'（这段代码我发到聊天框里了）')
     .replace(/<想[·:][^>]*>([\s\S]*?)<\/想>/g,'$1')
     .replace(/\[clawd:[^\]]*\]/g,'')
     .replace(/\[music:[^\]]*\]/g,'')
@@ -1827,7 +2069,8 @@ function _speakableFront(x){
     .replace(/^\s*#{1,6}\s*/gm,'')
     .replace(/\*\*([^*]*)\*\*/g,'$1')
     .replace(/(^|\s)\*([^*]+)\*/g,'$1$2')
-    .replace(/^\s*[-*+]\s+/gm,'');
+    .replace(/^\s*[-*+]\s+/gm,'')
+    .replace(/\n{2,}/g,'\n');
 }
 
 // 手里这段还不能动的三种情况：标签开了没关、方括号开了没关、尖括号开了没关。
@@ -1866,15 +2109,22 @@ function _flushCallDelta(finalText){
   var full=(finalText||'').trim();
   var rest=full;
   if(_spokenNorm){
-    // 用「去空白」的水位在完整文本里找对应的切点，逐字符走一遍最稳
-    var seen=0,cut=0;
+    // 用「去空白」的水位在完整文本里找对应的切点，逐字符走一遍最稳。
+    // ⚠️ 只比长度不够：前后端清洗规则只要差一点，长度够了内容却对不上，
+    //    切点一偏，念过的那半句就会再念一遍——她听到的「说两遍」就是这个。
+    //    所以边走边把字符抄下来，最后跟水位逐字对，对不上就整段不念。
+    var seen=0,cut=0,acc='';
     for(var i=0;i<full.length&&seen<_spokenNorm.length;i++){
-      if(!/\s/.test(full[i]))seen++;
+      if(!/\s/.test(full[i])){seen++;acc+=full[i]}
       cut=i+1;
     }
-    rest=(seen>=_spokenNorm.length)?full.slice(cut):'';
-    // 对不上（清洗差异之类）就宁可不念，也不要整段重念一遍给她听
-    if(seen<_spokenNorm.length)rest='';
+    if(seen>=_spokenNorm.length&&acc===_spokenNorm){
+      rest=full.slice(cut);
+    }else{
+      // 对不上就宁可后半句缺一点，也不要整段重念一遍给她听
+      console.warn('[call] 收口对不上水位，跳过补念（已念'+_spokenNorm.length+'字）');
+      rest='';
+    }
   }
   _rawBuf='';_spokenNorm='';
   if(rest.trim())_enqueueTTS(rest.trim());
@@ -1884,6 +2134,7 @@ function _flushCallDelta(finalText){
 // 一句一开关的话，两句之间的缝里会把他自己的尾音听成她说话。
 function _enqueueTTS(text){
   if(!text||!text.trim())return;
+  console.log('[tts] 念:',JSON.stringify(text.slice(0,60)),'(队列'+_ttsQueue.length+')');
   _ttsQueue.push(text);
   if(!_ttsPumping)_pumpTTS();
 }
@@ -1891,6 +2142,7 @@ async function _pumpTTS(){
   if(_ttsPumping)return;
   _ttsPumping=true;_callSpeaking=true;
   if(_callRecording){try{_callRecording.abort?_callRecording.abort():_callRecording.stop()}catch(e){}}
+  _pauseSeg();
   try{
     while(_ttsQueue.length){
       var next=_ttsQueue.shift();
@@ -1898,6 +2150,8 @@ async function _pumpTTS(){
     }
   }finally{
     _ttsPumping=false;_callSpeaking=false;
+    _resumeSeg();
+    _flushHisVoice();
     setTimeout(function(){
       if(_callWs&&_callRecording&&!_ttsPumping){try{_callRecording.start()}catch(e){}}
     },350);
@@ -1940,7 +2194,13 @@ async function _playStreamTTS(text){
         if(!line.startsWith('data: '))continue;
         try{var obj=JSON.parse(line.slice(6));
           if(obj.type==='meta'){sampleRate=obj.sampleRate||24000}
-          else if(obj.type==='audio'){_feedPCMChunk(obj.data,sampleRate);_ttsPlayedAny=true}
+          else if(obj.type==='audio'){
+            // ⚠️ 先立旗再解码。_feedPCMChunk 要是抛了（AudioContext 被浏览器掐、
+            //    hex 有脏字符），前面已经放出去的声音收不回来，可标志还是 false，
+            //    catch 里就会走兜底把整句再念一遍 —— 她听到的「说两遍」。
+            _ttsPlayedAny=true;
+            _feedPCMChunk(obj.data,sampleRate);
+          }
           else if(obj.type==='error'){throw new Error(obj.message)}
         }catch(e){if(e.message!==''&&!e.message.startsWith('Unexpected'))throw e}
       }
@@ -1954,6 +2214,13 @@ async function _playStreamTTS(text){
     // 已经出过声就绝不重念——宁可后半句被截断，也不要整句念两遍
     if(_ttsPlayedAny){
       console.warn('[tts] 播到一半失败，但已经出过声，不走兜底（避免念两遍）:',e.message);
+      return;
+    }
+    // 通话里绝不兜底。speechSynthesis 是浏览器自带的机械音，跟他的声音是两个人；
+    // 一旦 MiniMax 那边已经出过声（哪怕只出了半句），兜底就等于换个嗓子再念一遍。
+    // 上面的 _ttsPlayedAny 是一道闸，这里是第二道：通话中一律不走。
+    if(_callWs){
+      console.warn('[tts] 通话中不走 speechSynthesis 兜底（避免换个嗓子念两遍）:',e.message);
       return;
     }
     console.warn('[tts] stream failed, fallback speechSynthesis:',e.message);
@@ -1980,6 +2247,8 @@ function _feedPCMChunk(hex,sampleRate){
   for(var i=0;i<len;i++){
     raw[i]=parseInt(hex.substr(i*4,2),16)|(parseInt(hex.substr(i*4+2,2),16)<<8);
   }
+  // 只在通话里攒：平时点播语音消息也走这条路，那些不用再存一份
+  if(_callWs){_ttsPCM.push(raw);_ttsPCMRate=sampleRate}
   var audioBuf=_audioCtx.createBuffer(1,raw.length,sampleRate);
   var ch=audioBuf.getChannelData(0);
   for(var i=0;i<raw.length;i++)ch[i]=raw[i]/32768;

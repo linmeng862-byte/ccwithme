@@ -1567,7 +1567,17 @@ async function synthVoiceTags(text, res) {
   return text;
 }
 
+// [CALL_DIAL] → 拨号提示词。库里只留标记（她的气泡里就不会出现台词），
+// 喂给他之前在这儿展开成整句。
+const _CALL_DIAL_PROMPT = '[她给你打电话，你刚接起来。说第一句——像真的拿起电话那样，一句就好。]';
+
 async function expandVoiceTags(text) {
+  // [VOICEC:id|时长] 是通话语音条的壳，后面紧跟着原文。他读到的一直是原文，
+  // 不用再识别一次 —— 这段音频本来就是这段文字变出来的。
+  if (text) text = text.replace(/\[VOICEC:[^\]]*\]/g, '');
+  if (text && text.indexOf('[CALL_DIAL]') !== -1) {
+    text = text.split('[CALL_DIAL]').join(_CALL_DIAL_PROMPT);
+  }
   if (!text || text.indexOf('[VOICE:') === -1) return text;
   const re = /\[VOICE:([a-zA-Z0-9_]+)\|([^\]|]*)\]/g;
   const jobs = [];
@@ -1848,9 +1858,18 @@ app.post('/api/tts/stream', auth, async (req, res) => {
         if (!payload || payload === '[DONE]') continue;
         try {
           const obj = JSON.parse(payload);
+          // ⚠️⚠️ 「他一句话说两遍」的真凶就在这儿。
+          // MiniMax 流式在增量分片发完之后，**最后还会再发一条汇总包**，
+          // 它的 data.audio 里装的是【整段完整音频】，不是新的一截。
+          // 以前不加区分照单全转，前端就播成了「增量放一遍 + 完整再放一遍」。
+          // 汇总包的标志：status === 2，或者带 extra_info（合成统计只在最后一条给）。
+          // 它的音频一个字节都不能转发，但 extra_info 本身还要留着报时长。
+          const isFinal = obj.data?.status === 2 || !!obj.data?.extra_info;
           const audioHex = obj.data?.audio;
-          if (audioHex) {
+          if (audioHex && !isFinal) {
             res.write('data: ' + JSON.stringify({ type: 'audio', data: audioHex }) + '\n\n');
+          } else if (audioHex && isFinal) {
+            console.log('[tts] 丢弃 MiniMax 汇总包（整段重复音频）' + audioHex.length + ' hex');
           }
           if (obj.data?.extra_info) {
             res.write('data: ' + JSON.stringify({ type: 'info', index: obj.data.extra_info.index, len: obj.data.extra_info.audio_length }) + '\n\n');
@@ -1905,6 +1924,43 @@ app.post('/api/call/ring', (req, res) => {
 
 // 通话记录条：只往消息流里落一条 [CALL:...]，**不触发他回复**。
 // 通话本身已经在电话里说完了，落库只是留个痕迹 —— 再走一遍模型既费钱又莫名其妙。
+// 通话录音回挂：通话说过的话本来就存进主线了（文字），这里给它补上音频。
+// 不新写消息，是把已经在库里的那条 content 换成 [VOICEC:文件|时长]原文 ——
+// 换成新写一条的话，同一句话会在聊天记录里出现两遍。
+app.post('/api/call/attach-voice', auth, (req, res) => {
+  const convId = req.body?.conv_id;
+  const role = req.body?.role === 'assistant' ? 'assistant' : 'user';
+  const fileId = String(req.body?.file_id || '');
+  const dur = String(req.body?.dur || '').replace(/[^0-9:]/g, '');
+  const text = String(req.body?.text || '').trim();
+  if (!convId || !/^[a-zA-Z0-9_]+$/.test(fileId) || !text) {
+    return res.status(400).json({ error: 'bad request' });
+  }
+  // ⚠️ 只认最近 12 条里内容一模一样、且还没挂过音频的那条。
+  //    按 role 取「最后一条」不行：TTS 上传是异步的，慢一拍回来时后面
+  //    可能已经又说了一句，会挂错人。
+  const recent = db.prepare(
+    'SELECT id, content, created_at FROM messages WHERE conv_id = ? AND role = ?' +
+    ' ORDER BY id DESC LIMIT 12'
+  ).all(convId, role);
+  let row = recent.find(r => r.content === text);
+  // 兜底：内容对不上（前后端清洗差一点点就会这样），退而求其次取「最近 3 分钟内、
+  // 还没挂过音频的最后一条」。宁可挂到相邻那条，也不要整句没有语音。
+  if (!row) {
+    row = recent.find(r => r.content.indexOf('[VOICEC:') !== 0 &&
+      r.content.indexOf('[CALL') !== 0 &&
+      (Date.now() / 1000 - r.created_at) < 180);
+    if (row) console.log('[call] 语音条按时间兜底挂到 #' + row.id + '（内容没精确对上）');
+  }
+  if (!row) {
+    console.log('[call] 语音条没挂上：' + role + ' 找不到对应消息 ' + JSON.stringify(text.slice(0, 40)));
+    return res.json({ ok: false, reason: 'no match' });
+  }
+  db.prepare('UPDATE messages SET content = ? WHERE id = ?')
+    .run('[VOICEC:' + fileId + '|' + (dur || '0:01') + ']' + text, row.id);
+  res.json({ ok: true, id: row.id });
+});
+
 app.post('/api/call/log', auth, (req, res) => {
   const kind = String(req.body?.kind || '');
   const dur = String(req.body?.dur || '');
@@ -4468,7 +4524,16 @@ async function executeTool(name, input) {
   }
 }
 
+// 记忆浮现的缓存（见下面 needBreath 那段）。放模块级：进程活着就一直有效，
+// 重启 pm2 自然失效，正好当手动刷新。
+let _breathCache = { at: 0, text: '' };
+const BREATH_TTL_MS = 10 * 60 * 1000;
+
 app.post('/api/chat', auth, async (req, res) => {
+  // 分段计时：通话「好卡」到底卡在哪一段，让日志自己说。voice_call 才打，别刷屏。
+  const _T0 = Date.now();
+  const _isVoice = !!req.body?.voice_call;
+  const _mark = (what) => { if (_isVoice) console.log('[延迟·后端] ' + what + ' +' + (Date.now() - _T0) + 'ms'); };
   const { message, conversation_id, model, effort, extended, attachments, project_id, reading_book_id, voice_call } = req.body;
 
   // 用量限额：超了就不发，避免失控花费
@@ -4557,7 +4622,24 @@ app.post('/api/chat', auth, async (req, res) => {
   const cliIsNew = !cliRow?.[_sidCol] || (cliRow[_turnCol] || 0) >= CLI_ROTATE_AFTER;
   const needBreath = !NO_ENGINE && (!useGateway || cliIsNew);
   let nocturneMemory = '';
-  if (needBreath) { try { const nr = await callNocturne('breath', {}); if (nr) nocturneMemory = _trimHouseRules(nr); } catch(e) {} }
+  _mark('查会话/准备');
+  // 记忆浮现缓存 10 分钟。实测 callNocturne('breath') 一次要 10.4 秒（引擎在 Zeabur，
+  // 每次都是冷的），而它取的是「他此刻的情绪底色和最近的感受」——十分钟内不会变成另一个人。
+  // 命中缓存的那次，新会话从「卡 10 秒」变成「立刻开口」。
+  // ⚠️ 存的是 _trimHouseRules 之后的版本，别把没剪过的塞进去。
+  if (needBreath) {
+    const _hit = _breathCache.text && (Date.now() - _breathCache.at) < BREATH_TTL_MS;
+    if (_hit) {
+      nocturneMemory = _breathCache.text;
+      _mark('记忆浮现走缓存（省了约 10 秒）');
+    } else {
+      try {
+        const nr = await callNocturne('breath', {});
+        if (nr) { nocturneMemory = _trimHouseRules(nr); _breathCache = { at: Date.now(), text: nocturneMemory }; }
+      } catch(e) {}
+      _mark('Nocturne breath 完（这次是真去取的）');
+    }
+  }
   // 手写记忆档案（~/memory/*.md）——他在过去那些窗口里写下的东西。
   // ⚠️ 刻意放在仓库外：ccwith/ 会推 GitHub，这些不该躺在公开仓库里。
   // 跟 breath 不同，这个**每条对话只注入一次**：它的用处是让对话接在那段记忆上
@@ -4567,6 +4649,7 @@ app.post('/api/chat', auth, async (req, res) => {
   // 🫧 Mind 浮起：每条消息都跑，最多 5 条旧记忆。跟上面的 Nocturne breath 是两回事。
   //    挂进 message（不是系统提示词）——它每条都变，进系统提示词会把缓存前缀整块打掉。
   const mindSurfaced = NO_ENGINE ? '' : mindBreath(message);
+  _mark('Mind 浮起完');
 
   // 🔥 此刻最想干嘛：pickIntent 的下游消费者。同样挂 message，不进系统提示词。
   //    ⚠️ 铁律 1：这里出现的只有第一人称的「我想…」，念头池里的原文一个字都不带。
@@ -7723,8 +7806,11 @@ wss.on('connection', (ws, req) => {
           try {
             if (!convId) convId = _mainConvId();
             console.log('[call] 她拨过来了 #' + connId);
+            // ⚠️ 存库的是标记 [CALL_DIAL]，不是提示词原文 —— 照 [VOICE:] 那条路：
+            //    库里存标记，喂给他之前才展开。以前直接把提示词原文发进来，
+            //    它就以「她说的话」的身份留在了她的气泡里，她看到的是自己在念台词。
             const text = await _callAI(
-              '[她给你打电话，你刚接起来。说第一句——像真的拿起电话那样，一句就好。]',
+              '[CALL_DIAL]',
               convId, d => { try { ws.send(JSON.stringify({ type: 'delta', text: d })); } catch (e) {} });
             ws.send(JSON.stringify({ type: 'response', text }));
           } catch (e) {
@@ -7884,6 +7970,7 @@ function _speakable(s) {
     .replace(/\[music:[^\]]*\]/g, '')
     .replace(/\[相册:[^\]]*\]/g, '')
     .replace(/\[VOICE:[^\]]*\]/g, '')
+    .replace(/\[VOICEC:[^\]]*\]/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')                  // 图片
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')               // 链接留文字
     .replace(/```[\s\S]*?```/g, '（这段代码我发到聊天框里了）')
