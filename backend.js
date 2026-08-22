@@ -2042,7 +2042,7 @@ app.get('/api/sessions/:id/messages-by-date', auth, (req, res) => {
   const date = req.query.date;
   if (!date) return res.status(400).json({ error: 'date required (YYYY-MM-DD)' });
   const rows = db.prepare(
-    "SELECT id, role, content, thinking, attachments, created_at FROM messages WHERE conv_id = ? AND date(created_at, 'unixepoch') = ? ORDER BY id ASC"
+    "SELECT id, role, content, thinking, attachments, traces, created_at FROM messages WHERE conv_id = ? AND date(created_at, 'unixepoch') = ? ORDER BY id ASC"
   ).all(req.params.id, date);
   const messages = rows.map(r => ({
     id: r.id,
@@ -2050,7 +2050,7 @@ app.get('/api/sessions/:id/messages-by-date', auth, (req, res) => {
     text: r.content,
     thinking: r.thinking,
     attachments: _hydrateAttachments(r.attachments),
-    traces: [],
+    traces: (function(){ try { return JSON.parse(r.traces || '[]'); } catch (e) { return []; } })(),
     timestamp: new Date(r.created_at * 1000).toISOString()
   }));
   res.json({ messages, date });
@@ -2081,7 +2081,7 @@ app.get('/api/sessions/:id/messages', auth, (req, res) => {
     text: r.content,
     thinking: r.thinking,
     attachments: _hydrateAttachments(r.attachments),
-    traces: [],
+    traces: (function(){ try { return JSON.parse(r.traces || '[]'); } catch (e) { return []; } })(),
     timestamp: new Date(r.created_at * 1000).toISOString()
   }));
   res.json({
@@ -3448,6 +3448,32 @@ const TOOLS = [
       required: ['filename', 'content']
     }
   },
+  {
+    name: 'edit_file',
+    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '文件绝对路径' },
+        old_string: { type: 'string', description: '要被替换掉的原文（含足够上下文以保证唯一）' },
+        new_string: { type: 'string', description: '替换成什么' },
+        replace_all: { type: 'boolean', description: '是否替换全部匹配，默认 false' }
+      },
+      required: ['path', 'old_string', 'new_string']
+    }
+  },
+  {
+    name: 'send_file',
+    description: '把【磁盘上已经存在的文件】发给她，她会看到一张可下载的卡片。当她说「把某某文件发给我」、或者你想把一个已有文件给她时，用这个——不要用 create_file 把内容重新打一遍。**create_file 是给「你新写出来的内容」用的；已经存在的文件一律用 send_file**，它只传路径，又快又省。路径要写绝对路径（她发给你的文件在 data/uploads/files/ 下，见 CLAUDE.local.md）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '文件的绝对路径' },
+        caption: { type: 'string', description: '可选，跟这个文件一起说的一句话' }
+      },
+      required: ['path']
+    }
+  },
   // === Artifact 工具 ===
   {
     name: 'create_artifact',
@@ -4037,6 +4063,101 @@ async function executeTool(name, input) {
       const size = Buffer.byteLength(content, 'utf-8');
       db.prepare('INSERT INTO uploads (id, filename, path, size) VALUES (?, ?, ?, ?)').run(id, filename, destPath, size);
       return { ok: true, id, filename, size, file_card: { id, filename, size } };
+    }
+    case 'edit_file': {
+      // 08-22：她说「我发他的文件，直接改不要重写」。平时他只有 Read（省 token，
+      // Write/Edit 要工程模式才开），所以想改一个字也得 create_file 整份重打 ——
+      // 6.5KB 的文件就是三千多输出 token。这个工具只传要换的那一小段。
+      const efPath = String(input.path || '').trim();
+      const efOld = String(input.old_string == null ? '' : input.old_string);
+      const efNew = String(input.new_string == null ? '' : input.new_string);
+      if (!efPath) return { error: '要改哪个文件？给绝对路径。' };
+      if (!efOld) return { error: 'old_string 不能为空——告诉我要替换掉哪一段。' };
+
+      // 写操作，牢笼比 send_file 更紧：只许动【她上传的文件】和【他自己家】，
+      // 源码目录不给（他平时不该改 Chat-C 的代码，那是工程模式的事）。
+      const EDIT_ROOTS = [path.join(uploadDir), '/home/ubuntu/claude-home'];
+      const EF_FORBIDDEN = [/(^|\/)\.env$/, /(^|\/)claude\.db$/, /(^|\/)\.auth_token$/,
+                            /(^|\/)CLAUDE\.local\.md$/, /\.bak(\.|-|$)/];
+      let efReal;
+      try { efReal = fs.realpathSync(efPath); }
+      catch (e) { return { error: '找不到这个文件：' + efPath }; }
+      if (!EDIT_ROOTS.some(r => efReal === r || efReal.startsWith(r + path.sep)))
+        return { error: '这个路径不许改（只能改她上传的文件和你自己家里的）：' + efReal };
+      if (EF_FORBIDDEN.some(re => re.test(efReal))) return { error: '这个文件不能改。' };
+
+      let efContent;
+      try { efContent = fs.readFileSync(efReal, 'utf-8'); }
+      catch (e) { return { error: '读不出来（可能是二进制）：' + e.message }; }
+
+      const efCount = efContent.split(efOld).length - 1;
+      if (efCount === 0) return { error: '文件里找不到这段原文，一个字都不能差。先 Read 一遍确认。' };
+      if (efCount > 1 && !input.replace_all)
+        return { error: '这段原文出现了 ' + efCount + ' 次，不唯一。多带点上下文，或者传 replace_all=true。' };
+
+      // 改坏了要能回来：先留一份，跟 backups/ 那套规矩一致。
+      try {
+        const efBak = efReal + '.bak-' + new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
+        fs.copyFileSync(efReal, efBak);
+      } catch (e) { /* 备份失败不挡改，但下面会说一声 */ }
+
+      const efResult = input.replace_all ? efContent.split(efOld).join(efNew) : efContent.replace(efOld, efNew);
+      try { fs.writeFileSync(efReal, efResult, 'utf-8'); }
+      catch (e) { return { error: '写不进去：' + e.message }; }
+
+      // uploads 表里记的 size 要跟着走，不然下载卡片显示的大小是旧的
+      try {
+        const efSize = Buffer.byteLength(efResult, 'utf-8');
+        db.prepare('UPDATE uploads SET size = ? WHERE path = ?').run(efSize, efReal);
+      } catch (e) {}
+
+      return {
+        ok: true, path: efReal,
+        replaced: input.replace_all ? efCount : 1,
+        message: '改好了（' + (input.replace_all ? efCount + ' 处' : '1 处') + '）。要发给她就用 send_file。'
+      };
+    }
+    case 'send_file': {
+      // 08-22：她发现「他发文件超慢、很耗 usage」。原因是他只有 create_file，
+      // 那个要把【整份文件内容重新输出一遍】——6.5KB 的 md 就是三千多个输出 token，
+      // 而文件明明就在磁盘上。这个工具只传路径，几十 token 搞定。
+      const srcPath = String(input.path || '').trim();
+      if (!srcPath) return { error: '要发哪个文件？给我绝对路径。' };
+
+      // —— 牢笼：只许发这几个根目录下的东西，且挡掉敏感的
+      //    参考 workplace/path-jail.js 的规矩，别另发明一套。
+      const ALLOWED_ROOTS = [__dirname, '/home/ubuntu/claude-home', '/home/ubuntu/memory'];
+      const FORBIDDEN = [/(^|\/)\.git\//, /(^|\/)node_modules\//, /(^|\/)\.env$/, /\.bak(\.|-|$)/,
+                         /(^|\/)claude\.db$/, /(^|\/)\.auth_token$/, /(^|\/)backups\//];
+      let real;
+      try { real = fs.realpathSync(srcPath); }
+      catch (e) { return { error: '找不到这个文件：' + srcPath + '（用绝对路径，别猜目录——看 CLAUDE.local.md 那张表）' }; }
+
+      const inRoot = ALLOWED_ROOTS.some(root => real === root || real.startsWith(root + path.sep));
+      if (!inRoot) return { error: '这个路径不在允许的范围里，发不了：' + real };
+      if (FORBIDDEN.some(re => re.test(real))) return { error: '这个文件不能发（密钥/数据库/备份/依赖）。' };
+
+      let st;
+      try { st = fs.statSync(real); } catch (e) { return { error: '读不到：' + e.message }; }
+      if (!st.isFile()) return { error: '这不是一个文件：' + real };
+      if (st.size > 100 * 1024 * 1024) return { error: '文件太大了（超过 100MB），发不了。' };
+
+      const sfName = path.basename(real);
+      const sfId = 'sf_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const sfDir = path.join(uploadDir, 'files');
+      if (!fs.existsSync(sfDir)) fs.mkdirSync(sfDir, { recursive: true });
+      const sfDest = path.join(sfDir, sfId + '_' + sfName);
+      try { fs.copyFileSync(real, sfDest); } catch (e) { return { error: '复制失败：' + e.message }; }
+
+      db.prepare('INSERT INTO uploads (id, filename, path, size) VALUES (?, ?, ?, ?)')
+        .run(sfId, sfName, sfDest, st.size);
+
+      return {
+        ok: true, id: sfId, filename: sfName, size: st.size,
+        caption: input.caption || '',
+        file_card: { id: sfId, filename: sfName, size: st.size },
+        message: (input.caption || '') || ('发了：' + sfName)
+      };
     }
     case 'create_artifact': {
       const artTitle = input.title || 'artifact';
@@ -5415,8 +5536,23 @@ async function handleAnthropicChat(req, res, ctx) {
           _mindExtracted2.flashes.forEach(_insertMindItem);
           if (cleanFullText || (stickerImgs && cleanFullText)) {
             cleanFullText = await synthVoiceTags(cleanFullText, res);
-            db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
-              .run(convId, 'assistant', cleanFullText, fullThinking);
+            // 08-22：把这一轮的工具调用一起存下来，前端刷新后才能把卡片和 trace row 还原。
+            // 格式跟前端 _buildTraceRowFromHistory 期望的一致：tool_use 在前、tool_result 在后。
+            let _tracesJson = '[]';
+            try {
+              const _tr = [];
+              (toolCalls || []).forEach(tc => _tr.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input }));
+              (toolResults || []).forEach(tr => _tr.push({
+                type: 'tool_result', tool_use_id: tr.tool_use_id,
+                content: typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content),
+                is_error: !!tr.is_error
+              }));
+              _tracesJson = JSON.stringify(_tr);
+              // 别让一条巨大的工具输出把库撑坏（比如读了个大文件）
+              if (_tracesJson.length > 200000) _tracesJson = '[]';
+            } catch (e) { _tracesJson = '[]'; }
+            db.prepare('INSERT INTO messages (conv_id, role, content, thinking, traces) VALUES (?, ?, ?, ?, ?)')
+              .run(convId, 'assistant', cleanFullText, fullThinking, _tracesJson);
           }
         }
       }
@@ -8169,6 +8305,13 @@ const { wireAtrio } = require('./atrio-wire');
 wireAtrio(app, { db, auth, callNocturne });
 
 startOWC();
+
+// 08-22：把工具调用记录存下来。以前这列不存在，历史接口硬编码返回 traces: []，
+// 结果就是【他发的卡片刷新就没了】—— 音乐、Gallery、artifact 全靠工具结果渲染，
+// 而工具结果从来没落过库。（文件卡侥幸活着，因为它另外还写了一个 [FILE:..] 文本标记。）
+// 存下来之后 trace row 也能恢复：她刷新后还能点开看他当时做了什么。
+try { db.exec("ALTER TABLE messages ADD COLUMN traces TEXT DEFAULT '[]'"); }
+catch (e) { /* 列已存在 */ }
 
 // === 启动 ===
 server.listen(PORT, '0.0.0.0', () => {

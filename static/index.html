@@ -1583,6 +1583,7 @@ function _startWakePoll(){
         var row=_buildClaudeRow(m.content,'','',String(m.created_at*1000));
         row.dataset.wakeId=m.id;
         streamInner.append(row);
+        _renderFileCards(row);_renderCmdCapsulesAfter(row);
         _renderVoiceCards(row);_renderCallCards(row);
         if(typeof _splitMessages==='function')_splitMessages(row);
         row.scrollIntoView({block:'end',behavior:'smooth'});
@@ -2066,6 +2067,19 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
     const wrap=document.createElement('div');wrap.className='user-images';imgs.forEach(a=>{const img=document.createElement('img');img.className='user-image';img.alt=a.name||'';img.title='点击放大';if(a.preview){img.src=a.preview}else{img._lazyAtt=a;lazyImgObserver.observe(img)}img.onclick=function(e){e.stopPropagation();var ex=document.createElement('div');ex.className='image-expand';var fi=document.createElement('img');fi.src=img.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)};wrap.append(img)});col.append(wrap);
   }
   var b=document.createElement('div');b.className='bubble';
+  // 08-22 她要的：双击自己的气泡 = roll，把他这次的回答扔了重answer。
+  // 跟他气泡上那个「重新生成」是同一件事（见 actions 里的 retry），只是她不用先划到他那条去点。
+  // ⚠️ 长按复制绑的是 pointerdown/pointerup，双击不会误触发它（每次 pointerup 都会 cancel 掉计时）。
+  b.addEventListener('dblclick',function(ev){
+    ev.preventDefault();
+    if(!text&&!attachments.length)return;
+    // 把这条之后、下一条她说话之前的东西全清掉 —— 他的回复可能被 --- 拆成好几条，
+    // 中间还夹着 trace row、时间戳、各种卡片。清到下一个 .msg-user 为止。
+    var n=row.nextElementSibling;
+    while(n&&!n.classList.contains('msg-user')){var dead=n;n=n.nextElementSibling;dead.remove()}
+    try{toast('重新生成…')}catch(e){}
+    sendMessage(text,false,[],attachments);
+  });
   if(files.length){const fc=document.createElement('div');fc.className='message-attachments';files.forEach(item=>fc.append(attachmentCard(item)));b.append(fc)}
   if(text){const content=document.createElement('div');renderMessage(content,text);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(text);toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}
   if(text||files.length)col.append(b);
@@ -3487,6 +3501,30 @@ function _preprocessMessages(messages){
     m._lu=lu;m._la=la;
   });
 }
+// 08-22 她发现的：刷新页面之后他发的卡片全不见了 —— 文件卡、音乐、Gallery、artifact 都是。
+// 原因：这些卡只在【流式结束】那条路上渲染（靠 currentTraceRow 的 phases.toolOutput），
+// 而刷新走的是历史渲染，那条路一个都没调。
+// 卡片的证据其实还在 messages.traces 里（tool_result 的 content），刷新后照样拿得到，
+// 所以这里把同一套渲染补上。⚠️ 改这儿要跟流式那段（搜 `po.gallery_share`）保持一致，
+// 那边加了新卡片种类，这边也得加，否则又会「发的时候有、刷新就没」。
+function _renderToolCardsFromTraces(traces,row){
+  if(!traces||!traces.length||!row)return;
+  var parent=row.querySelector('.msg-body')||row;
+  traces.forEach(function(t){
+    if(!t||t.type!=='tool_result'||!t.content)return;
+    var po=null;
+    try{po=typeof t.content==='string'?JSON.parse(t.content):t.content}catch(e){return}
+    if(!po||typeof po!=='object')return;
+    try{
+      if(po.artifact&&typeof _renderArtifactCard==='function')_renderArtifactCard(po.artifact,parent);
+      if(po.music&&typeof _renderMusicCard==='function')_renderMusicCard(po.music,parent);
+      if(po.gallery_save&&typeof _renderGallerySaveCard==='function')_renderGallerySaveCard(po.gallery_save,parent);
+      if(po.gallery_share&&typeof _renderGalleryShareCard==='function')_renderGalleryShareCard(po.gallery_share,parent);
+      if(po.gallery_album&&typeof _renderGalleryAlbumCard==='function')_renderGalleryAlbumCard(po.gallery_album,parent);
+      if(po.file_card&&typeof _renderToolFileCard==='function')_renderToolFileCard(po.file_card,parent);
+    }catch(e){}
+  });
+}
 function _renderMessagesIntoFragment(slice){
   const frag=document.createDocumentFragment();
   slice.forEach(m=>{
@@ -3494,9 +3532,14 @@ function _renderMessagesIntoFragment(slice){
     const row=m.role==='user'
       ?_buildUserRow(m.text,m.timestamp,m._la||[])
       :_buildClaudeRow(m.text,m._lu||'',m.thinking,m.timestamp,m._la||[],m.traces||[]);
-    if(m.role!=='user')_renderCmdCapsulesAfter(row);
+    if(m.role!=='user'){_renderCmdCapsulesAfter(row);_renderFileCards(row);_renderToolCardsFromTraces(m.traces,row)}
     _renderVoiceCards(row);_renderCallCards(row);
     frag.appendChild(row);
+    // 08-22：他用单独一行的 --- 分成几条发，流式那条路会拆（见 _splitMessages），
+    // 但历史渲染这条以前没调 —— 结果是「他分了三条，她一刷新就变回一大坨」。
+    // ⚠️ 必须在 appendChild 之后调：_splitMessages 要靠 row.parentNode 插兄弟节点，
+    //    还没挂上去的时候 parentNode 是 null，会静默什么都不做。
+    if(m.role!=='user'&&typeof _splitMessages==='function'){try{_splitMessages(row)}catch(e){}}
   });
   return frag;
 }
