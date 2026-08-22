@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787394203">
+<link rel="stylesheet" href="/css/home.css?v=1787408558">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -2070,8 +2070,13 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
   // 08-22 她要的：双击自己的气泡 = roll，把他这次的回答扔了重answer。
   // 跟他气泡上那个「重新生成」是同一件事（见 actions 里的 retry），只是她不用先划到他那条去点。
   // ⚠️ 长按复制绑的是 pointerdown/pointerup，双击不会误触发它（每次 pointerup 都会 cancel 掉计时）。
-  b.addEventListener('dblclick',function(ev){
-    ev.preventDefault();
+  //
+  // ⚠️ 2026-08-22 修：原来只绑 `dblclick`，**手机上根本不触发** —— 那是鼠标事件，
+  //    iOS Safari 把触摸双击当缩放手势吃掉了。她在手机上点了半天没反应。
+  //    改成自己判两次 pointerup 的间隔（≤350ms 且没怎么移动），桌面的原生 dblclick 也留着。
+  //    手动判双击比原生容易误触，而 roll 每次都要花钱重跑一轮，所以**不再直接重发**：
+  //    先弹个菜单让她选「重新生成」还是「编辑后重发」。
+  function _rollThis(){
     if(!text&&!attachments.length)return;
     // 把这条之后、下一条她说话之前的东西全清掉 —— 他的回复可能被 --- 拆成好几条，
     // 中间还夹着 trace row、时间戳、各种卡片。清到下一个 .msg-user 为止。
@@ -2079,6 +2084,61 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
     while(n&&!n.classList.contains('msg-user')){var dead=n;n=n.nextElementSibling;dead.remove()}
     try{toast('重新生成…')}catch(e){}
     sendMessage(text,false,[],attachments);
+  }
+  function _editThis(){
+    // 把这条连同它之后他的回复一起收走，原文回填进输入框 —— 她改完按发送就是新的一轮。
+    var n=row.nextElementSibling;
+    while(n&&!n.classList.contains('msg-user')){var dead=n;n=n.nextElementSibling;dead.remove()}
+    var ta=document.getElementById('input');
+    if(ta){ta.value=text;ta.focus();try{ta.dispatchEvent(new Event('input',{bubbles:true}))}catch(e){}}
+    row.remove();
+    try{toast('改完按发送')}catch(e){}
+  }
+  function _closeBubbleMenu(){
+    var m=document.querySelector('.bubble-menu');
+    if(m){m.classList.remove('show');setTimeout(function(){m.remove()},160)}
+    document.removeEventListener('pointerdown',_onDocDown,true);
+  }
+  function _onDocDown(ev){
+    var m=document.querySelector('.bubble-menu');
+    if(m&&!m.contains(ev.target))_closeBubbleMenu();
+  }
+  function _openBubbleMenu(){
+    if(!text&&!attachments.length)return;
+    _closeBubbleMenu();
+    var m=document.createElement('div');m.className='bubble-menu';
+    function item(label,fn,cls){
+      var btn=document.createElement('button');btn.type='button';btn.textContent=label;
+      if(cls)btn.className=cls;
+      btn.onclick=function(e){e.stopPropagation();_closeBubbleMenu();fn()};
+      return btn;
+    }
+    m.append(item('重新生成',_rollThis));
+    if(text)m.append(item('编辑后重发',_editThis));
+    m.append(item('取消',function(){}));
+    document.body.append(m);
+    // 摆在气泡上方，超出视口就翻到下面/夹回边内
+    var r=b.getBoundingClientRect();
+    var mw=m.offsetWidth||160,mh=m.offsetHeight||120;
+    var left=Math.min(Math.max(8,r.right-mw),window.innerWidth-mw-8);
+    var top=r.top-mh-8;
+    if(top<8)top=r.bottom+8;
+    // 上下都夹回视口内 —— 气泡要是在视口外（没滚到的位置），上面那两句会把菜单甩出屏幕。
+    top=Math.min(Math.max(8,top),Math.max(8,window.innerHeight-mh-8));
+    m.style.left=left+'px';m.style.top=top+'px';
+    requestAnimationFrame(function(){m.classList.add('show')});
+    setTimeout(function(){document.addEventListener('pointerdown',_onDocDown,true)},0);
+  }
+  b.addEventListener('dblclick',function(ev){ev.preventDefault();_openBubbleMenu()});
+  // 触摸路径：自己数两下。位移超过 20px 当成滑动，不算双击。
+  var _tapAt=0,_tapX=0,_tapY=0;
+  b.addEventListener('pointerup',function(ev){
+    if(ev.pointerType==='mouse')return;               // 鼠标交给上面的原生 dblclick
+    var now=Date.now();
+    if(now-_tapAt<350&&Math.abs(ev.clientX-_tapX)<20&&Math.abs(ev.clientY-_tapY)<20){
+      _tapAt=0;ev.preventDefault();_openBubbleMenu();return;
+    }
+    _tapAt=now;_tapX=ev.clientX;_tapY=ev.clientY;
   });
   if(files.length){const fc=document.createElement('div');fc.className='message-attachments';files.forEach(item=>fc.append(attachmentCard(item)));b.append(fc)}
   if(text){const content=document.createElement('div');renderMessage(content,text);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(text);toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}

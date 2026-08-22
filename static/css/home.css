@@ -1451,3 +1451,25 @@ html.as-non .msg-claude.streaming .claude-trail-logo{align-self:flex-end;margin:
   color:var(--text-primary)!important;
 }
 .msg-time-inline .dot{background:var(--text-primary)!important;opacity:.75!important}
+
+/* ── 气泡双击菜单（roll / 编辑后重发）─────────────────────────
+   2026-08-22：原来只绑了 dblclick，手机触摸上根本不触发（iOS 把双击当缩放手势吃掉），
+   她在手机上点了一直没反应。改成自己判两次 pointerup 的间隔，顺带把菜单做出来 ——
+   手动判双击比原生容易误触，而 roll 是要花钱的，所以不再直接重发，先问一句。 */
+.bubble-menu{
+  position:fixed;z-index:80;display:flex;flex-direction:column;gap:2px;
+  padding:6px;min-width:148px;
+  background:var(--bg-primary);border:1px solid var(--border-subtle,rgba(128,128,128,.22));
+  border-radius:var(--radius-lg,14px);
+  box-shadow:0 8px 28px rgba(0,0,0,.18);
+  opacity:0;transform:translateY(6px) scale(.97);
+  transition:opacity .16s ease,transform .16s ease;
+}
+.bubble-menu.show{opacity:1;transform:translateY(0) scale(1)}
+.bubble-menu button{
+  appearance:none;border:0;background:transparent;cursor:pointer;
+  padding:10px 12px;border-radius:var(--radius-md,10px);
+  font:500 14px var(--font-sans);color:var(--text-primary);text-align:left;
+}
+.bubble-menu button:hover,.bubble-menu button:focus-visible{background:var(--bg-secondary,rgba(128,128,128,.12))}
+.bubble-menu button.danger{color:var(--danger,#c0392b)}
