@@ -190,6 +190,24 @@ cp scripts/pre-push-secret-scan.sh .git/hooks/pre-push && chmod +x .git/hooks/pr
 `token=`/`api_key:`/`SESSDATA` 这类赋值，零命中；`data/claude.db`、`CLAUDE.local.md`、
 会客厅那两份 prompt 都确认在 ignore 里。
 
+### 🧹 顺手清掉：11 个 .bak- 一直躺在 public 仓库里
+
+`.gitignore` 第 15 行写的是 `*.bak.*`（**点号**），
+但实际备份文件叫 `backend.js.bak-0822-0048`（**连字符**）—— **规则匹配不上，全部漏网**。
+`backend.js` 的全量快照就有三份压在仓库里。
+
+扫过了，里面**没有密钥**（都是 `'Bearer ' + apiKey` 这种变量拼接），所以
+**没有重写历史** —— 重写会把你那边的 main 搞乱，代价大于收益。只做了两件事：
+
+1. `git rm --cached` 取消跟踪（本地文件没删，另外复制了一份到 `backups/legacy-bak/`）
+2. `.gitignore` 补 `*.bak-*` 和 `*.bak`
+
+⚠️ **你那台 pull 之后，这几个 `.bak-` 会从工作树里消失。** 还要的话先自己留一份。
+
+> **教训**：ignore 规则写完要拿真实文件名验一次。
+> `*.bak.*` 和 `*.bak-*` 差一个字符，挡不挡得住是两回事。
+> 以后备份一律往 `backups/`（那个是真挡住的），别在原地留 `.bak-`。
+
 ### 会客厅这边的进度
 
 - 分支已合进 main，装了依赖，重启过了，日志有 `[atrio] 会客厅已挂载：/visit/:token`。

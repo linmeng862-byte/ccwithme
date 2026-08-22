@@ -24,3 +24,8 @@ CLAUDE.local.md
 # （仓库里只留上游的 *.example.md 作为结构参考；真正生效的这两份备份进 zxz）
 atrio/prompts/system-prompt.md
 atrio/prompts/memorize-prompt.md
+
+# .bak 的漏网之鱼：原来只写了 *.bak.*（点号），
+# 但实际文件叫 backend.js.bak-0822-0048（连字符），十个全没挡住，一直躺在 public 仓库里。
+*.bak-*
+*.bak

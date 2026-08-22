@@ -4613,9 +4613,19 @@ app.get('/api/usage/live', auth, (req, res) => {
   if (_liveUsageCache.data && now - _liveUsageCache.at < 20000) {
     return res.json({ ..._liveUsageCache.data, cached: true });
   }
+  // 08-22：/usage 报的是【订阅】额度。只要环境里有 ANTHROPIC_API_KEY / AUTH_TOKEN /
+  // BASE_URL，CLI 就走 API key 或中转站，claude.ai 登录态被顶掉 —— 于是没有额度可报，
+  // 只打印一段 "Total cost: $0.0000" 的会话摘要（她见过这个）。CLI 自己会警告：
+  //   "connectors are disabled because ANTHROPIC_API_KEY ... takes precedence over your claude.ai login"
+  // backend 是 pm2 拉起来的，这几个变量是从父进程继承来的。这里剥掉再调。
+  // ⚠️ 只剥这一处。主线对话走网关那条路不要动。
+  const _usageEnv = { ...process.env };
+  for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL']) {
+    delete _usageEnv[k];
+  }
   require('child_process').execFile(
     'claude', ['-p', '/usage', '--output-format', 'json'],
-    { timeout: 30000, maxBuffer: 4 * 1024 * 1024, env: process.env },
+    { timeout: 30000, maxBuffer: 4 * 1024 * 1024, env: _usageEnv },
     (err, stdout) => {
       if (err && !stdout) return res.status(502).json({ ok: false, error: String(err.message || err) });
       let text = '';
