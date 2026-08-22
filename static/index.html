@@ -1583,7 +1583,7 @@ function _startWakePoll(){
         var row=_buildClaudeRow(m.content,'','',String(m.created_at*1000));
         row.dataset.wakeId=m.id;
         streamInner.append(row);
-        _renderFileCards(row);_renderCmdCapsulesAfter(row);
+        _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderClawdLabel(row);
         _renderVoiceCards(row);_renderCallCards(row);
         if(typeof _splitMessages==='function')_splitMessages(row);
         row.scrollIntoView({block:'end',behavior:'smooth'});
@@ -2468,6 +2468,24 @@ function _downloadFile(ev,id,name){
 }
 function _renderToolFileCard(fc,parent){if(!fc||!fc.id||!parent)return;var name=fc.filename||'file';var id=fc.id;var sizeStr=fc.size?_formatFileSize(fc.size):'';var url='#';var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var card=document.createElement('a');card.href=url;card.download=name;card.onclick=function(ev){return _downloadFile(ev,id,name)};card.className='file-card';card.dataset.fileId=id;card.dataset.fileName=name;card.style.cssText='display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s';card.onmouseenter=function(){card.style.background='var(--bg-hover)'};card.onmouseleave=function(){card.style.background='var(--bg-surface)'};var iconSpan=document.createElement('span');iconSpan.style.cssText='display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none';iconSpan.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var infoSpan=document.createElement('span');infoSpan.style.cssText='flex:1;min-width:0';var nameEl=document.createElement('span');nameEl.style.cssText='display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';nameEl.textContent=name;var metaEl=document.createElement('span');metaEl.className='file-card-meta';metaEl.style.cssText='display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px';var parts=[ext.toLowerCase()];if(sizeStr)parts.push(sizeStr);metaEl.textContent=parts.join(' · ');var dlSpan=document.createElement('span');dlSpan.style.cssText='flex:none;color:var(--text-time)';dlSpan.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';infoSpan.append(nameEl,metaEl);card.append(iconSpan,infoSpan,dlSpan);parent.appendChild(card)}
 function _renderCmdCapsulesAfter(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html2=md.innerHTML;var re=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;var capsules=[];while((match=re.exec(html2))!==null){changed=true;var cid=match[1],ctype=match[2],ctitle=match[3];var cmdIcon=ctype==='quiz'?'\u{1F4DD}':ctype==='task'?'\u{1F4CB}':'\u23F1\uFE0F';var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',cid);cap.setAttribute('data-cmd-type',ctype);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.innerHTML='<span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});capsules.push(cap);html2=html2.replace(match[0],'')}if(changed){md.innerHTML=html2;var bubbleEl=body.querySelector('.bubble');var after=bubbleEl||md;capsules.forEach(function(c){after.after(c);after=c})}var existing=md.querySelectorAll('.cmd-capsule[data-cmd-id]');if(existing.length){var bubbleEl2=body.querySelector('.bubble');var after2=bubbleEl2||md;existing.forEach(function(c){c.remove();after2.after(c);after2=c})}}
+// 08-22：Clawd 那行小字（「Clawd替你开心」）刷新后就没了。
+// 根因不是标记丢了 —— [clawd:happy|…] 好好地存在 messages.content 里 ——
+// 而是渲染时机不对：renderMessage 里往 `.msg-claude.streaming` 插，
+// 历史渲染时没有那个元素；而且 renderMessage(md,text) 是在 b.append(md) **之前**调的，
+// 那会儿 md 还是游离节点，closest('.msg-claude') 也拿不到。
+// 所以改成后置：row 组装好之后，从 dataset.raw 里解析再插。跟 _renderFileCards 一个模式。
+function _renderClawdLabel(row){
+  if(!row||row.querySelector('.clawd-emote-label'))return;
+  var raw=row.dataset.raw||'';
+  var m=raw.match(/\[clawd:([a-z]+)(?:\|([^\]]*))?\]/i);
+  if(!m)return;
+  var txt=m[2]||((typeof _CLAWD_EMOTE_LABELS!=='undefined'&&_CLAWD_EMOTE_LABELS[m[1].toLowerCase()])||'');
+  if(!txt)return;
+  var b=row.querySelector('.bubble');
+  if(!b)return;
+  var el=document.createElement('div');el.className='clawd-emote-label';el.textContent=txt;
+  b.after(el);
+}
 function _renderFileCards(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;var re=/\[FILE:([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;while((match=re.exec(html))!==null){changed=true;var name=match[1];var id=match[2];var url='#';var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var icon='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var card='<a href="'+url+'" download="'+escHtml(name)+'" class="file-card" data-file-id="'+id+'" data-file-name="'+escHtml(name)+'" style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s"><span class="file-card-icon" style="display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none">'+icon+'</span><span style="flex:1;min-width:0"><span class="file-card-name" style="display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span><span class="file-card-meta" style="display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px">'+ext.toLowerCase()+'</span></span><span style="flex:none;color:var(--text-time)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></a>';html=html.replace(match[0],card)}if(changed)md.innerHTML=html;var cards=md.querySelectorAll('.file-card[data-file-id]');cards.forEach(function(card){var fid=card.dataset.fileId;card.onclick=function(ev){return _downloadFile(ev,fid,card.dataset.fileName||'')};api('/api/files/'+fid+'/info').then(function(r){return r.json()}).then(function(info){var fn=card.dataset.fileName||'';var ext2=fn.lastIndexOf('.')>0?fn.slice(fn.lastIndexOf('.')+1).toUpperCase():'FILE';var sizeStr=info.size?_formatFileSize(info.size):'';var parts=[ext2.toLowerCase()];if(sizeStr)parts.push(sizeStr);var meta=card.querySelector('.file-card-meta');if(meta)meta.textContent=parts.join(' · ')}).catch(function(){})})}
 function _splitMessages(row){var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}if(parts.length<2)return;var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);var tb=clone.querySelector('.thinking-summary');if(tb)tb.remove();var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();parent.insertBefore(clone,next.nextSibling);next=clone})}
 function _addHtmlPreviews(md){if(!md)return;md.querySelectorAll('pre code').forEach(function(block){var cls=block.className||'';var pre=block.parentElement;if(pre.querySelector('.html-preview-btn'))return;var isHtml=/language-html|language-htm|lang-html|lang-htm/i.test(cls);var isCss=/language-css|lang-css/i.test(cls);var isJs=/language-js|language-javascript|lang-js/i.test(cls);if(!isHtml&&!isCss&&!isJs)return;var btn=document.createElement('button');btn.className='html-preview-btn';btn.textContent='▸ Preview';btn.style.cssText='margin-top:6px;padding:5px 14px;border:1px solid var(--accent);border-radius:16px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;font-family:var(--font-sans)';var iframe=null;btn.onclick=function(){if(iframe){iframe.remove();iframe=null;btn.textContent='▸ Preview';return}var code=block.textContent;if(isCss){code='<style>'+code+'<\/style>'}else if(isJs){code='<script>'+code+'<\/script>'}iframe=document.createElement('iframe');iframe.style.cssText='width:100%;max-width:440px;min-height:550px;border:1px solid var(--border);border-radius:14px;background:#fff;margin-top:8px;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob(['<!DOCTYPE html><html><head><meta charset=\"utf-8\"><\/head><body>'+code+'</body></html>'],{type:'text/html'}));pre.after(iframe);btn.textContent='▸ Hide preview'};pre.after(btn)})}
@@ -3101,7 +3119,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       if(typeof setClawdMood==='function'&&_clawdWasStreaming){if(_clawdCurrent==='thinking'||_clawdCurrent==='streaming'){try{setClawdMood('happy',2000)}catch(e){}}_clawdWasStreaming=false}
       setPhase('complete');
       row.dataset.raw=raw;row.dataset.timestamp=new Date().toISOString();
-      _renderFileCards(row);_renderCmdCapsulesAfter(row);
+      _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderClawdLabel(row);
       _renderVoiceCards(row);_renderCallCards(row);
       _splitMessages(row);
       delete $('thoughtSheet').dataset.live;
@@ -3543,7 +3561,7 @@ function _renderMessagesIntoFragment(slice){
     const row=m.role==='user'
       ?_buildUserRow(m.text,m.timestamp,m._la||[])
       :_buildClaudeRow(m.text,m._lu||'',m.thinking,m.timestamp,m._la||[],m.traces||[]);
-    if(m.role!=='user'){_renderCmdCapsulesAfter(row);_renderFileCards(row);_renderToolCardsFromTraces(m.traces,row)}
+    if(m.role!=='user'){_renderCmdCapsulesAfter(row);_renderFileCards(row);_renderClawdLabel(row);_renderToolCardsFromTraces(m.traces,row)}
     _renderVoiceCards(row);_renderCallCards(row);
     frag.appendChild(row);
     // 08-22：他用单独一行的 --- 分成几条发，流式那条路会拆（见 _splitMessages），
@@ -4230,8 +4248,21 @@ renderMessage=function(md,text){
   if(clawdMatch){
     var cEmotion=clawdMatch[1].toLowerCase();
     var cBubble=clawdMatch[2]||(_CLAWD_EMOTE_LABELS[cEmotion]||'');
-    if(typeof setClawdMood==='function')setClawdMood(cEmotion,5000);
-    if(cBubble){var sr2=document.querySelector('.msg-claude.streaming');if(sr2){var be2=sr2.querySelector('.bubble');if(be2&&!sr2.querySelector('.clawd-emote-label')){var el2=document.createElement('div');el2.className='clawd-emote-label';el2.textContent=cBubble;be2.after(el2)}}}
+    // 08-22：小字以前只往 `.msg-claude.streaming` 里插 —— 那是「正在流的那条」，
+    // 历史渲染时根本没有这个元素，于是【标记被剥掉了、小字却没渲染出来】，
+    // 她刷新一下「Clawd替你开心」就永远消失了（标记本身好好地存在库里）。
+    // 改成：优先插进【正在渲染的这一条】（md 就在它里面），流式那条也是同一个东西。
+    var _host=(md&&md.closest)?md.closest('.msg-claude'):null;
+    if(!_host)_host=document.querySelector('.msg-claude.streaming');
+    // ⚠️ 桌宠表情只在【当下这条】才跟着变；翻历史不该把螃蟹的心情改掉。
+    var _live=!_host||_host.classList.contains('streaming');
+    if(_live&&typeof setClawdMood==='function')setClawdMood(cEmotion,5000);
+    if(cBubble&&_host){
+      var be2=_host.querySelector('.bubble');
+      if(be2&&!_host.querySelector('.clawd-emote-label')){
+        var el2=document.createElement('div');el2.className='clawd-emote-label';el2.textContent=cBubble;be2.after(el2);
+      }
+    }
     src=src.replace(clawdRe,'').trim();text=text.replace(clawdRe,'').trim();
   }
   // [music:歌名|歌手|封面URL]

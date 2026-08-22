@@ -4,6 +4,42 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🔁 一类反复出现的 bug：「只在流式那条路渲染，刷新就没」
+
+08-22 一天之内撞了**四次**，全是同一个形状：
+
+| 丢了什么 | 真正的原因 |
+|---|---|
+| 音乐 / Gallery / artifact 卡 | 只在流式结束那段（靠 `currentTraceRow` 的 `phases.toolOutput`）渲染 |
+| 他用 `---` 分成的几条 | `_splitMessages` 只在流式和「他主动找她」两条路上调 |
+| trace row（气泡下那行小字） | **工具调用记录压根没落库**，历史接口硬编码 `traces: []` |
+| Clawd 的「Clawd替你开心」 | 往 `.msg-claude.streaming` 里插 —— 历史渲染时没有这个元素 |
+
+**共同点：东西本身好好地存在数据库里，是渲染那头只认「正在流的那一条」。**
+症状永远是「他发的时候有、她一刷新就没了」，而且**不报任何错**。
+
+### 判断法
+
+> 写完一段渲染逻辑，先问：**刷新之后这东西还在吗？**
+> 只要它依赖 `.streaming` / `currentTraceRow` / 流式回调里的变量，答案就是「不在」。
+
+### 现在的规矩
+
+前端有**两条渲染路径，改一条必须改另一条**：
+
+- 流式结束：搜 `_renderFileCards(row);_renderCmdCapsulesAfter(row);`
+- 历史渲染：`_renderMessagesIntoFragment()` 里那一串
+- （还有第三条小的：「他主动找她」的 wake 轮询，也在同一批调用旁边）
+
+**新加任何一种气泡附属物（卡片/标签/胶囊），三处都要挂上。**
+
+### 还有个更细的坑
+
+`_buildClaudeRow` 里 `renderMessage(md,text)` 是在 **`b.append(md)` 之前**调的 ——
+那会儿 `md` 还是游离节点，`md.closest('.msg-claude')` 拿不到东西。
+所以**别在 renderMessage 里往上找宿主元素**，要么后置处理（从 `row.dataset.raw` 解析，
+见 `_renderClawdLabel`），要么把宿主显式传进去。
+
 ## 🖥️ 改前端，用 playwright 验一遍，别靠脑补（她要求记下来的）
 
 `scripts/ui-check.py` —— 打开真实页面、打印流里每个元素的顺序和计数、截图。
