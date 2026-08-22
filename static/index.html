@@ -2168,6 +2168,13 @@ function _maybeTimeSep(ts,who){
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=t;return}   // 这一轮的小时间戳已经摆过了
   _turnHasTimeSep=true;
+  // 08-22：防御——上一个摆进去的就是时间戳的话，别再摆一个。
+  // _turnHasTimeSep 是个全局标志位，有好几条路径能绕过它（他主动找她那条、
+  // 历史分页那条），一绕过去就会连着出现两个时间戳。这里按 DOM 实际情况兜底。
+  var _prev=streamInner.lastElementChild;
+  if(_prev&&(_prev.classList.contains('msg-time-inline')||_prev.classList.contains('time-separator'))){
+    _prev.remove();   // 新的更准（时间更近），换掉旧的那个
+  }
   var sep=document.createElement('div');sep.className=big?'time-separator':'msg-time-inline';
   sep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
   streamInner.append(sep);_lastMsgTime=t;
@@ -3561,6 +3568,11 @@ function _maybeTimeSepFrag(frag,ts,who){
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=Math.max(_lastMsgTime,t);return}
   _turnHasTimeSep=true;
+  // 同上：规矩必须跟 _maybeTimeSep 一模一样，否则刷新前后对不上。
+  var _prevF=frag.lastElementChild;
+  if(_prevF&&(_prevF.classList.contains('msg-time-inline')||_prevF.classList.contains('time-separator'))){
+    _prevF.remove();
+  }
   var sep=document.createElement('div');sep.className=big?'time-separator':'msg-time-inline';
   sep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
   frag.appendChild(sep);_lastMsgTime=t;
