@@ -418,6 +418,24 @@ db.exec(`
     embedding TEXT,
     created_at INTEGER DEFAULT (strftime('%s','now'))
   );
+
+  -- 内心信笺 · Inside：他用 <想·色> 圈起来、没打算说出口的那一下。
+  -- ⚠️ 2026-08-22：这张表**一直没建**。extractMindTags 里的 INSERT 从上线起就在抛
+  --    no such table: mind_inside，被 catch 吞掉只打一行日志 —— 信笺一条没进过库。
+  --    (代码注释写「建了表却没人写」，其实是「没人写，因为表就不存在」。)
+  -- weight/pinned/surface_count 几列先留着：将来要让信笺跟着衰减、能被浮起捞到，
+  -- 不用再迁移一次表。现在浮起只查 feels/memories/dreams 三张，这几列还没人动。
+  CREATE TABLE IF NOT EXISTS mind_inside (
+    id TEXT PRIMARY KEY,
+    color TEXT DEFAULT '',
+    body TEXT NOT NULL,
+    conv_id TEXT DEFAULT '',
+    weight REAL DEFAULT 1.0,
+    pinned INTEGER DEFAULT 0,
+    surface_count INTEGER DEFAULT 0,
+    last_surfaced_at INTEGER,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
 `);
 
 // FTS5 全文搜索（跨 feels/memories/dreams）
