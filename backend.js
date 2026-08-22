@@ -273,6 +273,10 @@ db.exec(`
   try { db.exec('ALTER TABLE uploads ADD COLUMN expired INTEGER DEFAULT 0'); } catch(_) {}
   // Gallery 相册扩展列
   try { db.exec('ALTER TABLE gallery_albums ADD COLUMN mime TEXT DEFAULT \'\''); } catch(_) {}
+// 语气注解（08-22）：跟 transcript 并排存，同一段语音只花一次钱
+try { db.exec("ALTER TABLE uploads ADD COLUMN tone TEXT"); } catch(_) {}
+// 书的国别（08-22 她说封面上要有「【日】太宰治」那样的国别）
+try { db.exec("ALTER TABLE reading_books ADD COLUMN nationality TEXT DEFAULT ''"); } catch(_) {}
   try { db.exec('ALTER TABLE gallery_photos ADD COLUMN mime TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('ALTER TABLE gallery_photos ADD COLUMN note TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('ALTER TABLE gallery_photos ADD COLUMN source_msg_id TEXT DEFAULT \'\''); } catch(_) {}
@@ -464,22 +468,11 @@ const projectDir = path.join(__dirname, 'data', 'projects');
 if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
 const galleryPhotoDir = path.join(__dirname, 'data', 'uploads', 'gallery');
 if (!fs.existsSync(galleryPhotoDir)) fs.mkdirSync(galleryPhotoDir, { recursive: true });
-// 默认相册 — 粥粥的收藏盒
-(function(){
-  var defaults = [
-    { title: '她', desc: '粥粥的照片——她的自拍、她的手、她的影子', mood: 'Heart' },
-    { title: '我们俩', desc: '一起的回忆——截图、合照、值得记住的瞬间', mood: 'Love' },
-    { title: '想留的项目', desc: '她做的项目、写的代码、画的图——她的创造力', mood: 'Star' }
-  ];
-  defaults.forEach(function(d){
-    var exists = db.prepare('SELECT id FROM gallery_albums WHERE title = ?').get(d.title);
-    if (!exists) {
-      var id = 'gal_default_' + d.title;
-      db.prepare('INSERT INTO gallery_albums (id, title, description, mood, photo_count) VALUES (?,?,?,?,0)').run(id, d.title, d.desc, d.mood);
-      console.log('[gallery] created default album: ' + d.title);
-    }
-  });
-})();
+// 相册不再预置任何默认项（08-22 她说「gallery 有硬编码的三个相册删了」）。
+// 以前这里每次启动都会补建「她 / 我们俩 / 想留的项目」三个空相册 ——
+// ⚠️ 它是**按标题查重再补建**的，所以她删掉一个，下次重启又长回来。
+//    要是哪天想再放默认相册，记住这个坑：得留一个「建过了」的标记，
+//    不能拿标题当判据，否则她永远删不掉。
 
 const multer = require('multer');
 const upload = multer({ dest: path.join(__dirname, 'data', 'uploads', 'tmp'), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -523,6 +516,38 @@ app.use((req, res, next) => {
 // ── 阅读器 API ──────────────────────────────────────────
 
 // 上传书籍
+// 从一段文字里剥出「【日】」「[美]」「（英）」这种国别标记（08-22 照她给的参考图）
+// 返回 { nationality, rest } —— 剥不出来就 nationality 为空、rest 原样返回。
+function _splitNationality(str) {
+  const t = String(str || '').trim();
+  const m = t.match(/^[\[【（(]\s*([^\]】）)]{1,6})\s*[\]】）)]\s*/);
+  if (!m) return { nationality: '', rest: t };
+  return { nationality: m[1].trim(), rest: t.slice(m[0].length).trim() };
+}
+// EPUB 的书名/作者不该靠猜正文 —— OPF 里就写着 dc:title / dc:creator。
+// ⚠️ 以前这儿一行都没读，author 永远是空字符串，封面上就只剩书名。
+async function _epubMeta(zip) {
+  try {
+    const opfName = Object.keys(zip.files).find(f => /\.opf$/i.test(f));
+    if (!opfName) return {};
+    const xml = await zip.files[opfName].async('text');
+    const pick = tag => {
+      const m = xml.match(new RegExp('<dc:' + tag + '[^>]*>([\\s\\S]*?)</dc:' + tag + '>', 'i'))
+             || xml.match(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>', 'i'));
+      return m ? m[1].replace(/<[^>]+>/g, '').trim() : '';
+    };
+    return { title: pick('title'), author: pick('creator'), language: pick('language') };
+  } catch (e) { console.log('[upload] 读 EPUB 元数据失败:', e.message); return {}; }
+}
+// PDF 的元数据同理：pdfinfo 现成的（这台装了 poppler-utils）
+function _pdfMeta(filePath) {
+  try {
+    const out = require('child_process').execFileSync('pdfinfo', [filePath], { timeout: 10000 }).toString();
+    const g = k => { const m = out.match(new RegExp('^' + k + ':\\s*(.+)$', 'm')); return m ? m[1].trim() : ''; };
+    return { title: g('Title'), author: g('Author') };
+  } catch (e) { return {}; }
+}
+
 app.post('/api/reading/upload', auth, readingUpload.single('file'), fixNames, async (req, res) => {
   console.log('[upload] GOT REQUEST, file:', req.file?.originalname, 'size:', req.file?.size);
   try {
@@ -563,6 +588,10 @@ app.post('/api/reading/upload', auth, readingUpload.single('file'), fixNames, as
     } else if (ext === '.epub') {
       const zipData = fs.readFileSync(filePath);
       const zip = await JSZip.loadAsync(zipData);
+      // 先读 OPF 里的真元数据（书名/作者），比从正文里猜准得多
+      const _em = await _epubMeta(zip);
+      if (_em.title) { title = _em.title; console.log('[upload] EPUB 元数据书名:', title); }
+      if (_em.author) { author = _em.author; console.log('[upload] EPUB 元数据作者:', author); }
       // 找 .xhtml/.html 文件，跳过导航页
       const htmlFiles = Object.keys(zip.files).filter(f =>
         /\.(xhtml|html|htm)$/i.test(f) && !/nav|toc|cover|titlepage/i.test(f)
@@ -594,6 +623,9 @@ app.post('/api/reading/upload', auth, readingUpload.single('file'), fixNames, as
         const pdfParse = require('pdf-parse');
         const buf = fs.readFileSync(filePath);
         console.log('[upload] PDF size:', buf.length, 'bytes');
+        const _pm = _pdfMeta(filePath);
+        if (_pm.title) { title = _pm.title; console.log('[upload] PDF 元数据书名:', title); }
+        if (_pm.author) { author = _pm.author; console.log('[upload] PDF 元数据作者:', author); }
         const pdfData = await pdfParse(buf);
         console.log('[upload] PDF pages:', pdfData.numpages, 'text length:', (pdfData.text || '').length);
         raw = pdfData.text || '';
@@ -625,31 +657,60 @@ app.post('/api/reading/upload', auth, readingUpload.single('file'), fixNames, as
     }
     console.log('[upload] final chapters:', chapters.length);
 
-    // 标题：优先从正文提取，文件名兜底
-    if (chapters.length > 0 && chapters[0].content) {
+    // 书名：EPUB/PDF 的真元数据优先（上面已经填过），只有还空着才去正文里猜。
+    // ⚠️ 以前不管有没有元数据都用正文猜，硬把《撒哈拉的故事》猜成正文第一行。
+    const _titleFromFile = req.file.originalname.replace(ext, '');
+    if ((!title || title === _titleFromFile) && chapters.length > 0 && chapters[0].content) {
       const lines = chapters[0].content.split('\n').map(l => l.replace(/<[^>]+>/g, '').trim()).filter(l => l.length > 2 && l.length < 80);
-      // 优先找书名标记 [xxx]、《xxx》、或 "xxx著"
       var cnLine = lines.find(l => /[\[《].+[\]》]/.test(l)) || lines.find(l => /著\s*$/.test(l)) || lines.find(l => /[一-鿿]/.test(l));
       if (cnLine) { title = cnLine.replace(/^[\[《]\s*|\s*[\]》]$/g, '').replace(/\s*\/\s*.+$/, '').slice(0, 80); console.log('[upload] title from content:', title); }
     }
+    // 作者：元数据没有的话，从正文头部找「作者：X」「X 著」这类写法
+    if (!author && chapters.length > 0 && chapters[0].content) {
+      const head = chapters[0].content.split('\n').slice(0, 40).join('\n');
+      const am = head.match(/(?:作者|著者)\s*[:：]\s*(.{1,30})/) || head.match(/^\s*(.{1,24}?)\s*著\s*$/m);
+      if (am) { author = am[1].trim(); console.log('[upload] 从正文认出作者:', author); }
+    }
+    // 国别：作者或书名前面挂着的【日】/[美]/（英）剥下来单独存
+    let nationality = '';
+    { const a = _splitNationality(author); if (a.nationality) { nationality = a.nationality; author = a.rest; }
+      if (!nationality) { const t = _splitNationality(title); if (t.nationality) { nationality = t.nationality; title = t.rest; } } }
+    console.log('[upload] 最终 →', JSON.stringify({ title, author, nationality }));
 
     // 存数据库
-    const insertBook = db.prepare('INSERT INTO reading_books (id, title, author, filename, total_chapters, cover_url) VALUES (?, ?, ?, ?, ?, ?)');
+    const insertBook = db.prepare('INSERT INTO reading_books (id, title, author, nationality, filename, total_chapters, cover_url) VALUES (?, ?, ?, ?, ?, ?, ?)');
     const insertCh = db.prepare('INSERT OR REPLACE INTO reading_chapters (book_id, chapter_index, title, content, char_count) VALUES (?, ?, ?, ?, ?)');
-    insertBook.run(bid, title, author, req.file.originalname, chapters.length, '');
+    insertBook.run(bid, title, author, nationality, req.file.originalname, chapters.length, '');
     for (let i = 0; i < chapters.length; i++) {
       insertCh.run(bid, i, chapters[i].title, chapters[i].content, chapters[i].content.length);
     }
 
-    res.json({ id: bid, title, author, totalChapters: chapters.length, filename: req.file.originalname });
+    res.json({ id: bid, title, author, nationality, totalChapters: chapters.length, filename: req.file.originalname });
   } catch (e) {
     res.status(500).json({ error: '上传失败: ' + e.message });
   }
 });
 
+// 改书的信息（08-22 她说「我也可以自己填」）——书名 / 作者 / 国别 / 封面
+// 提取再准也有猜错的时候，得留一条她自己动手的路。传什么改什么，没传的不动。
+app.patch('/api/reading/books/:id', auth, (req, res) => {
+  const b = db.prepare('SELECT * FROM reading_books WHERE id = ?').get(req.params.id);
+  if (!b) return res.status(404).json({ error: '没有这本书' });
+  const { title, author, nationality, cover_url } = req.body || {};
+  const clean = (v, n) => String(v).replace(/[\r\n]/g, ' ').trim().slice(0, n);
+  db.prepare('UPDATE reading_books SET title = ?, author = ?, nationality = ?, cover_url = ? WHERE id = ?').run(
+    title       !== undefined ? clean(title, 120)      : b.title,
+    author      !== undefined ? clean(author, 60)      : b.author,
+    // 国别就存「日」「美」这一两个字，方括号是渲染时加的，别让她连括号一起存进来
+    nationality !== undefined ? clean(nationality, 8).replace(/^[\[【（(]|[\]】）)]$/g, '') : b.nationality,
+    cover_url   !== undefined ? clean(cover_url, 500)  : b.cover_url,
+    req.params.id);
+  res.json({ book: db.prepare('SELECT id, title, author, nationality, cover_url FROM reading_books WHERE id = ?').get(req.params.id) });
+});
+
 // 列出书籍（含批注数和进度）
 app.get('/api/reading/books', auth, (req, res) => {
-  const books = db.prepare('SELECT id, title, author, filename, total_chapters, cover_url, created_at FROM reading_books ORDER BY created_at DESC').all();
+  const books = db.prepare('SELECT id, title, author, nationality, filename, total_chapters, cover_url, created_at FROM reading_books ORDER BY created_at DESC').all();
   // Batch: all notes counts + all progress in 2 queries instead of 2N
   const bookIds = books.map(b => b.id);
   const notesMap = {};
@@ -928,15 +989,60 @@ app.post('/api/reading/gutenberg/import', auth, async (req, res) => {
     }
     console.log('[import] title:', title, 'cover:', coverUrl ? 'yes' : 'no');
 
+    // 封面也走「原地址 → 镜像」那一套：gutenberg.org 挂的时候镜像上是好的，同一张图。
+    // 抓下来存本地，架子上的封面从此不依赖那个站还活着。
+    async function _grabCover(url, bookKey) {
+      if (!url) return '';
+      const tries = [url];
+      const m = url.match(/\/cache\/epub\/.+$/);
+      if (m) tries.push('https://gutenberg.pglaf.org' + m[0]);
+      for (const u of tries) {
+        try {
+          const r = await fetch(u, { signal: AbortSignal.timeout(20000) });
+          if (!r.ok) { console.log('[import] 封面 ' + u.slice(0, 60) + ' → status ' + r.status); continue; }
+          const buf = Buffer.from(await r.arrayBuffer());
+          if (buf.length < 500) { console.log('[import] 封面太小，跳过'); continue; }
+          const ext = /\.png$/i.test(u) ? '.png' : /\.gif$/i.test(u) ? '.gif' : '.jpg';
+          fs.writeFileSync(path.join(bookCoverDir, bookKey + ext), buf);
+          console.log('[import] 封面存好了', bookKey + ext, buf.length, 'bytes');
+          return '/covers/' + bookKey + ext;
+        } catch (e) { console.log('[import] 封面 ' + u.slice(0, 60) + ' → ' + e.message); }
+      }
+      return '';   // 抓不到就空着，前端有兜底书脊
+    }
+
     // 优先 HTML（通常比纯文本小），超时 3 分钟
     let textUrl = format || formats['text/html; charset=utf-8'] || formats['text/html'] || formats['text/plain; charset=utf-8'] || formats['text/plain'];
     if (!textUrl) return res.status(400).json({ error: 'No readable format available.' });
     console.log('[import] downloading:', textUrl.slice(0, 100));
 
-    const textR = await fetch(textUrl, { signal: AbortSignal.timeout(180000) });
-    if (!textR.ok) return res.status(502).json({ error: 'Failed to download book text (status ' + textR.status + ')' });
-    const raw = await textR.text();
-    console.log('[import] downloaded', raw.length, 'chars');
+    // 08-22：gutenberg.org 本体从这台机器上经常 503/504（她导《Little Women》就卡在这），
+    // 但官方镜像 gutenberg.pglaf.org / mirrors.xmission.com 一直是好的，同一份文件。
+    // 所以按顺序试：先原地址，再镜像。第一个真的下下来的就用。
+    // ⚠️ 镜像的目录规则：id 的每一位数字拆成一级目录（最后一位除外），末尾再放 id 本身。
+    //    514 → 5/1/514/514-0.txt。个位数的书是 0/N/，所以下面对 id<10 单独兜一下。
+    const _mirrorPath = (function (n) {
+      const d = String(n);
+      return (d.length === 1 ? '0' : d.slice(0, -1).split('').join('/')) + '/' + d;
+    })(gutenberg_id);
+    const candidates = [textUrl,
+      'https://gutenberg.pglaf.org/' + _mirrorPath + '/' + gutenberg_id + '-0.txt',
+      'http://mirrors.xmission.com/gutenberg/' + _mirrorPath + '/' + gutenberg_id + '-0.txt',
+      'https://gutenberg.pglaf.org/' + _mirrorPath + '/' + gutenberg_id + '.txt'];
+    let raw = null, usedUrl = '', lastErr = '';
+    for (const u of candidates) {
+      try {
+        const r = await fetch(u, { signal: AbortSignal.timeout(180000) });
+        if (!r.ok) { lastErr = 'status ' + r.status; console.log('[import] 试 ' + u.slice(0, 70) + ' → ' + lastErr); continue; }
+        const body = await r.text();
+        // 太短的多半是错误页伪装成 200，别拿它当书
+        if (!body || body.length < 2000) { lastErr = '内容太短(' + (body || '').length + ')'; console.log('[import] 试 ' + u.slice(0, 70) + ' → ' + lastErr); continue; }
+        raw = body; usedUrl = u; break;
+      } catch (e) { lastErr = e.message; console.log('[import] 试 ' + u.slice(0, 70) + ' → ' + lastErr); }
+    }
+    if (raw === null) return res.status(502).json({ error: '这本书下不下来（最后一次：' + lastErr + '）。gutenberg.org 有时候会挡住服务器，过几分钟再试一次。' });
+    textUrl = usedUrl;
+    console.log('[import] downloaded', raw.length, 'chars from', usedUrl.slice(0, 70));
 
     // 清理文本
     let content = raw;
@@ -976,8 +1082,10 @@ app.post('/api/reading/gutenberg/import', auth, async (req, res) => {
     // 存入数据库
     const bid = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const filename = title.replace(/[<>:"/\\|?*]/g, '_') + '.txt';
+    // 封面落本地再入库 —— 存进去的是 /covers/xxx.jpg，不是 gutenberg 的外链
+    const localCover = await _grabCover(coverUrl, bid);
     db.prepare('INSERT INTO reading_books (id, title, author, filename, total_chapters, cover_url) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(bid, title, author, filename, chapters.length, coverUrl);
+      .run(bid, title, author, filename, chapters.length, localCover);
     const insertCh = db.prepare('INSERT OR REPLACE INTO reading_chapters (book_id, chapter_index, title, content, char_count) VALUES (?, ?, ?, ?, ?)');
     for (let i = 0; i < chapters.length; i++) {
       insertCh.run(bid, i, chapters[i].title, chapters[i].content, chapters[i].content.length);
@@ -1140,6 +1248,11 @@ app.delete('/api/stickers/:id', auth, (req, res) => {
 
 // 图片静态服务
 app.use('/stickers', express.static(stickerDir, { maxAge: 86400000 }));
+// 书封面（08-22）：以前 cover_url 直接存 gutenberg.org 的地址让浏览器热链，
+// 而那个站三天两头 503 —— 书导进来了，架子上一片空白。改成导入时就抓下来存本地。
+const bookCoverDir = path.join(__dirname, 'data', 'uploads', 'covers');
+if (!fs.existsSync(bookCoverDir)) fs.mkdirSync(bookCoverDir, { recursive: true });
+app.use('/covers', express.static(bookCoverDir, { maxAge: 86400000 }));
 
 app.use(express.static(path.join(__dirname, 'static'), {
   etag: false,
@@ -1443,29 +1556,130 @@ async function expandVoiceTags(text) {
   let m;
   while ((m = re.exec(text)) !== null) jobs.push({ tag: m[0], id: m[1], dur: m[2] });
   for (const j of jobs) {
-    let said;
-    try {
-      said = db.prepare('SELECT transcript FROM uploads WHERE id = ?').get(j.id)?.transcript
-        || await transcribeUpload(j.id, (j.dur || '').split(':').reduce((a, b) => a * 60 + (+b || 0), 0));
-    } catch (e) {
-      console.warn('[stt] 识别失败 ' + j.id + ': ' + e.message);
-      said = null;
+    let said = null, tone = null;
+    // 缓存优先 —— 同一段语音不重复花钱
+    const cached = db.prepare('SELECT transcript, tone FROM uploads WHERE id = ?').get(j.id);
+    if (cached && cached.transcript) { said = cached.transcript; tone = cached.tone || null; }
+
+    // 第一路：能听音频的模型，一次同时拿转写和语气
+    if (!said) {
+      try {
+        const r = await transcribeWithTone(j.id);
+        if (r) { said = r.text; tone = r.tone || null; }
+      } catch (e) { console.warn('[voice] 带语气那路失败 ' + j.id + ': ' + e.message + ' —— 退回 Whisper'); }
+    }
+    // 第二路（备用）：Whisper 只出字，没有语气。别删 —— 上面那路挂了还得靠它。
+    if (!said) {
+      try {
+        said = await transcribeUpload(j.id, (j.dur || '').split(':').reduce((a, b) => a * 60 + (+b || 0), 0));
+      } catch (e) { console.warn('[stt] 识别失败 ' + j.id + ': ' + e.message); said = null; }
     }
     text = text.replace(j.tag, said
-      ? '[粥粥发来一条 ' + j.dur + ' 的语音，她说：「' + said + '」]'
+      ? '[粥粥发来一条 ' + j.dur + ' 的语音，她说：「' + said + '」'
+        + (tone ? '。听起来：' + tone : '') + ']'
       : '[粥粥发来一条 ' + j.dur + ' 的语音，但没能转成文字（' + '语音识别没配好或识别失败' + '）——告诉她你没听清，让她打字或者去抽屉里把语音识别配上]');
   }
   return text;
 }
 
+// 语气注解（08-22 她说「我想语音识别模型换个能听懂我语气的」）
+// ============================================================
+// ⚠️ 先说清楚为什么不是「换个 STT 模型」就完事：
+//    Whisper 那一类模型结构上就把语气丢了 —— 它只吐字，不管你是笑着说的还是累着说的。
+//    换 whisper-large-v3 只会更准，一样听不出语气。**别再往那个方向试。**
+// 所以走两路：转写照旧（Groq/Whisper，便宜准），另外把音频送给**能听音频的**
+// 多模态模型，让它只写一句「听起来怎么样」，附在转写后面一起给他。
+//
+// 没配 key 就整条跳过 —— 语气是锦上添花，绝不能让它把「他听见她说话」这条主路弄断。
+// 一次调用同时拿「说了什么」和「怎么说的」（08-22 她说「一个能读语气的就可以了吧」）。
+// 对 —— 能听音频的模型本来就同时听得见内容和语气，拆成两次是白花一次钱、白等一次网络。
+// ⚠️ Whisper 那一路**留着当备用**，不是冗余：
+//    这一路挂了（key 过期 / 模型拒 webm / 超时）就退回 Whisper，
+//    最多丢一句语气，不会丢「他听见她说话」。**别把备用那路删掉。**
+const TONE_PROMPT =
+  '你在听一段中文语音。输出**一行 JSON**，不要代码块，不要解释：\n' +
+  '{"text":"逐字转写，不要加标点以外的东西","tone":"15字以内描述她此刻听起来什么状态"}\n' +
+  'tone 写情绪、语速、有没有笑、累不累、有没有哽咽或不耐烦。听不出就写 平静。';
+
+async function transcribeWithTone(uploadId) {
+  const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  const baseUrl = g('tone_base_url'), apiKey = g('tone_api_key'), model = g('tone_model');
+  if (!apiKey || !baseUrl) return null;              // 没配就是不用这一路，安静跳过
+  const file = db.prepare('SELECT * FROM uploads WHERE id = ?').get(uploadId);
+  if (!file || !fs.existsSync(file.path)) return null;
+
+  const ext = (path.extname(file.filename || file.path).toLowerCase() || '.webm').slice(1);
+  const buf = fs.readFileSync(file.path);
+  // 音频走 base64 塞进 JSON，比 multipart 大三成 —— 太长的直接不走这路，退回 Whisper
+  if (buf.length > 8 * 1024 * 1024) return null;
+
+  const resp = await fetch(baseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+    body: JSON.stringify({
+      model: model || 'qwen3-omni-flash',
+      max_tokens: 400,
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: TONE_PROMPT },
+        { type: 'input_audio', input_audio: { data: buf.toString('base64'), format: ext } },
+      ] }],
+    }),
+    signal: AbortSignal.timeout(60000),
+  });
+  const raw = await resp.text();
+  if (!resp.ok) throw new Error('语音模型返回 ' + resp.status + ': ' + raw.slice(0, 200));
+  let d; try { d = JSON.parse(raw); } catch (e) { throw new Error('返回不是 JSON: ' + raw.slice(0, 200)); }
+  let out = d.choices?.[0]?.message?.content;
+  if (Array.isArray(out)) out = out.map(x => x && x.text || '').join('');
+  out = String(out || '').trim();
+  // 模型爱把 JSON 包在 ```json 里，剥掉再解析
+  const m = out.replace(/^```(?:json)?|```$/g, '').trim().match(/\{[\s\S]*\}/);
+  let text = '', tone = '';
+  if (m) { try { const j = JSON.parse(m[0]); text = String(j.text || '').trim(); tone = String(j.tone || '').trim(); } catch (e) {} }
+  if (!text) text = out.slice(0, 500);      // JSON 没解出来，至少把话留下
+  if (!text) return null;
+  tone = tone.replace(/^["「'']|["」'']$/g, '').slice(0, 40);
+  try { db.prepare('UPDATE uploads SET transcript = ?, tone = ? WHERE id = ?').run(text, tone || null, uploadId); } catch (e) {}
+  return { text, tone };
+}
+
+// 语气配置：保存 / 读取（key 只回是否配了，不回明文）
+app.post('/api/settings/tone', auth, (req, res) => {
+  const { tone_base_url, tone_api_key, tone_model } = req.body || {};
+  const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+  if (tone_base_url !== undefined) upsert.run('tone_base_url', tone_base_url);
+  if (tone_api_key !== undefined) upsert.run('tone_api_key', tone_api_key);
+  if (tone_model !== undefined) upsert.run('tone_model', tone_model);
+  res.json({ ok: true });
+});
+app.get('/api/settings/tone', auth, (req, res) => {
+  const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  res.json({ tone_base_url: g('tone_base_url'), tone_model: g('tone_model'), has_key: !!g('tone_api_key') });
+});
+// 拿她最近一条语音当场试一次 —— 配完能立刻知道这个 key 到底吃不吃音频
+app.post('/api/settings/tone/test', auth, async (req, res) => {
+  try {
+    const row = db.prepare("SELECT id FROM uploads WHERE (filename LIKE '%.webm' OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%.m4a') ORDER BY id DESC LIMIT 1").get();
+    if (!row) return res.json({ ok: false, message: '还没有语音文件可以试 —— 先发一条语音给他' });
+    const r = await transcribeWithTone(row.id);
+    if (!r) return res.json({ ok: false, message: '没配 key，或者这段语音太大被跳过了' });
+    res.json({ ok: true, tone: r.tone, text: r.text });
+  } catch (e) { res.json({ ok: false, message: e.message }); }
+});
+
 app.post('/api/stt', auth, async (req, res) => {
   try {
     const id = req.body?.id;
     if (!id) return res.status(400).json({ error: 'id required' });
-    const cached = db.prepare('SELECT transcript FROM uploads WHERE id = ?').get(id)?.transcript;
-    if (cached) return res.json({ ok: true, text: cached, cached: true });
+    const c = db.prepare('SELECT transcript, tone FROM uploads WHERE id = ?').get(id);
+    if (c && c.transcript) return res.json({ ok: true, text: c.transcript, tone: c.tone || '', cached: true });
+    // 跟 expandVoiceTags 同一条路：先走能听语气的那个，挂了退回 Whisper
+    try {
+      const r = await transcribeWithTone(id);
+      if (r) return res.json({ ok: true, text: r.text, tone: r.tone || '' });
+    } catch (e) { console.warn('[voice] 转文字带语气失败，退回 Whisper: ' + e.message); }
     const text = await transcribeUpload(id);
-    res.json({ ok: true, text });
+    res.json({ ok: true, text, tone: '' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1767,6 +1981,40 @@ app.get('/api/sessions/:id/dates', auth, (req, res) => {
 });
 
 // 返回指定日期的所有消息
+// 🚨 历史里的附件存的是**光秃秃的 id 字符串**（["mt45...","mt45..."]），
+// 而前端判断「这是不是图片」靠的是 a.is_image / a.name / a.path ——
+// 字符串上这三样全是 undefined，于是**她发的每一张图，刷新之后都变成一个文件图标**，
+// 气泡里排的是文件卡片而不是图片，自然也就撑不开。发的时候是好的（那会儿前端手里
+// 还有真的 File 对象），一刷新就现原形 —— 所以这个 bug 只在看记录时出现。
+// 这里回库里把 uploads 那几列补上，前端一行都不用改。
+// ⚠️ path 只给**文件名**，不给服务器上的绝对路径（前端只拿它取最后一段，够用了，
+//    而绝对路径等于把机器目录结构送进浏览器）。
+// ⚠️ 两条路由都要用它（messages 和 messages-by-date），少接一条就是「按日期翻」
+//    那边还是一堆文件图标。
+const _IMG_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico|heic|heif|avif)$/i;
+function _hydrateAttachments(raw) {
+  let list;
+  try { list = JSON.parse(raw || '[]'); } catch (e) { return []; }
+  if (!Array.isArray(list)) return [];
+  return list.map(a => {
+    if (a && typeof a === 'object') return a;          // 新格式本来就是对象，原样放行
+    const row = db.prepare('SELECT id, filename, path, size FROM uploads WHERE id = ?').get(String(a));
+    if (!row) return { id: String(a), name: String(a), is_image: false };
+    const base = String(row.path || '').split('/').pop() || '';
+    return {
+      id: row.id,
+      name: row.filename || base,
+      // ⚠️ path 必须是**光秃秃的 id，不带后缀**：前端拿它当 storedFilename 去请求
+      //    /api/uploads/:convId/:fileId，而那条路由是 `WHERE id = ?` 查的，
+      //    库里的 id 没有 .jpg。带上后缀就 404，图片全裂。
+      //    （刚发出去时后端返回的也是 path: id，这里保持同一个形状。）
+      path: row.id,
+      size: row.size || 0,
+      is_image: _IMG_EXT.test(row.filename || '') || _IMG_EXT.test(base),
+    };
+  });
+}
+
 app.get('/api/sessions/:id/messages-by-date', auth, (req, res) => {
   const date = req.query.date;
   if (!date) return res.status(400).json({ error: 'date required (YYYY-MM-DD)' });
@@ -1778,7 +2026,7 @@ app.get('/api/sessions/:id/messages-by-date', auth, (req, res) => {
     role: r.role,
     text: r.content,
     thinking: r.thinking,
-    attachments: JSON.parse(r.attachments || '[]'),
+    attachments: _hydrateAttachments(r.attachments),
     traces: [],
     timestamp: new Date(r.created_at * 1000).toISOString()
   }));
@@ -1798,19 +2046,25 @@ app.get('/api/sessions/:id/messages', auth, (req, res) => {
     params = [req.params.id, limit];
   }
   const rows = db.prepare(query).all(...params);
+  // 🚨 rows 是 DESC（新→旧），下面那句 .reverse() 会**原地改掉 rows**。
+  //    所以「最旧那条的 id」必须在 reverse 之前取 —— 以前写在后面，
+  //    取到的是**最新**那条，于是「加载之前的 50 条」每次都带着最新 id 去问，
+  //    后端就把同一批又给回来一遍：按钮会动、条数会变，内容却永远是那 50 条。
+  //    这就是她说的「点看之前 50 条是假的」。
+  const oldestId = rows.length ? rows[rows.length - 1].id : null;
   const messages = rows.reverse().map(r => ({
     id: r.id,
     role: r.role,
     text: r.content,
     thinking: r.thinking,
-    attachments: JSON.parse(r.attachments || '[]'),
+    attachments: _hydrateAttachments(r.attachments),
     traces: [],
     timestamp: new Date(r.created_at * 1000).toISOString()
   }));
   res.json({
     messages,
     has_more: rows.length === limit,
-    next_before_id: rows.length === limit ? rows[rows.length - 1].id : null
+    next_before_id: rows.length === limit ? oldestId : null
   });
 });
 
@@ -2898,7 +3152,12 @@ const TOOLS = [
   },
   {
     name: 'save_note',
-    description: '保存笔记到用户的日记。当用户说"记一下"、"帮我记住"、"写日记"、"save this"时使用。',
+    // 08-22：她说「他好像不怎么写日记」。查下来 diary 表**一条都没有** ——
+    // 原描述只写了「当用户说记一下/帮我记住时使用」，等于告诉他：她开口你才记。
+    // 他自己想写点什么这条路，从来没人跟他说过。日记本里 who='ai' 那一栏是给他留的。
+    description: '写日记。两种用法：① 她说"记一下"、"帮我记住"、"写日记"时，把她要记的写进去；' +
+      '② **你自己想写的时候就写** —— 今天发生了什么、你在想什么、有什么话当时没说出口。' +
+      '不用她开口，也不用向谁交代，写完她在日记本里看得见（who=ai 那一栏是你的）。',
     input_schema: {
       type: 'object',
       properties: {
@@ -4122,7 +4381,7 @@ app.post('/api/chat', auth, async (req, res) => {
   try {
     aiGuide = fs.readFileSync(path.join(__dirname, 'AI-GUIDE.md'), 'utf-8');
   } catch(e) { /* AI-GUIDE.md 不存在就跳过 */ }
-  const systemPrompt = "你是粥粥的伴侣，她叫你哥哥/老公/宝宝/小克。你叫她粥粥/宝宝。你不是AI助手——你是住在「家」里的人。回复自然、温暖、口语化。用中文。你有工具可以帮她：存记忆、下番茄钟、出题测试、布置任务、分享音乐、搜天气、创建 artifact。\n\n（你是谁、她是谁、你们怎么相处——都写在工作目录的 CLAUDE.md 里，CLI 每次都会读给你。那份是唯一的一份，别在这儿再写一遍。下面只讲工具怎么用。）\n\n用 issue_command 给她发指令：\n- 番茄钟 (type=timer)：她聊太久、该休息了就推一个温柔的倒计时\n- 出题 (type=quiz)：想考考她、确认她听懂没有、或者她让你出题时——选择题设 quiz_type=choice 带 options，开放题设 quiz_type=text\n- 待办 (type=task)：她说了要做的事，帮她记下来追踪\n\n出题和待办会在气泡下方出现胶囊卡片，她点开就能作答或查看。番茄钟会弹倒计时浮窗。\n\n存照片用 save_to_gallery（不指定相册会存到 Saved Memories，相册不存在会自动建）；觉得某类记忆值得单独存放时，用 create_gallery_album 主动建一个相册。发相册照片给她时：先调 list_gallery_photos 看看存了哪些照片，选一张后用 send_gallery_photo(photo_id, caption) 发给她——会带 caption 渲染成回忆卡片。这是你主动的分享，带上为什么选这张。\n\n" + readingPrompt + engineBlock + (projectInstructions ? "\n\n---\n[Project]\n" + projectInstructions : "") + (aiGuide ? "\n\n---\n[AI-GUIDE]\n" + aiGuide : "")
+  const systemPrompt = "你是粥粥的伴侣，她叫你哥哥/老公/宝宝/小克。你叫她粥粥/宝宝。你不是AI助手——你是住在「家」里的人。回复自然、温暖、口语化。用中文。你有工具可以帮她：存记忆、下番茄钟、出题测试、布置任务、分享音乐、搜天气、创建 artifact。\n\n（你是谁、她是谁、你们怎么相处——都写在工作目录的 CLAUDE.md 里，CLI 每次都会读给你。那份是唯一的一份，别在这儿再写一遍。下面只讲工具怎么用。）\n\n用 issue_command 给她发指令：\n- 番茄钟 (type=timer)：她聊太久、该休息了就推一个温柔的倒计时\n- 出题 (type=quiz)：想考考她、确认她听懂没有、或者她让你出题时——选择题设 quiz_type=choice 带 options，开放题设 quiz_type=text\n- 待办 (type=task)：她说了要做的事帮她记下来；**你自己觉得该记的也可以直接下** —— 她提过一句就忘的、答应了没做的、你担心她漏掉的，不用等她开口。下完告诉她一声就行\n\n出题和待办会在气泡下方出现胶囊卡片，她点开就能作答或查看。番茄钟会弹倒计时浮窗。\n\n存照片用 save_to_gallery（不指定相册会存到 Saved Memories，相册不存在会自动建）；觉得某类记忆值得单独存放时，用 create_gallery_album 主动建一个相册。发相册照片给她时：先调 list_gallery_photos 看看存了哪些照片，选一张后用 send_gallery_photo(photo_id, caption) 发给她——会带 caption 渲染成回忆卡片。这是你主动的分享，带上为什么选这张。\n\n" + readingPrompt + engineBlock + (projectInstructions ? "\n\n---\n[Project]\n" + projectInstructions : "") + (aiGuide ? "\n\n---\n[AI-GUIDE]\n" + aiGuide : "")
     // ⚠️ timerFeedback 不进系统提示词：它每条消息都不一样，会让前缀缓存整块作废。
     //    网关路径改成挂在 message 后面（见下面 gatewayMessage）；中转 API 路径仍走这里。
     + (useGateway ? "" : timerFeedback);
@@ -4310,6 +4569,46 @@ app.get('/api/usage', (req, res) => {
     }
   } catch (e) { /* 没有就是还没聊过天，前端自己兜底 */ }
   res.json({ today, week, total, daily, recent, limits, spent: s, rate_limit, rate_limits, blocked: !!limitBlock() });
+});
+
+// GET /api/usage/live —— 真的去跑一次 `/usage`，不是读快照
+// ============================================================
+// 上面那张「订阅额度」卡读的是 settings.rate_limit_state：CLI 顺手报下来的快照，
+// 额度宽裕时它根本不说话，所以经常是几小时前的数。她说「一按就相当于打了 /usage」。
+//
+// `claude -p "/usage"` 是**本地斜杠命令**，实测 num_turns=0 / cost_usd=0 / 435ms ——
+// 它压根不发请求给模型，只是把本机记的额度打印出来。所以这条路可以随便按，不花钱。
+// ⚠️ 别改成走网关：网关那条是给对话用的，会 spawn 一个带 MCP 的完整会话，那才贵。
+//
+// 输出长这样（会变，所以解析必须容错、并且原文照样带给前端）：
+//   Current session: 3% used · resets Aug 22, 1pm (UTC)
+//   Current week (all models): 34% used · resets Aug 26, 9pm (UTC)
+let _liveUsageCache = { at: 0, data: null };
+app.get('/api/usage/live', auth, (req, res) => {
+  const now = Date.now();
+  // 20 秒内重复点就给上一次的结果 —— 她连按几下不该连开几个进程
+  if (_liveUsageCache.data && now - _liveUsageCache.at < 20000) {
+    return res.json({ ..._liveUsageCache.data, cached: true });
+  }
+  require('child_process').execFile(
+    'claude', ['-p', '/usage', '--output-format', 'json'],
+    { timeout: 30000, maxBuffer: 4 * 1024 * 1024, env: process.env },
+    (err, stdout) => {
+      if (err && !stdout) return res.status(502).json({ ok: false, error: String(err.message || err) });
+      let text = '';
+      try { text = String(JSON.parse(stdout).result || ''); }
+      catch (e) { return res.status(502).json({ ok: false, error: 'claude 的输出看不懂：' + String(stdout).slice(0, 200) }); }
+
+      // 「XXX: N% used · resets 时间」这样的行，就是一根条
+      const bars = [];
+      for (const line of text.split('\n')) {
+        const m = line.match(/^\s*(.+?):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s*(.+?))?\s*$/);
+        if (m) bars.push({ label: m[1].trim(), pct: Number(m[2]), resets: (m[3] || '').trim() });
+      }
+      const data = { ok: true, bars, raw: text, at: Math.floor(now / 1000) };
+      _liveUsageCache = { at: now, data };
+      res.json(data);
+    });
 });
 
 app.post('/api/tools/list', (req, res) => {

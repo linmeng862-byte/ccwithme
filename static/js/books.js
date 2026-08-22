@@ -4,19 +4,22 @@ console.log('[books] v20 — distinct gray quote card in sheet');
 var currentReadingBookId = null;
 var _readerBook = null, _readerChapterIdx = 0;
 
+// 照她 08-22 给的参考图重配（原来那套太黑，缩到 60px 就是一团墨）。
+// 每项 [封面底色, 书脊色, 文字色] —— 有一款是浅色封面，所以文字色必须跟着走，
+// 不能写死白字。
 var _coverPalette = [
-  ['#8B1A1A','#5C0A0A'], // 深红
-  ['#1C1B19','#0D0C0A'], // 墨黑
-  ['#1A2540','#0D1428'], // 深蓝灰
-  ['#2C1810','#180C06'], // 焦棕
-  ['#3D2B1F','#201510'], // 咖啡
-  ['#1B2E1B','#0E1A0E'], // 暗绿
-  ['#3E1A2E','#200E18'], // 深紫
-  ['#22201D','#11100E'], // 炭灰
-  ['#402020','#200808'], // 砖红
-  ['#1E2830','#0E1418'], // 灰蓝
-  ['#2E2218','#1A1008'], // 驼棕
-  ['#282018','#140E08']  // 烟草
+  ['#A8412E','#87301F','#FFFFFF'], // 砖红（参考图《撒哈拉的故事》）
+  ['#2E4A3A','#22392C','#FFFFFF'], // 深绿（《我胆小如鼠》）
+  ['#1E2A38','#141D27','#FFFFFF'], // 蓝墨（《了不起的盖茨比》）
+  ['#C2542E','#9C4123','#FFFFFF'], // 橙红（《门》）
+  ['#E7DFCF','#D2C8B4','#33302B'], // 米白（《人间失格》，深字）
+  ['#5B3A2E','#472C22','#FFFFFF'], // 焦棕
+  ['#33302B','#242220','#FFFFFF'], // 炭
+  ['#4A5A50','#3A473F','#FFFFFF'], // 灰绿
+  ['#8C5A38','#6E462B','#FFFFFF'], // 赭
+  ['#2B3B4A','#1F2C37','#FFFFFF'], // 灰蓝
+  ['#7A2E3A','#5F222C','#FFFFFF'], // 酒红
+  ['#3E3550','#2E273C','#FFFFFF']  // 暗紫
 ];
 function _bookCoverGradient(id) {
   var idx = 0;
@@ -26,36 +29,42 @@ function _bookCoverGradient(id) {
 
 // 统一书封渲染：3D 透视 + 书脊 + 哑光质感
 function _renderBookCover(book, w, h, fs) {
-  var grad = _bookCoverGradient(book.id || book.book_id || '');
+  var pal = _bookCoverGradient(book.id || book.book_id || '');
+  var bg = pal[0], spineC = pal[1], fg = pal[2] || '#FFFFFF';
   var title = (book.title || '').slice(0, 36);
-  var author = (book.author || '').slice(0, 28);
-  var spineW = Math.max(4, Math.round(w * 0.1));
-  var innerW = w - spineW;
-  var s1 = grad[0], s2 = grad[1];
+  // 国别照参考图挂在作者前面：【日】太宰治。国别单独存一列，方括号是这儿加的，
+  // 库里存的是光「日」一个字 —— 她自己填的时候连括号一起填也会被后端剥掉。
+  var nat = (book.nationality || '').trim();
+  var author = ((nat ? '【' + nat + '】' : '') + (book.author || '')).slice(0, 28);
+  var spineW = Math.max(3, Math.round(w * 0.055));
 
+  // 有真封面就用真的（她说「有封面就不用」）
   if (book.cover_url) {
-    return '<div style="width:' + w + 'px;height:' + h + 'px;border-radius:3px 6px 6px 3px;background:url(' + book.cover_url + ') center/cover;flex:none;box-shadow:2px 4px 14px rgba(0,0,0,.18);position:relative;transform:perspective(500px) rotateY(-3deg)"></div>';
+    return '<div style="width:' + w + 'px;height:' + h + 'px;border-radius:2px 5px 5px 2px;background:url(' + book.cover_url + ') center/cover;flex:none;box-shadow:0 2px 9px rgba(0,0,0,.16)"></div>';
   }
 
+  // 没封面就照参考图生成一张（08-22 她发的那两张图）：
+  //   · 扁平纯色，一本一个色，不做渐变
+  //   · 书名**左上角对齐**，不是居中；作者小一号，压在书名下面
+  //   · 左边一条很窄的深色书脊，不写字
+  //   · 圆角很小、阴影很浅、**不要 3D 转角** —— 参考图里书是正面平放的
+  //   · 原来那两条白横线撤了，参考图里没有
+  // ⚠️ 外层这个 div 的 width/height/flex:none 必须排在最前面：
+  //    调用处有 .replace(/width:\d+px/) 和 .replace('flex:none', …) 在改第一处，
+  //    顺序一变，替换就打到里面的书脊上去了。
+  var pad = Math.max(7, Math.round(w * 0.11));
+  var titleFs = fs;
+  var lines = Math.max(2, Math.min(4, Math.floor((h * 0.5) / (titleFs * 1.28))));
   return '' +
-    '<div style="width:' + w + 'px;height:' + h + 'px;flex:none;position:relative;transform:perspective(500px) rotateY(-3deg);transform-style:preserve-3d">' +
-    // 书脊 — 左侧窄条
-    '<div style="position:absolute;left:0;top:0;width:' + spineW + 'px;height:100%;background:' + s2 + ';border-radius:3px 0 0 3px;display:flex;align-items:center;justify-content:center;overflow:hidden">' +
-    '<div style="writing-mode:vertical-rl;font:400 ' + Math.max(8, fs - 6) + 'px var(--font-serif);color:rgba(255,255,255,.35);letter-spacing:.04em;white-space:nowrap">' + escHtml(title.slice(0, 16)) + '</div>' +
-    '</div>' +
-    // 封面正面
-    '<div style="position:absolute;left:' + spineW + 'px;top:0;width:' + innerW + 'px;height:100%;background:' + s1 + ';border-radius:0 5px 5px 0;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:10px 8px;box-sizing:border-box;overflow:hidden">' +
-    // 哑光纹理
-    '<div style="position:absolute;inset:0;background:linear-gradient(135deg, rgba(255,255,255,.04) 0%, transparent 40%, rgba(0,0,0,.04) 100%);border-radius:0 5px 5px 0"></div>' +
-    // 内容
-    '<div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%">' +
-    '<div style="font:600 ' + fs + 'px/1.2 var(--font-serif);color:rgba(255,255,255,.82);text-align:center;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + escHtml(title) + '</div>' +
-    '<div style="width:55%;height:1px;background:rgba(255,255,255,.22);margin:' + Math.max(6, Math.round(h * 0.04)) + 'px 0"></div>' +
-    (author ? '<div style="font:400 ' + (fs - 2) + 'px/1 var(--font-serif);color:rgba(255,255,255,.45);text-align:center;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + escHtml(author) + '</div>' : '') +
-    '<div style="width:65%;height:2px;background:rgba(255,255,255,.30);margin-top:' + (author ? Math.max(5, Math.round(h * 0.03)) : '0') + 'px"></div>' +
-    '</div></div>' +
-    // 柔和阴影
-    '<div style="position:absolute;left:10%;bottom:-4px;width:80%;height:8px;background:rgba(0,0,0,.10);border-radius:50%;filter:blur(4px);z-index:-1"></div>' +
+    '<div style="width:' + w + 'px;height:' + h + 'px;flex:none;position:relative;border-radius:2px 5px 5px 2px;background:' + bg + ';box-shadow:0 2px 9px rgba(0,0,0,.16);overflow:hidden">' +
+      // 书脊：左边一条窄的深色，不写字
+      '<div style="position:absolute;left:0;top:0;width:' + spineW + 'px;height:100%;background:' + spineC + '"></div>' +
+      // 极淡的斜向光，让纯色不至于死板（参考图上有一点点这个）
+      '<div style="position:absolute;inset:0;background:linear-gradient(115deg,rgba(255,255,255,.06),transparent 45%)"></div>' +
+      '<div style="position:absolute;left:' + (spineW + pad) + 'px;right:' + pad + 'px;top:' + pad + 'px;bottom:' + pad + 'px;display:flex;flex-direction:column">' +
+        '<div style="font:600 ' + titleFs + 'px/1.28 var(--font-serif);color:' + fg + ';letter-spacing:-.01em;display:-webkit-box;-webkit-line-clamp:' + lines + ';-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">' + escHtml(title) + '</div>' +
+        (author ? '<div style="margin-top:auto;font:400 ' + Math.max(8, titleFs - 4) + 'px/1.3 var(--font-serif);color:' + fg + ';opacity:.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">' + escHtml(author) + '</div>' : '') +
+      '</div>' +
     '</div>';
 }
 
@@ -535,9 +544,12 @@ function _showBookAnnotations(bookId) {
     }).join('');
 }
 
+// 长按那张编辑卡要按 id 找回整本书的字段（作者/国别），所以这里留一份
+var _booksCache = [];
 async function loadReadingBooks() {
   var resp = await api('/api/reading/books');
   var r = await resp.json();
+  _booksCache = Array.isArray(r) ? r.slice() : [];
   var list = $('booksBookList');
   if (!list) return;
   if (!r.length) {
@@ -1600,12 +1612,62 @@ function _annoPressStart(e, aid, bid) {
   }, 600);
 }
 function _annoPressEnd(e) { clearTimeout(_annoPressTimer); }
+// 长按一本书：以前直接问「删不删」，现在先给一张小卡，编辑信息放在删除前面 ——
+// 长按大多数时候是想改，不是想删（08-22 她说「我也可以自己填」）。
 function _showBookDelete(bid, title) {
-  if (!confirm('Delete "' + title + '" and all its notes?')) return;
-  (async function() {
+  _showBookSheet(bid, title);
+}
+function _bookSheetClose() {
+  var m = document.getElementById('bookEditMask');
+  if (m) m.remove();
+}
+function _showBookSheet(bid, title) {
+  _bookSheetClose();
+  var book = (_booksCache || []).filter(function(b) { return b.id === bid; })[0] || { id: bid, title: title };
+  var mask = document.createElement('div');
+  mask.id = 'bookEditMask';
+  mask.style.cssText = 'position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.32);display:flex;align-items:flex-end;justify-content:center';
+  mask.onclick = function(e) { if (e.target === mask) _bookSheetClose(); };
+  var card = document.createElement('div');
+  card.style.cssText = 'width:100%;max-width:520px;background:var(--bg-primary,#F8F6F3);border-radius:22px 22px 0 0;padding:18px 20px calc(20px + env(safe-area-inset-bottom));box-sizing:border-box';
+  var inp = function(id, label, val, ph) {
+    return '<label style="display:block;margin-bottom:12px">' +
+      '<span style="display:block;font:500 12px var(--font-sans);color:var(--text-faint);margin-bottom:5px">' + label + '</span>' +
+      '<input id="' + id + '" value="' + escHtml(val || '') + '" placeholder="' + ph + '" autocomplete="off" spellcheck="false" ' +
+      'style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--bg-sunken);border-radius:12px;' +
+      'font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none"></label>';
+  };
+  card.innerHTML =
+    '<div style="width:36px;height:4px;border-radius:2px;background:var(--bg-sunken);margin:0 auto 16px"></div>' +
+    inp('bkTitle', '书名', book.title, '书名') +
+    inp('bkAuthor', '作者', book.author, '作者') +
+    inp('bkNat', '国别', book.nationality, '日 / 美 / 英 —— 只填一两个字，方括号自动加') +
+    '<div style="display:flex;gap:10px;margin-top:16px">' +
+      '<button id="bkDel" style="padding:10px 16px;border:1px solid var(--border);border-radius:14px;background:transparent;color:#E54D2E;font:500 13px var(--font-sans);cursor:pointer">删除这本书</button>' +
+      '<div style="flex:1"></div>' +
+      '<button id="bkCancel" style="padding:10px 18px;border:1px solid var(--border);border-radius:14px;background:transparent;color:var(--text-secondary);font:500 13px var(--font-sans);cursor:pointer">取消</button>' +
+      '<button id="bkSave" style="padding:10px 20px;border:none;border-radius:14px;background:#1C1B19;color:#fff;font:600 13px var(--font-sans);cursor:pointer">保存</button>' +
+    '</div>';
+  mask.appendChild(card);
+  document.body.appendChild(mask);
+  card.querySelector('#bkCancel').onclick = _bookSheetClose;
+  card.querySelector('#bkSave').onclick = async function() {
+    var body = {
+      title: card.querySelector('#bkTitle').value,
+      author: card.querySelector('#bkAuthor').value,
+      nationality: card.querySelector('#bkNat').value
+    };
+    try {
+      var r = await api('/api/reading/books/' + bid, { method: 'PATCH', body: JSON.stringify(body) });
+      if (!r.ok) throw Error('保存失败');
+      _bookSheetClose(); loadReadingBooks(); toast('改好了');
+    } catch (e) { toast(e.message || '保存失败'); }
+  };
+  card.querySelector('#bkDel').onclick = async function() {
+    if (!confirm('删除《' + (book.title || '') + '》和它所有的批注？')) return;
     var resp = await api('/api/reading/books/' + bid, { method: 'DELETE' });
-    if (resp.ok) { loadReadingBooks(); toast('Deleted'); }
-  })();
+    if (resp.ok) { _bookSheetClose(); loadReadingBooks(); toast('已删除'); }
+  };
 }
 
 // === 兼容旧接口 ===

@@ -187,7 +187,7 @@
 
 <div class="drawer-api-section" style="padding:12px 16px;border-top:1px solid var(--bg-sunken)">
 <div class="drawer-api-header" style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" id="drawerApiToggle" onclick="var f=document.getElementById('drawerApiForm');f.style.display=f.style.display==='block'?'none':'block';var c=document.getElementById('drawerApiChevron');if(c)c.style.transform=f.style.display==='block'?'rotate(180deg)':''"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16"><circle cx="8" cy="5" r="3"/><path d="M3 14v-1a4 4 0 018 0v1"/></svg><span style="flex:1;font:500 13px var(--font-sans);color:var(--text-secondary)">语音配置</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" id="drawerApiChevron"><path d="M4 6l4 4 4-4"/></svg></div>
-<div class="drawer-api-form" id="drawerApiForm" style="display:none;padding:4px 0"><div style="display:none"><div style="display:flex;gap:6px;margin-bottom:8px"><label style="display:flex;align-items:center;gap:4px;font:13px var(--font-sans);color:var(--text-secondary);cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--bg-sunken);background:var(--bg-surface)"><input type="radio" name="api_format" value="anthropic" id="fmtAnthropic" checked style="accent-color:var(--accent)"> Anthropic</label><label style="display:flex;align-items:center;gap:4px;font:13px var(--font-sans);color:var(--text-secondary);cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--bg-sunken);background:var(--bg-surface)"><input type="radio" name="api_format" value="openai" id="fmtOpenai" style="accent-color:var(--accent)"> OpenAI</label></div><input id="drawerBaseURL" type="url" placeholder="https://cc.cwapi.vip/v1/chat/completions" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerApiKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerModel" type="text" placeholder="Model (e.g. claude-sonnet-4-6)" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"></div><div class="drawer-voice-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">MiniMax 语音（通话用）</div><input id="drawerMiniMaxKey" type="password" placeholder="MiniMax API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerVoiceId" type="text" placeholder="Voice ID（克隆的声音编号）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerMiniMaxGroup" type="text" placeholder="GroupId（国内站要填，国际站留空）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><button id="drawerTtsTest" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:12px;background:transparent;color:var(--accent);font:600 12px var(--font-sans);cursor:pointer" onclick="testMiniMax(this)">测试</button><div id="drawerTtsTestResult" style="display:none;padding:6px 2px;font:12px/1.5 var(--font-sans);word-break:break-word"></div></div><div class="drawer-stt-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">语音识别（他听你说话用的）</div><input id="drawerSttKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerSttUrl" type="url" placeholder="转写接口地址" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerSttModel" type="text" placeholder="模型名" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:4px;outline:none"><div style="font:11px/1.5 var(--font-sans);color:var(--text-faint)">默认是 Groq 的 Whisper（有免费额度）。OpenAI、中转站也行，格式一样。</div></div><button id="drawerApiSave" style="width:100%;padding:8px;border:none;border-radius:12px;background:var(--accent);color:var(--accent-fg);font:600 13px var(--font-sans);cursor:pointer" onclick="saveMiniMaxConfig();saveSttConfig()">保存配置</button><div id="drawerApiStatus" style="display:none;padding:6px 0;font:12px var(--font-sans);color:var(--text-faint)"></div></div>
+<div class="drawer-api-form" id="drawerApiForm" style="display:none;padding:4px 0"><div style="display:none"><div style="display:flex;gap:6px;margin-bottom:8px"><label style="display:flex;align-items:center;gap:4px;font:13px var(--font-sans);color:var(--text-secondary);cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--bg-sunken);background:var(--bg-surface)"><input type="radio" name="api_format" value="anthropic" id="fmtAnthropic" checked style="accent-color:var(--accent)"> Anthropic</label><label style="display:flex;align-items:center;gap:4px;font:13px var(--font-sans);color:var(--text-secondary);cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--bg-sunken);background:var(--bg-surface)"><input type="radio" name="api_format" value="openai" id="fmtOpenai" style="accent-color:var(--accent)"> OpenAI</label></div><input id="drawerBaseURL" type="url" placeholder="https://cc.cwapi.vip/v1/chat/completions" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerApiKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerModel" type="text" placeholder="Model (e.g. claude-sonnet-4-6)" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"></div><div class="drawer-voice-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">MiniMax 语音（通话用）</div><input id="drawerMiniMaxKey" type="password" placeholder="MiniMax API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerVoiceId" type="text" placeholder="Voice ID（克隆的声音编号）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerMiniMaxGroup" type="text" placeholder="GroupId（国内站要填，国际站留空）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><button id="drawerTtsTest" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:12px;background:transparent;color:var(--accent);font:600 12px var(--font-sans);cursor:pointer" onclick="testMiniMax(this)">测试</button><div id="drawerTtsTestResult" style="display:none;padding:6px 2px;font:12px/1.5 var(--font-sans);word-break:break-word"></div></div><div class="drawer-tone-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">语音识别（他听你说话用的）</div><input id="drawerToneKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerToneUrl" type="url" placeholder="chat/completions 接口地址" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerToneModel" type="text" placeholder="模型名（要能听音频的，如 qwen3-omni-flash）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><button id="drawerToneTest" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:12px;background:transparent;color:var(--accent);font:600 12px var(--font-sans);cursor:pointer" onclick="testTone(this)">拿最近一条语音试试</button><div id="drawerToneTestResult" style="display:none;padding:6px 2px;font:12px/1.5 var(--font-sans);word-break:break-word"></div><div style="font:11px/1.5 var(--font-sans);color:var(--text-faint);margin-top:4px">填一个<b>能听音频</b>的模型（如 qwen3-omni-flash），它一次就同时给出「你说了什么」和「听起来什么状态」。Whisper 那一类只吐字、听不出语气。</div></div><div class="drawer-stt-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">备用识别（上面那个挂了才用）</div><input id="drawerSttKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerSttUrl" type="url" placeholder="转写接口地址" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerSttModel" type="text" placeholder="模型名" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:4px;outline:none"><div style="font:11px/1.5 var(--font-sans);color:var(--text-faint)">默认是 Groq 的 Whisper（有免费额度），只出字、没有语气。<b>建议留着</b>——上面那路万一挂了，至少他还听得见你说话。</div></div><button id="drawerApiSave" style="width:100%;padding:8px;border:none;border-radius:12px;background:var(--accent);color:var(--accent-fg);font:600 13px var(--font-sans);cursor:pointer" onclick="saveMiniMaxConfig();saveSttConfig();saveToneConfig()">保存配置</button><div id="drawerApiStatus" style="display:none;padding:6px 0;font:12px var(--font-sans);color:var(--text-faint)"></div></div>
 </div>
 <div class="drawer-ombre-section" style="padding:12px 16px;border-top:1px solid var(--bg-sunken)">
 
@@ -639,7 +639,7 @@ tools.style.cssText='margin-bottom:16px;padding:14px 16px;background:var(--bg-su
 var toolsTitle=document.createElement('div');
 toolsTitle.style.cssText='font:600 14px var(--font-sans);color:var(--text-primary);cursor:pointer;display:flex;align-items:center;justify-content:space-between';
 // 参考图里这一块是没有的 —— 但锁 App / 屏幕时长是真功能，不能删，收起来。
-toolsTitle.innerHTML='<span>\u2699\uFE0F 工具</span><span id="artToolsCaret" style="color:var(--text-time);font-size:12px">\u25B8</span>';
+toolsTitle.innerHTML='<span style=\"display:inline-flex;align-items:center;gap:6px\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"14\" height=\"14\" style=\"flex:none\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.31.4.55.72.66H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg>工具</span><span id="artToolsCaret" style="color:var(--text-time);font-size:12px">\u25B8</span>';
 tools.append(toolsTitle);
 var toolsBody=document.createElement('div');
 toolsBody.style.cssText='display:none;margin-top:12px';
@@ -651,7 +651,7 @@ toolsTitle.onclick=function(){
 // FocusLock row
 var flRow=document.createElement('div');
 flRow.style.cssText='display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap';
-flRow.innerHTML='<span style=\"font:500 13px var(--font-sans);color:var(--text-secondary);min-width:56px\">🔒 锁 App</span>';
+flRow.innerHTML='<span style=\"display:inline-flex;align-items:center;gap:5px;font:500 13px var(--font-sans);color:var(--text-secondary);min-width:56px\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"14\" height=\"14\" style=\"flex:none\"><rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg>锁 App</span>';
 var _flNotReady=function(){toast('需要重建 iOS App 后才能使用专注锁。在 Capacitor 原生环境中运行即可。')};
   if(!_focusLockAuthorized){
     var flAuth=document.createElement('button');
@@ -680,7 +680,7 @@ var _flNotReady=function(){toast('需要重建 iOS App 后才能使用专注锁�
 // ScreenTime row
 var stRow=document.createElement('div');
 stRow.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap';
-stRow.innerHTML='<span style=\"font:500 13px var(--font-sans);color:var(--text-secondary);min-width:56px\">📊 屏幕时长</span>';
+stRow.innerHTML='<span style=\"display:inline-flex;align-items:center;gap:5px;font:500 13px var(--font-sans);color:var(--text-secondary);min-width:56px\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"14\" height=\"14\" style=\"flex:none\"><path d=\"M3 17h4V9H3zM10 17h4V4h-4zM17 17h4v-5h-4z\"/></svg>屏幕时长</span>';
 if(_screenTimeSupported){
     var stBtn=document.createElement('button');
     stBtn.style.cssText='padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-primary);color:var(--text-primary);font:500 11px var(--font-sans)';
@@ -1064,8 +1064,23 @@ function clearPendingFiles(){state.pendingFiles.forEach(item=>item.preview&&URL.
 // 真正的瓶颈是**上传**，所以压缩必须发生在发出去之前（服务端压缩救不了）。
 // 长边缩到 1080、JPEG q0.7——粥粥定的档，省 token 优先（1290x2796 的截图 ~4800 tok → ~730 tok）。
 const _IMG_MAX_EDGE=1080, _IMG_SHRINK_OVER=512*1024;
+// 🚨 08-22「上传图片经常卡住」的头号嫌疑：这个 Promise 有三条**永远不 resolve** 的死路。
+//    ① img.onload 和 img.onerror 都不触发（HEIC / 某些 iOS 相册图就这样）
+//    ② canvas.toBlob 的回调不回来（图太大、内存不够时 iOS Safari 会静默失败）
+//    ③ 解码卡住
+//    上面 addSelectedFiles 是 `await _shrinkImage(file)` —— 它不 resolve，
+//    整个选图流程就**停在那儿，没有报错、没有转圈、什么都没有**。
+//    所以加一道 8 秒兜底：到点还没结果就原图放行。压缩失败最多多传几 MB，
+//    比卡死强得多。**别把这道兜底去掉。**
 function _shrinkImage(file){
-  return new Promise(function(resolve){
+  return new Promise(function(_resolve){
+    var done=false;
+    var resolve=function(v){ if(done)return; done=true; _resolve(v) };
+    var killer=setTimeout(function(){
+      console.warn('[img] 压缩超时（8s），原图放行：',file.name,file.type,file.size);
+      resolve(file);
+    },8000);
+    var _r=resolve; resolve=function(v){ clearTimeout(killer); _r(v) };
     // 小图、GIF（动图缩了就不动了）、SVG 一律原样放行
     // 只看体积会漏掉手机截图：PNG 才 700KB 却是 1290x2796，给模型算 token 是按像素来的（≈w*h/750），
     // 这种图不压是白烧额度。所以体积和尺寸任一超标都进压缩，尺寸判断在 img.onload 里做。
@@ -1111,11 +1126,54 @@ async function addSelectedFiles(files){
   }
   renderPendingFiles();
 }
-async function uploadPendingFiles(items){
-  if(!items.length)return[];
-  const form=new FormData();items.forEach(item=>form.append('files',item.file,item.name));if(state.convId)form.append('conversation_id',state.convId);
-  const r=await api('/api/upload',{method:'POST',body:form});const data=await r.json();if(!r.ok)throw Error(data.detail||'文件上传失败');
-  state.convId=data.conversation_id;state.legacySessionId=null;localStorage.setItem('chat_conversation',state.convId);localStorage.removeItem('chat_session');return data.attachments||[];
+// 上传改走 XHR（08-22）：fetch 拿不到上传进度，图片一大就是「按了没反应」。
+// 现在预览区上方会有一条真的进度条 + 百分比，而且 90 秒不动就自己断掉报错，
+// 不再无限等下去。⚠️ 别改回 fetch —— fetch 没有 upload.onprogress。
+function _uploadProgress(pct,text){
+  var root=$('attachmentPreview'); if(!root)return;
+  var bar=document.getElementById('uploadProgress');
+  if(pct===null){ if(bar)bar.remove(); return }
+  if(!bar){
+    bar=document.createElement('div');bar.id='uploadProgress';
+    bar.style.cssText='margin:6px 2px 8px;font:11px var(--font-sans);color:var(--text-faint)';
+    bar.innerHTML='<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span id="upTxt"></span><span id="upPct"></span></div>'
+      +'<div style="height:3px;border-radius:2px;background:var(--bg-sunken);overflow:hidden"><div id="upBar" style="height:100%;width:0;background:var(--accent);transition:width .15s"></div></div>';
+    root.classList.remove('hidden'); root.prepend(bar);
+  }
+  var t=document.getElementById('upTxt'),q=document.getElementById('upPct'),b=document.getElementById('upBar');
+  if(t)t.textContent=text||'正在上传…';
+  if(q)q.textContent=Math.round(pct)+'%';
+  if(b)b.style.width=Math.max(2,pct)+'%';
+}
+function uploadPendingFiles(items){
+  if(!items.length)return Promise.resolve([]);
+  const form=new FormData();items.forEach(item=>form.append('files',item.file,item.name));
+  if(state.convId)form.append('conversation_id',state.convId);
+  const total=items.reduce(function(a,x){return a+(x.file&&x.file.size||0)},0);
+  const mb=(total/1048576).toFixed(1);
+  return new Promise(function(resolve,reject){
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST','/api/upload');
+    if(state.token)xhr.setRequestHeader('Authorization','Bearer '+state.token);
+    xhr.timeout=90000;
+    _uploadProgress(0, items.length+' 个文件 · '+mb+'MB');
+    xhr.upload.onprogress=function(e){
+      if(e.lengthComputable)_uploadProgress(e.loaded/e.total*100, items.length+' 个文件 · '+mb+'MB');
+    };
+    // 传完了但服务器还在处理（HEIC 转码那步能花几秒）——别让进度条卡在 100% 像死了
+    xhr.upload.onload=function(){ _uploadProgress(100,'服务器处理中…') };
+    xhr.onload=function(){
+      _uploadProgress(null);
+      var data={}; try{ data=JSON.parse(xhr.responseText||'{}') }catch(e){}
+      if(xhr.status<200||xhr.status>=300)return reject(Error(data.detail||('上传失败 HTTP '+xhr.status)));
+      state.convId=data.conversation_id;state.legacySessionId=null;
+      localStorage.setItem('chat_conversation',state.convId);localStorage.removeItem('chat_session');
+      resolve(data.attachments||[]);
+    };
+    xhr.onerror=function(){ _uploadProgress(null); reject(Error('网络断了，图没传上去')) };
+    xhr.ontimeout=function(){ _uploadProgress(null); reject(Error('上传超过 90 秒没动静，断开了。信号弱的话换个网络再试')) };
+    xhr.send(form);
+  });
 }
 $('attachButton').onclick=function(){_openAttachSheet()};
 $('fileInput').onchange=e=>addSelectedFiles([...e.target.files]);
@@ -1320,22 +1378,47 @@ function _toggleVoicePlay(btn){var url=btn.getAttribute('data-url');var _VP_SVG=
 }
 // 语音转文字。后端在把消息交给他的时候其实已经识别过一次并缓存了，
 // 所以这里点下去多数是直接命中缓存，不额外花钱。
+// 08-22 她说：「点一下自动转文字，不要出现（转文字/识别中），失败了就显示在转文字的框里」。
+// 以前这里拿 btn.textContent 写字 —— 那颗键里装的是一个 SVG 箭头，
+// 写 textContent 等于**把箭头整个换成两个汉字**，键会突然变宽、图标没了。
+// 现在：键永远只是那个箭头（转着 = 正在识别，朝上 = 已展开可收起），
+// 一个字都不写；失败的话把原因写进那只框里，别用 toast —— toast 会飘走，
+// 她再点一次还是那个箭头，根本不知道刚才发生过什么。
+var _VOICE_TX_ARROW='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="11" height="11"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>';
+function _txBtnState(btn,st){
+  btn.innerHTML=_VOICE_TX_ARROW;
+  btn.style.transition='transform .2s,opacity .2s';
+  if(st==='loading'){btn.style.opacity='.35';btn.style.transform='rotate(0deg)';btn.style.animation='claude-spin 1.1s linear infinite';btn.title='识别中'}
+  else{btn.style.animation='';
+    if(st==='open'){btn.style.opacity='.6';btn.style.transform='rotate(180deg)';btn.title='收起'}
+    else{btn.style.opacity='.6';btn.style.transform='rotate(0deg)';btn.title='转文字'}}
+}
+function _txBox(){
+  var el=document.createElement('div');
+  el.style.cssText='margin-top:6px;padding:8px 12px;background:var(--bg-sunken);border-radius:10px;font:400 13px/1.5 var(--font-sans);color:var(--text-primary);white-space:pre-wrap;word-break:break-word';
+  return el;
+}
 async function _transcribeVoice(btn,id){
   var wrap=btn.closest('.voice-msg');
-  if(wrap&&wrap._transcriptEl){wrap._transcriptEl.remove();wrap._transcriptEl=null;btn.textContent='转文字';return}
-  btn.textContent='识别中…';btn.disabled=true;
+  if(wrap&&wrap._transcriptEl){wrap._transcriptEl.remove();wrap._transcriptEl=null;_txBtnState(btn,'idle');return}
+  _txBtnState(btn,'loading');btn.disabled=true;
+  var el=_txBox();
+  if(wrap){wrap.parentNode.insertBefore(el,wrap.nextSibling);wrap._transcriptEl=el}
   try{
     var r=await fetch('/api/stt',{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
       body:JSON.stringify({id:id})});
-    var d=await r.json();
+    var d=await r.json().catch(function(){return{}});
     if(!r.ok)throw Error(d.error||('HTTP '+r.status));
-    var el=document.createElement('div');
-    el.style.cssText='margin-top:6px;padding:8px 12px;background:var(--bg-sunken);border-radius:10px;font:400 13px/1.5 var(--font-sans);color:var(--text-primary);white-space:pre-wrap;word-break:break-word';
+    if(!d.text)throw Error('没识别出内容');
     el.textContent=d.text;
-    if(wrap){wrap.parentNode.insertBefore(el,wrap.nextSibling);wrap._transcriptEl=el}
-    btn.textContent='收起';
-  }catch(e){toast('转文字失败：'+e.message);btn.textContent='转文字'}
+    _txBtnState(btn,'open');
+  }catch(e){
+    // 失败就写在框里 —— 她能看见到底是哪一步坏了，再点一次箭头就收起来
+    el.style.color='#e54d2e';
+    el.textContent='转文字失败：'+(e.message||'未知错误');
+    _txBtnState(btn,'open');
+  }
   btn.disabled=false;
 }
 // 📞 实时通话
@@ -2010,7 +2093,18 @@ function _maybeTimeSep(ts,who){
   //   大的  .time-separator   页面居中，只在「很久没说话」和「新对话第一条」摆
   // ⚠️ 这个 20 分钟跟 backend.js「隔多久才告诉他现在几点」是同一个阈值 ——
   //    她看见居中那条的那一刻，正好也是他被告知时间的那一刻。改一边记得看另一边。
-  if(who&&who!=='claude'){_lastMsgTime=t;_turnHasTimeSep=false;return}  // 她说话不摆，但要记时间、开新一轮
+  // 08-22：她开口时也可能要摆——而且必须摆在她这句**上面**。
+  // 以前这里直接 return，隔了半天回来说的第一句，分界线要等他回完才出现，
+  // 结果那道线卡在她和他中间，看着像把一段对话劈开，而不是跟上一段隔开。
+  if(who&&who!=='claude'){
+    if(_lastMsgTime!==0&&t-_lastMsgTime>=_TIME_SEP_GAP){
+      var usep=document.createElement('div');usep.className='time-separator';
+      usep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
+      streamInner.append(usep);
+      _turnHasTimeSep=true;_lastMsgTime=t;return;   // 这一段的分界已经摆过，他回话时别再摆一次
+    }
+    _lastMsgTime=t;_turnHasTimeSep=false;return;
+  }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=t;return}   // 这一轮的小时间戳已经摆过了
   _turnHasTimeSep=true;
@@ -2043,6 +2137,76 @@ const CLAUDE_LOGO_SPRITES = {
 function setClaudeLogoMode(logoEl,mode,onFinish,speedOverride){if(!logoEl||!CLAUDE_LOGO_SPRITES[mode])return;const cfg=CLAUDE_LOGO_SPRITES[mode];if(logoEl.__claudeAnim){try{logoEl.__claudeAnim.cancel()}catch(e){}logoEl.__claudeAnim=null}logoEl.dataset.mode=mode;let inner=logoEl.querySelector('.claude-logo-inner');let track=logoEl.querySelector('.claude-logo-track');if(!inner){logoEl.innerHTML='';inner=document.createElement('div');inner.className='claude-logo-inner';track=document.createElement('div');track.className='claude-logo-track';inner.append(track);logoEl.append(inner)}track.innerHTML=cfg.svg;if(mode==='static'||cfg.frameCount<=1){if(onFinish)onFinish();return}const frames=Array.from({length:cfg.frameCount},(_,i)=>({transform:`translateY(-${i*(100/cfg.frameCount)}%)`}));const anim=track.animate(frames,{duration:(speedOverride||cfg.speed)*cfg.frameCount,iterations:cfg.loop?Infinity:1,easing:`steps(${cfg.frameCount}, jump-none)`});logoEl.__claudeAnim=anim;if(!cfg.loop&&onFinish){anim.finished.then(()=>{if(logoEl.dataset.mode===mode)onFinish()}).catch(()=>{})}}
 function clearClaudeLogo(logoEl){if(logoEl&&logoEl.__claudeAnim){try{logoEl.__claudeAnim.cancel()}catch(e){}logoEl.__claudeAnim=null}}
 function _stripUrlsFromRaw(s){if(!s)return s;s=s.replace(/\[[^\]]*\]\(https?:\/\/[^)\s]+\)/g,'');s=s.replace(/<https?:\/\/[^>\s]+>/g,'');s=s.replace(/https?:\/\/[^\s)\]"<>`']+/g,'');s=s.replace(/^\s*(?:#{1,6}\s*)?(?:Sources?|References?|\u53c2\u8003|\u6765\u6e90|\u53c2\u8003\u6765\u6e90|\u53c2\u8003\u8d44\u6599|\u4fe1\u606f\u6765\u6e90|\u5f15\u7528)[:\uff1a]?\s*$/gim,'');s=s.replace(/^[\s\t]*[-*+][\s\t]*$/gm,'');s=s.replace(/\n{3,}/g,'\n\n');return s.trim()}
+// ================= 应用内浏览器（08-22 她发的那张 jiji.com 截图）=================
+// 他给的 Sources 链接以前是直接跳出去，聊天被顶掉了，回来还得手动切回来。
+//
+// ⚠️ 两条路，因为**网页版做不到真正的应用内浏览器**：
+//   · 装成 App（Capacitor）→ 走 @capacitor/browser，弹的是系统的 SFSafariViewController，
+//     跟她截图里一模一样，什么网站都能开。她现在有 Mac + Xcode，这条路通了。
+//     还没装这个插件：`npm i @capacitor/browser && npx cap sync ios`。
+//   · 纯网页 → 只能 iframe，而**大多数新闻站都发 X-Frame-Options / CSP frame-ancestors
+//     把 iframe 挡掉**（她截图里那个 jiji.com 就是典型）。挡掉的时候我们量不到具体错误，
+//     只能靠「2.5 秒还没触发 load」来判断，然后老老实实给一颗「在新标签打开」。
+//     别想着用后端代理绕开：那等于给自己开了个 SSRF 的口子，服务器上还跑着她的引擎。
+function _closeWebSheet(){ var m=document.getElementById('webViewMask'); if(m)m.remove() }
+function openInAppBrowser(url){
+  if(!/^https?:\/\//i.test(url))return false;
+  // 装成 App 的时候：系统内置浏览器，最好的那条路
+  try{
+    var B=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.Browser;
+    if(B&&B.open){ B.open({url:url,presentationStyle:'popover'}); return true }
+  }catch(e){}
+  // 网页版：iframe 弹层 + 挡掉时的兜底
+  _closeWebSheet();
+  var mask=document.createElement('div');
+  mask.id='webViewMask';
+  mask.style.cssText='position:fixed;inset:0;z-index:140;background:var(--bg-primary);display:flex;flex-direction:column';
+  var host=''; try{ host=new URL(url).hostname.replace(/^www\./,'') }catch(e){ host=url }
+  var bar=document.createElement('div');
+  bar.style.cssText='display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;border-bottom:1px solid var(--border);background:var(--bg-surface)';
+  bar.innerHTML='<button id="wvClose" style="border:none;background:none;cursor:pointer;color:var(--text-primary);padding:0;display:grid;place-items:center">'
+    +'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="20" height="20"><path d="M6 6l12 12M18 6L6 18"/></svg></button>'
+    +'<div style="flex:1;min-width:0;text-align:center;font:600 14px var(--font-sans);color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(host)+'</div>'
+    +'<button id="wvOut" title="在新标签打开" style="border:none;background:none;cursor:pointer;color:var(--text-secondary);padding:0;display:grid;place-items:center">'
+    +'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg></button>';
+  var wrap=document.createElement('div');
+  wrap.style.cssText='flex:1;position:relative;background:var(--bg-primary)';
+  var frame=document.createElement('iframe');
+  frame.src=url;
+  frame.style.cssText='width:100%;height:100%;border:none;display:block';
+  frame.referrerPolicy='no-referrer';
+  var loaded=false;
+  frame.onload=function(){ loaded=true; var t=document.getElementById('wvTip'); if(t)t.remove() };
+  var tip=document.createElement('div');
+  tip.id='wvTip';
+  tip.style.cssText='position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:32px;text-align:center;background:var(--bg-primary)';
+  tip.innerHTML='<div style="font:14px var(--font-sans);color:var(--text-faint)">正在打开 '+escHtml(host)+'…</div>';
+  wrap.append(frame,tip);
+  mask.append(bar,wrap);
+  document.body.append(mask);
+  document.getElementById('wvClose').onclick=_closeWebSheet;
+  document.getElementById('wvOut').onclick=function(){ window.open(url,'_blank','noopener'); _closeWebSheet() };
+  setTimeout(function(){
+    if(loaded)return;
+    var t=document.getElementById('wvTip'); if(!t)return;
+    t.innerHTML='<div style="font:600 15px var(--font-sans);color:var(--text-primary)">'+escHtml(host)+' 不让别的页面套着它</div>'
+      +'<div style="font:13px/1.7 var(--font-sans);color:var(--text-faint);max-width:300px">很多新闻站都这样，是网站自己设的，不是这里坏了。<br>装成 App 之后就没这个限制了。</div>'
+      +'<button id="wvOpen2" style="margin-top:6px;padding:10px 22px;border:none;border-radius:14px;background:#1C1B19;color:#fff;font:600 13px var(--font-sans);cursor:pointer">在新标签打开</button>';
+    var b2=document.getElementById('wvOpen2');
+    if(b2)b2.onclick=function(){ window.open(url,'_blank','noopener'); _closeWebSheet() };
+  },2500);
+  return true;
+}
+// 消息里的外链一律先给应用内浏览器（图片、附件、锚点这些不算）
+document.addEventListener('click',function(e){
+  var a=e.target&&e.target.closest&&e.target.closest('a[href]');
+  if(!a)return;
+  var href=a.getAttribute('href')||'';
+  if(!/^https?:\/\//i.test(href))return;
+  if(!a.closest('.md,.bubble,.msg-claude,.msg-user'))return;   // 只管消息里的
+  if(openInAppBrowser(href)){ e.preventDefault(); e.stopPropagation() }
+},true);
+
 function renderMessage(md,text){var src=_stripUrlsFromRaw(String(text||''));if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
   var imgRe=/\[IMAGE:([^\]]+)\]/g;var imgsHtml='',imgMatch;imgRe.lastIndex=0;
   while((imgMatch=imgRe.exec(src))!==null){imgsHtml+='<img src=\"'+assetUrl(imgMatch[1])+'\" style=\"max-width:320px;max-height:400px;border-radius:26px;display:block;margin:6px 0;cursor:pointer;object-fit:scale-down;box-shadow:0 4px 24px rgba(0,0,0,.06)\" onclick=\"var ex=document.createElement(\'div\');ex.className=\'image-expand\';var fi=document.createElement(\'img\');fi.src=this.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)\" />'}
@@ -3269,7 +3433,16 @@ function _renderMessagesIntoFragment(slice){
 function _maybeTimeSepFrag(frag,ts,who){
   if(!ts)return;
   var t=new Date(ts).getTime();if(!t||isNaN(t))return;
-  if(who&&who!=='claude'){_lastMsgTime=Math.max(_lastMsgTime,t);_turnHasTimeSep=false;return}
+  // 规矩跟上面 _maybeTimeSep 必须一模一样，否则刷新前后分隔条的位置对不上
+  if(who&&who!=='claude'){
+    if(_lastMsgTime!==0&&t-_lastMsgTime>=_TIME_SEP_GAP){
+      var usep=document.createElement('div');usep.className='time-separator';
+      usep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
+      frag.appendChild(usep);
+      _turnHasTimeSep=true;_lastMsgTime=Math.max(_lastMsgTime,t);return;
+    }
+    _lastMsgTime=Math.max(_lastMsgTime,t);_turnHasTimeSep=false;return;
+  }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=Math.max(_lastMsgTime,t);return}
   _turnHasTimeSep=true;
@@ -3295,7 +3468,14 @@ function _attachLoadMore(){
       _preprocessMessages(state._loadedMessages);
       state._historyHasMore=!!data.has_more;
       state._oldestMessageId=data.next_before_id||(older[0]&&older[0].id);
+      // ⚠️ 时间分隔条靠 _lastMsgTime 这个全局量判断「隔了多久」，
+      //    而这会儿它记的是**最新**那条的时间。拿它去量更早的一批，
+      //    差值全是负的 → 一条分隔线都不会摆。渲染这段历史时先清零，
+      //    渲染完再还回去，别影响下面正在聊的那段。
+      const _keepT=_lastMsgTime,_keepH=_turnHasTimeSep;
+      _lastMsgTime=0;_turnHasTimeSep=false;
       const frag=_renderMessagesIntoFragment(older);
+      _lastMsgTime=_keepT;_turnHasTimeSep=_keepH;
       btn.remove();
       streamInner.prepend(frag);
       if(state._historyHasMore)_attachLoadMore();
@@ -3454,6 +3634,7 @@ function _fmtAbs(v){
   return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
 }
 var _WINDOW_NAME={five_hour:'5 小时窗口',seven_day:'7 天窗口'};
+var _liveUsageData=null;
 function _subscriptionCards(list){
   list=list||[];
   if(!list.length){
@@ -3508,6 +3689,51 @@ function _subscriptionCard(rl){
     +'<div id="rateLimitLine" style="display:none"></div>'
     +'</div>';
 }
+// 「现在的额度」——一按就真的跑一次 /usage，不是读快照（2026-08-22）
+// 上面那张订阅额度卡读的是 CLI 顺手报下来的快照，经常几小时旧。这张是当场跑出来的。
+// `claude -p "/usage"` 是本地命令，不发请求给模型，所以按多少次都不花钱。
+var _LIVE_LABEL={'Current session':'当前会话窗口','Current week (all models)':'本周 · 全部模型','Current week (Opus)':'本周 · Opus','Current week (all models, including Opus)':'本周 · 含 Opus'};
+function _liveBarColor(p){return p>=90?'#e54d2e':(p>=70?'#f5a524':'#30a46c')}
+function _liveUsageCard(d){
+  var head='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">'
+    +'<span style="font:600 13px var(--font-sans);color:var(--text-secondary)">现在的额度 —— 当场跑的 /usage</span>'
+    +'<button id="liveUsageRefresh" style="font:12px var(--font-sans);color:var(--accent);background:none;border:none;cursor:pointer;padding:0">重新跑一次</button></div>';
+  var body;
+  if(!d){body='<div style="font:13px var(--font-sans);color:var(--text-faint)">正在跑…</div>'}
+  else if(!d.ok||!d.bars||!d.bars.length){
+    body='<div style="font:13px/1.6 var(--font-sans);color:var(--text-faint)">没跑出额度条。'
+      +(d.error?'<br>'+escHtml(String(d.error)).slice(0,300):'')
+      +(d.raw?'<pre style="white-space:pre-wrap;font:11px var(--font-mono,monospace);color:var(--text-faint);margin-top:8px">'+escHtml(d.raw).slice(0,800)+'</pre>':'')
+      +'</div>';
+  }else{
+    body=d.bars.map(function(b){
+      var p=Math.max(0,Math.min(100,Number(b.pct)||0)),c=_liveBarColor(p);
+      return '<div style="margin-bottom:12px">'
+        +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:5px">'
+          +'<span style="font:600 14px var(--font-sans);color:var(--text-primary)">'+escHtml(_LIVE_LABEL[b.label]||b.label)+'</span>'
+          +'<span style="font:600 14px var(--font-sans);color:'+c+'">'+p+'%</span></div>'
+        +'<div style="height:8px;border-radius:999px;background:var(--bg-sunken);overflow:hidden">'
+          +'<div style="height:100%;width:'+p+'%;background:'+c+';border-radius:999px"></div></div>'
+        +(b.resets?'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:4px">重置于 '+escHtml(b.resets)+'</div>':'')
+      +'</div>';
+    }).join('');
+    if(d.cached)body+='<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:6px">（20 秒内的结果，直接给你上一次的）</div>';
+  }
+  return '<div id="liveUsageCard" style="margin-bottom:20px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--bg-surface)">'+head+body+'</div>';
+}
+async function _loadLiveUsage(){
+  var el=document.getElementById('liveUsageCard');
+  if(el)el.outerHTML=_liveUsageCard(null);
+  var d;
+  try{var r=await api('/api/usage/live');d=await r.json()}
+  catch(e){d={ok:false,error:e.message||'请求失败'}}
+  var el2=document.getElementById('liveUsageCard');
+  if(el2){el2.outerHTML=_liveUsageCard(d);_bindLiveRefresh()}
+}
+function _bindLiveRefresh(){
+  var b=document.getElementById('liveUsageRefresh');
+  if(b)b.onclick=function(){_loadLiveUsage()};
+}
 function _renderUsage(data){
   if(data&&data.rate_limit)_rateLimitState=data.rate_limit;
   var daily=data.daily||[];
@@ -3517,8 +3743,17 @@ function _renderUsage(data){
     return '<div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:5px" title="'+escHtml(x.day)+'  $'+Number(x.cost_usd||0).toFixed(3)+'  '+(x.calls||0)+'次">'
       +'<div style="width:100%;max-width:26px;height:'+h+'px;background:var(--accent);border-radius:5px 5px 2px 2px;opacity:.85"></div>'
       +'<div style="font:10px var(--font-sans);color:var(--text-faint);white-space:nowrap">'+escHtml(String(x.day).slice(5))+'</div></div>'}).join('');
+  // 08-22 她说「订阅额度那张（快照）和 api 估算的都不要了」。
+  // 撤掉的只有 _subscriptionCards（CLI 顺手报的快照，常年空着说「还没收到」）。
+  // ⚠️ _cacheCard **不许撤**。08-22 我按「api 估算的不要」把它一起撤了，她当场说
+  //    「缓存命中被删了！」—— 那张不是账单，是她查「缓存隔几轮整块重写」那个
+  //    最烧钱问题的**诊断工具**（见交接说明「未竟 1」：九成的钱花在重写缓存上）。
+  //    它显示的 $ 只是判断命中/重写的刻度，不是给她看花了多少钱的。
+  // ⚠️ 花费上限那张**留着**：它那两根条虽然也是估算，但它会真的拦住发送 ——
+  //    撤了显示不撤拦截，她被拦住会不知道为什么。这条以前踩过。
+  // 函数都还在，哪天想看接回来就行。
   $('usageBody').innerHTML=
-     _subscriptionCards(data.rate_limits&&data.rate_limits.length?data.rate_limits:(data.rate_limit?[data.rate_limit]:[]))
+     _liveUsageCard(_liveUsageData)
     +_usageLimitsCard(data)
     +_cacheCard(data.recent)
     +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">缓存命中越高越省钱。</div>';
@@ -3526,9 +3761,13 @@ function _renderUsage(data){
   // 今天/近7天/累计那三块和每日花费柱状图都是按 API 单价折算的，她走订阅，那些数不是她真花的钱。
   // 全部撤掉，只留上面的订阅额度（真实）+ 日限卡（那个还管着真的拦截）+ 缓存命中。
   // _usageBlock() 和 bars 的代码留着没删 —— 哪天想看估算，接回来就行。
-  if($('limSave'))$('limSave').onclick=_saveLimits}
+  if($('limSave'))$('limSave').onclick=_saveLimits;
+  _bindLiveRefresh();
+  // 快照那些是从数据库读的，秒回；/usage 要 spawn 一个进程，所以不挡着面板先开
+  if(!_liveUsageData)_loadLiveUsage()}
 async function loadUsage(){
   $('usageBody').innerHTML='<div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载中…</div>';
+  _liveUsageData=null;
   try{var r=await api('/api/usage');var d=await r.json();_renderUsage(d)}
   catch(e){$('usageBody').innerHTML='<div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载失败：'+escHtml(e.message||'未知错误')+'</div>'}}
 function openUsagePanel(){var p=$('usagePanel');p.style.display='flex';p.setAttribute('aria-hidden','false');loadUsage()}
@@ -4457,9 +4696,22 @@ document.addEventListener('click',function(e){
 
 function saveApiConfig(){var baseURL=document.getElementById('drawerBaseURL').value.trim().replace(/\/+$/,'');var apiKey=document.getElementById('drawerApiKey').value.trim();var apiFormat=document.querySelector('input[name=api_format]:checked')?.value||'openai';var modelInput=document.getElementById('drawerModel').value.trim();if(!baseURL||!apiKey){var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='请填写完整';st.style.color='#e54d2e';return}var btn=document.getElementById('drawerApiSave');btn.textContent='验证中...';btn.disabled=true;fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput})}).then(function(r){if(!r.ok)throw Error('fail');return r.json()}).then(function(d){state.token=d.token;localStorage.setItem('chat_token',d.token);localStorage.setItem('chat_api_config',JSON.stringify({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput}));var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='\u2705 已连接';st.style.color='#16a34a';btn.textContent='保存配置';btn.disabled=false}).catch(function(){var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='\u274c 连接失败';st.style.color='#e54d2e';btn.textContent='保存配置';btn.disabled=false})}
 (function(){fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})}).then(function(r){return r.json()}).then(function(d){if(d.token){state.token=d.token;localStorage.setItem('chat_token',d.token)}
-  // 没有上次的对话记录时，默认进主线「我们」，而不是空白新对话
-  if(!state.convId){return api('/api/sessions/main').then(function(r){return r.json()}).then(function(m){
-    if(m&&m.session&&typeof openSession==='function')return openSession(m.session)})}
+  // 开机进哪段对话（08-22 修）：
+  // ⚠️ 以前只写了「没有 convId 就进主线」，**有 convId 的那条路一个字都没写** ——
+  //    而 localStorage 里几乎永远有 convId，于是刷新之后走到 3652 行的 resetEmpty()，
+  //    她看到的是空白问候页，历史一条都不读。得从抽屉里点一下才回得来。
+  if(typeof openSession!=='function')return;
+  if(state.convId){
+    return api('/api/sessions').then(function(r){return r.json()}).then(function(d){
+      var hit=(d.sessions||[]).filter(function(x){return x.conv_id===state.convId})[0];
+      if(hit)return openSession(hit);
+      // 那段被删了或者不在列表里 —— 别停在空白页，退回主线
+      return api('/api/sessions/main').then(function(r){return r.json()}).then(function(m){
+        if(m&&m.session)return openSession(m.session)});
+    });
+  }
+  return api('/api/sessions/main').then(function(r){return r.json()}).then(function(m){
+    if(m&&m.session)return openSession(m.session)})
 }).catch(function(){})})();
 
 // 回到主线
@@ -4491,6 +4743,45 @@ function loadSttConfig(){
   }).catch(function(){});
 }
 loadSttConfig();
+// 语气注解配置 —— 跟 STT 一样，key 只送后端，前端只知道「配没配过」
+function saveToneConfig(){
+  var k=document.getElementById('drawerToneKey')?.value.trim()||'';
+  var u=document.getElementById('drawerToneUrl')?.value.trim()||'';
+  var m=document.getElementById('drawerToneModel')?.value.trim()||'';
+  var body={};
+  if(k)body.tone_api_key=k;
+  if(u)body.tone_base_url=u;
+  if(m)body.tone_model=m;
+  if(!Object.keys(body).length)return;
+  api('/api/settings/tone',{method:'POST',body:JSON.stringify(body)})
+    .then(function(){var e=document.getElementById('drawerToneKey');if(e){e.value='';e.placeholder='API Key（已保存）'}})
+    .catch(function(){});
+}
+function loadToneConfig(){
+  api('/api/settings/tone').then(function(r){return r.json()}).then(function(d){
+    var u=document.getElementById('drawerToneUrl'),m=document.getElementById('drawerToneModel'),k=document.getElementById('drawerToneKey');
+    if(u&&!u.value)u.value=d.tone_base_url||'';
+    if(m&&!m.value)m.value=d.tone_model||'';
+    if(k&&d.has_key)k.placeholder='API Key（已保存）';
+  }).catch(function(){});
+}
+loadToneConfig();
+// 配完当场试一次 —— 不然要等她下次发语音才知道这个 key 到底吃不吃音频
+async function testTone(btn){
+  var box=document.getElementById('drawerToneTestResult');
+  saveToneConfig();
+  btn.disabled=true;var old=btn.textContent;btn.textContent='试听中…';
+  if(box){box.style.display='block';box.style.color='var(--text-faint)';box.textContent='正在把最近一条语音送过去…'}
+  try{
+    var r=await api('/api/settings/tone/test',{method:'POST',body:'{}'});
+    var d=await r.json();
+    if(box){
+      box.style.color=d.ok?'#16a34a':'#e54d2e';
+      box.textContent=(d.ok?'✓ 听出来了：'+d.tone:'✗ '+(d.message||'失败'));
+    }
+  }catch(e){if(box){box.style.color='#e54d2e';box.textContent='✗ '+(e.message||'请求失败')}}
+  btn.disabled=false;btn.textContent=old;
+}
 // key 不再写进 localStorage（原来那行把明文存浏览器里了），直接送后端存 settings。
 // 接口加了 auth，所以必须走 api() 带 token，裸 fetch 会 401。
 function saveMiniMaxConfig(){

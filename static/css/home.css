@@ -1174,9 +1174,8 @@ body{margin:0!important}
    再减 78px 就是扣两遍，实测同一句话她 304px 宽、他只剩 254px 还被挤高，
    这就是「两人气泡不一样」和「没有以头像为界」的真正原因。
    她那侧的 .bubble 直接挂在行上，100% 是整行宽，才需要减。 */
-.msg-user .bubble{max-width:calc(100% - 78px)!important}
-.msg-claude .bubble{max-width:100%!important}
-.msg-claude .msg-body{max-width:calc(100% - 70px)}
+/* 气泡宽度的唯一权威规则挪到文件最末尾了（08-22「以两个头像为界」那节），
+   别在这儿改——这里改了会被后面盖掉。 */
 
 /* 时间分隔条按参考图：居中、等宽字、前面一个小圆点，两侧不再拉横线 */
 .time-separator{
@@ -1184,7 +1183,15 @@ body{margin:0!important}
   font-family:var(--font-mono);font-size:12px;letter-spacing:.02em;
   color:var(--text-time);
 }
-.time-separator::before,.time-separator::after{display:none}
+/* 08-22 她说：中途长时间没说话，要用 ——时间—— 跟上一段隔开。
+   之前那版把两侧的横线关掉了（display:none），只剩一个居中的小时间，
+   看着像「这一轮的时间戳」，压根不像一道分界。现在把线放回来。
+   ⚠️ 只有 .time-separator（隔了 20 分钟以上才摆的那条大的）有线；
+      .msg-time-inline 是每轮那个小时间戳，不许加线，否则满屏都是分界。 */
+.time-separator::before,.time-separator::after{
+  content:'';display:block;flex:1;height:1px;min-width:24px;
+  background:currentColor;opacity:.22;
+}
 .time-separator .dot{
   width:5px;height:5px;border-radius:50%;
   background:var(--text-time);opacity:.7;flex:none;
@@ -1230,8 +1237,7 @@ html[data-theme="dark"]{--bubble-her:#332A2C}
 }
 .msg-user .msg-avatar svg,.msg-claude .msg-avatar svg{width:15px!important;height:15px!important}
 
-/* 头像小了，气泡的让位也跟着小：40 + gap 10 + 8 留白 = 58 */
-.msg-user .bubble,.msg-claude .bubble{max-width:calc(100% - 58px)}
+/* 让位数值见文件末尾那节权威规则 */
 
 /* 图里头像跟气泡是齐着的（第一行文字的中线），不是气泡顶着头像顶。
    气泡单行 36 / 头像 40，差 4px，往下挪 2 就对上了。 */
@@ -1375,3 +1381,69 @@ html.as-non .msg-claude .msg-time{align-self:flex-end}
 html.as-non .msg-claude .clawd-emote-label{align-self:flex-end}
 html.as-non .msg-claude .md{text-align:left}
 html.as-non .msg-claude.streaming .claude-trail-logo{align-self:flex-end;margin:4px 12px 0 0}
+
+/* ============ 08-22 权威 · 气泡宽度以两个头像为界（改这儿，别改上面） ============
+   她说：「气泡长度不要超过对方头像，在我们两头像为限中间这块区域」。
+   以前只减了自己这侧，所以话一长就顶到对面头像底下去了。
+
+   ⚠️ 头像是 40px，不是 60 —— 上面「续三」那节把头像收成了 40，
+   但气泡的让位还留着按 60 算的旧数。**改这里之前先确认头像到底多大。**
+   一侧的让位 = 头像 40 + gap 10 + 留白 8 = 58。
+
+   ⚠️ 两侧不能抄同一个数：
+     · 她的 .bubble 直接挂在行上，100% 就是整行 → 一次减两侧 = 116
+     · 他的 .bubble 长在 .msg-body 里，.msg-body 已经替他减过自己那侧（50）
+       → 这里只再减对面（她）那侧的 58。抄 116 就是扣两遍，
+         实测会把他的气泡压成窄条，也就是「两人气泡不一样宽」的老毛病。 */
+.msg-user .bubble{max-width:calc(100% - 116px)!important}
+.msg-claude .msg-body{max-width:calc(100% - 50px)!important}
+.msg-claude .bubble{max-width:calc(100% - 58px)!important}
+
+/* ============ 08-22 她说：语音条离头像的距离，要跟气泡离头像的距离一样 ============
+   两处不一致，一处是两侧不一致：
+     · 她那行 gap:10px，他那行 gap:8px —— 同一句话左右看着就差 2px；
+       而且末尾算让位用的是 40+10+8，他那侧按 8 排就跟这套算法对不上。
+     · 语音条整条时会把外层 .bubble 脱壳（padding 归零），但壳上的 margin 没归零，
+       语音条就比文字气泡多顶出去一点。
+   统一成 10px，语音条和文字气泡从此站在同一条线上。 */
+.msg-user,.msg-claude{gap:10px!important}
+/* 🚨 语音条 / 通话胶囊「离头像远」的真凶（08-22 用 Playwright 量出来的）：
+   量到的是 文字气泡 10px，语音条和通话胶囊都是 23px —— 多出来的正好 13px。
+   来源不是 gap，是**脱壳没脱干净**：上面 1036 行那条 .voice-only{padding:0} 没带
+   !important，被后面 `.msg-user .bubble,.msg-claude .bubble{padding:9px 15px!important}`
+   整个盖掉了。壳的背景是没了，壳的 13px 左右内边距还在，把条子往里顶了 13px。
+   ⚠️ 通话胶囊用的也是 .voice-only 这个类（两处 classList.toggle 都是它），
+      所以这一条同时管住语音条和通话胶囊，别再单独为通话写一条。 */
+.msg-user .bubble.voice-only,.msg-claude .bubble.voice-only{padding:0!important;margin:0!important}
+.msg-user .voice-msg,.msg-claude .voice-msg{margin-left:0!important;margin-right:0!important}
+
+/* 🚨 她发图那条消息里，文字气泡被压成一竖条（08-22 Playwright 拍下来的）：
+   有图片时前端会包一层 .msg-user-col，图片和气泡竖着排在里面。
+   那一层的宽度是**图片撑出来的**（两张 104 + 间距 = 214px），
+   而气泡的 max-width 是 calc(100% - 116px) —— 这里的 100% 已经不是整行了，
+   是那 214px，再减 116 只剩 98px，一行塞不下三个字。
+   让位那 116px 是给两侧头像留的，而 .msg-user-col 已经站在头像里侧了，
+   **不能再减一次**。跟他那侧 .msg-body 是同一类「扣两遍」的毛病。 */
+.msg-user .msg-user-col{max-width:calc(100% - 116px)}
+.msg-user .msg-user-col .bubble{max-width:100%!important}
+
+/* ============ 08-22 她要的三处时间戳调整 ============ */
+
+/* 1&2. ——时间—— 那条：上下留白拉开，去掉前面那个小圆点。
+   圆点是 DOM 里写死的 <span class="dot">，删元素要改两处 JS（历史和实时各一份，
+   一定会漏），所以这里直接把它藏掉 —— 一条规则同时管住两条渲染路径。 */
+.time-separator{margin:34px 0 26px!important}
+.time-separator .dot{display:none!important}
+.time-separator::before,.time-separator::after{opacity:.18}
+
+/* 3. 他气泡上那个小时间戳：往右挪一点，颜色换成正文的黑
+   ⚠️ 它跟上面那条大的共用 .dot 那个圆点，但**这个不能藏** —— 她只说了大的不要。
+      所以上面那条用的是 .time-separator .dot，别写成裸 .dot。 */
+.msg-time-inline{
+  /* ⚠️ 原来是 margin-left:48px（对齐他气泡的左边缘：头像 40 + gap 8）。
+     我第一版写 12px，结果是把它往**左**推了 36px —— 「右移一点点」是在 48 的
+     基础上再加，不是从 0 开始。改这个数之前先看它原来是多少。 */
+  margin-left:56px!important;
+  color:var(--text-primary)!important;
+}
+.msg-time-inline .dot{background:var(--text-primary)!important;opacity:.75!important}
