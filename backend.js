@@ -1613,7 +1613,15 @@ async function transcribeWithTone(uploadId) {
   // 音频走 base64 塞进 JSON，比 multipart 大三成 —— 太长的直接不走这路，退回 Whisper
   if (buf.length > 8 * 1024 * 1024) return null;
 
-  const resp = await fetch(baseUrl, {
+  // 08-22：她填 `.../compatible-mode/v1`（阿里云控制台就是这么给的），代码直接 POST
+  // 过去 → 404。OpenAI 兼容模式的聊天端点是 /v1/chat/completions。
+  // 两种填法都认，省得下次换服务商再踩一遍。
+  // ⚠️ 注意 stt_base_url 的规矩不一样：那个要填到 /audio/transcriptions 为止。
+  const chatUrl = /\/chat\/completions\/?$/.test(baseUrl)
+    ? baseUrl.replace(/\/+$/, '')
+    : baseUrl.replace(/\/+$/, '') + '/chat/completions';
+
+  const resp = await fetch(chatUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
     body: JSON.stringify({
@@ -1621,7 +1629,12 @@ async function transcribeWithTone(uploadId) {
       max_tokens: 400,
       messages: [{ role: 'user', content: [
         { type: 'text', text: TONE_PROMPT },
-        { type: 'input_audio', input_audio: { data: buf.toString('base64'), format: ext } },
+        // 08-22：必须是 data URI。裸 base64 阿里云会当成 URL 去解析，报
+        // 「The provided URL does not appear to be valid」——400，跟 key 和模型都没关系。
+        // webm 它能直接吃，不用 ffmpeg 转格式（这台也没装 ffmpeg）。
+        { type: 'input_audio', input_audio: {
+            data: 'data:' + (MIME_BY_EXT['.' + ext] || 'audio/webm') + ';base64,' + buf.toString('base64'),
+            format: ext } },
       ] }],
     }),
     signal: AbortSignal.timeout(60000),
@@ -1637,6 +1650,9 @@ async function transcribeWithTone(uploadId) {
   let text = '', tone = '';
   if (m) { try { const j = JSON.parse(m[0]); text = String(j.text || '').trim(); tone = String(j.tone || '').trim(); } catch (e) {} }
   if (!text) text = out.slice(0, 500);      // JSON 没解出来，至少把话留下
+  // 08-22：音频里没人说话时（纯音效/静音），模型会把 prompt 里的占位说明当答案抄回来，
+  // 那句假话会被写进 uploads.transcript，她点开就看到一句莫名其妙的话。识别成这样就当没识别出来。
+  if (/逐字转写|15字以内|听不出就写/.test(text)) return null;
   if (!text) return null;
   tone = tone.replace(/^["「'']|["」'']$/g, '').slice(0, 40);
   try { db.prepare('UPDATE uploads SET transcript = ?, tone = ? WHERE id = ?').run(text, tone || null, uploadId); } catch (e) {}
@@ -1662,7 +1678,14 @@ app.post('/api/settings/tone/test', auth, async (req, res) => {
     const row = db.prepare("SELECT id FROM uploads WHERE (filename LIKE '%.webm' OR filename LIKE '%.mp3' OR filename LIKE '%.wav' OR filename LIKE '%.m4a') ORDER BY id DESC LIMIT 1").get();
     if (!row) return res.json({ ok: false, message: '还没有语音文件可以试 —— 先发一条语音给他' });
     const r = await transcribeWithTone(row.id);
-    if (!r) return res.json({ ok: false, message: '没配 key，或者这段语音太大被跳过了' });
+    // 08-22：原来这里一律报「没配 key」，但 transcribeWithTone 返回 null 有四种原因，
+    // key 只是其中一种。假报错最耽误事 —— 分开说。
+    if (!r) {
+      const hasKey = !!db.prepare("SELECT value FROM settings WHERE key='tone_api_key'").get()?.value;
+      const hasUrl = !!db.prepare("SELECT value FROM settings WHERE key='tone_base_url'").get()?.value;
+      if (!hasKey || !hasUrl) return res.json({ ok: false, message: '还没配 key 或地址（抽屉 → API 配置 → 语气识别）' });
+      return res.json({ ok: false, message: '接通了，但这段音频里没听出人说话 —— 换一条你说话的语音再试' });
+    }
     res.json({ ok: true, tone: r.tone, text: r.text });
   } catch (e) { res.json({ ok: false, message: e.message }); }
 });
