@@ -2297,6 +2297,15 @@ function _renderActionReportCard(phases,traceRow,parent){
   var _CODE_TOOLS=['Read','Write','Edit','Grep','Glob','Bash'];
   toolPhases=toolPhases.filter(function(p){return _CODE_TOOLS.indexOf(p.toolName)!==-1});
   if(!toolPhases.length)return;
+  // 08-22 她说的：「这种简单的工具调用不要渲染终端卡片」。
+  // 起因是他给她发文件时顺手 Read 了一下路径，就蹦出一张「1 个操作 · 完成」的终端卡。
+  // 这张卡的意义是「他动了什么」——只读工具什么都没动，不值得占一张卡打断对话。
+  // 有写操作（Write/Edit/Bash）、或者哪一步失败了，才值得给她一张。
+  // ⚠️ 信息没丢：trace row 还在，点开照样看得到他读了哪个文件。
+  var _READ_ONLY=['Read','Grep','Glob'];
+  var _allReadOnly=toolPhases.every(function(p){return _READ_ONLY.indexOf(p.toolName)!==-1});
+  var _anyError=toolPhases.some(function(p){return p.status==='error'});
+  if(_allReadOnly&&!_anyError)return;
   var errored=toolPhases.filter(function(p){return p.status==='error'}).length;
   var allDone=errored===0;
   var countLabel=toolPhases.length+' 个操作';
