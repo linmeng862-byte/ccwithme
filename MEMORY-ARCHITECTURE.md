@@ -92,7 +92,7 @@
 - `mindDecayTick` 每小时衰减 ✅
 - Nocturne 代理工具 ✅ —— `nocturne_` 开头 7 个
   （persona / slang / story→**ring** / hold / texture / moment / bottle），
-  另有 `recall_memory`→`trace`、`drive`、`wander`、`garden`（元工具，覆盖 26 个操作）、
+  另有 `trace`、`drive`、`wander`、`garden`（元工具，覆盖 26 个操作）、
   `toy_control`（4 合 1）。**`nocturne_wake` 已删**（返回 1.8 万 token，调一次就把省的吐回去）
 - **`mindBreath()` 浮起 + 四道过滤 + 想起 +0.05 反哺** ✅（2026-08-19）
   - 位置：`backend.js`「Mind breath 浮起」段（`_mindGrams` / `_mindSurfaceCandidates` /
@@ -228,7 +228,7 @@
   ≥0.6 查重，不同内容各占一行；每个 drive 上限 `MIND_FLASH_PER_DRIVE = 5`，
   满了挤掉最弱的那条。
 - **`search_memory` 搜的是空表**：`saved_memories` 和 `profile` 在这台机器上都是 0 条。
-  真正有东西的是 Nocturne（`recall_memory` → `trace`）。已从 TOOLS 摘除 schema。
+  真正有东西的是 Nocturne（`trace`）。已从 TOOLS 摘除 schema。
 
 ---
 

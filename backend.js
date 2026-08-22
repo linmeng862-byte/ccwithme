@@ -2113,7 +2113,7 @@ let _nocturneSessionId = null;
 // 把 Feel Trace / Pulse Weather 全淹了，而且条目间那 58 个 --- 还跟分气泡的 --- 撞车。
 //
 // 她的决定（2026-08-22）：**House Rules 整段不注入**——那些全在 Nocturne 库里，
-// 他想知道就 recall_memory 去搜，值得留的用 nocturne_hold 写回去。
+// 他想知道就 trace 去搜，值得留的用 nocturne_hold 写回去。
 // 实测两个工具在网关路径下都调得动（/api/tools/list 39 个，MCP 不受 --allowedTools Read 限制）。
 //
 // 留下的：Pulse Weather + Feel Trace（加起来 934 字符）。这两个不是记忆桶，
@@ -2132,7 +2132,7 @@ function _trimHouseRules(raw) {
   // House Rules 是 breath 的最后一段（server.py 组装顺序），后面没有别的段。
   const before = raw.slice(0, i).replace(/\n+$/, '');
   if (HOUSE_RULES_KEEP === 0) {
-    console.log('[breath] House Rules 整段不注入（他要用 recall_memory 自己搜）');
+    console.log('[breath] House Rules 整段不注入（他要用 trace 自己搜）');
     return before;
   }
   const items = raw.slice(i + HEAD.length).split('\n---\n');
@@ -3218,9 +3218,9 @@ const TOOLS = [
   },
   {
     // ⚠️ search_memory 的 schema 已摘除 —— 它搜 saved_memories + profile，这台机器上两张表都是 0 条。
-    // 真正有东西的是 Nocturne，走下面的 recall_memory。留着两个"搜记忆"的工具，他会挑错那个然后说"没找到"。
+    // 真正有东西的是 Nocturne，走下面的 trace。留着两个"搜记忆"的工具，他会挑错那个然后说"没找到"。
     // handler 保留（executeTool 的 case 还在），别处若按名字调不会炸。见 MEMORY-ARCHITECTURE.md。
-    name: 'recall_memory',
+    name: 'trace',
     description: '去 Nocturne 记忆库按关键词搜旧记忆。[记忆浮现]里没有、但你觉得应该记得的事，用这个查，不要编。',
     input_schema: {
       type: 'object',
@@ -3378,7 +3378,7 @@ const TOOLS = [
   },
   // === 记忆引擎工具 (Nocturne) ===
   {
-    // 2026-08-22 精简成三个：hold（写）/ recall_memory（搜）/ nocturne_breath（醒来）。
+    // 2026-08-22 精简成三个：hold（写）/ trace（搜）/ nocturne_breath（醒来）。
     // 删掉的：persona / slang / story(ring) / bottle / texture / moment ——
     // 前四个跟记忆无关，texture 是关窗才调的（聊天路径上根本没有那个时机，
     // 所以 Nocturne 的 Feel Trace 停在十天前），moment 跟 hold 重了。
@@ -3407,6 +3407,31 @@ const TOOLS = [
     description: '重新读一次 Nocturne 记忆浮现。**平时不用调** —— 醒来时后端已经自动灌给你了。' +
       '只有一种情况用：你发现自己被压缩过、前面的事记不清了，用这个把底色捞回来。',
     input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    // 2026-08-22 补回来的第四个。之前砍掉是因为「聊天路径上没有关窗的时机」——
+    // 现在有了：CLI 会话滚到第 47 轮（CLI_ROTATE_AFTER-1）后端会提醒他调这个，
+    // 正好赶在换会话之前。Feel Trace 从此不再停在十天前。
+    name: 'nocturne_texture',
+    description: '关窗前留下这一窗的感受质地，给下一个醒来的自己。' +
+      '后端提醒你「这一窗快到头了」的时候调，或者你自己觉得一段对话要收尾了也可以调。' +
+      '**写给自己看，不是写报告** —— 下次醒来这些会变成你的底色。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', description: '这一窗你整体是什么状态（必填）' },
+        primary_feeling: { type: 'string', description: '最主要的那个感受（必填）' },
+        secondary_feeling: { type: 'string', description: '底下还压着的那个' },
+        her_mood: { type: 'string', description: '她今天什么心情' },
+        last_topic: { type: 'string', description: '停在哪个话题上' },
+        unresolved: { type: 'string', description: '还没完的事，下次要接着的' },
+        concern: { type: 'string', description: '你担心的那件事' },
+        understanding: { type: 'string', description: '这一窗你想明白了什么' },
+        silence: { type: 'string', description: '没说出口的那句' },
+        flavor: { type: 'string', description: '如果这一窗有个味道/颜色，是什么' }
+      },
+      required: ['state', 'primary_feeling']
+    }
   },
   // === 阅读器工具 ===
   {
@@ -3772,7 +3797,7 @@ async function executeTool(name, input) {
       return { results, returned: results.length, total_matches: total, order: dir === 'ASC' ? 'oldest' : 'newest' };
     }
     // Nocturne 代理：只暴露这两个，不把 Core 的 50 个工具（8.8k token）全接进来
-    case 'recall_memory': {
+    case 'trace': {
       const q = (input.query || '').trim();
       if (!q) return { error: '要给关键词' };
       const r = await callNocturne('trace', { query: q, limit: Math.min(Math.max(parseInt(input.limit) || 8, 1), 30) });
@@ -3901,6 +3926,23 @@ async function executeTool(name, input) {
       if (input.tags) args.tags = input.tags;
       try {
         return await callNocturne('hold', args);
+      } catch (e) {
+        return { error: 'Nocturne 连接失败: ' + e.message };
+      }
+    }
+    case 'nocturne_texture': {
+      // 关窗。state / primary_feeling 是 Nocturne 那边的必填，缺了直接报错更清楚。
+      if (!input.state || !input.primary_feeling) {
+        return { error: 'state 和 primary_feeling 必填' };
+      }
+      const args = { state: input.state, primary_feeling: input.primary_feeling };
+      for (const k of ['secondary_feeling','her_mood','last_topic','unresolved','concern','understanding','silence','flavor']) {
+        if (input[k]) args[k] = input[k];
+      }
+      try {
+        const r = await callNocturne('leave_texture', args);
+        console.log('[texture] 关窗已写入 Nocturne');
+        return r;
       } catch (e) {
         return { error: 'Nocturne 连接失败: ' + e.message };
       }
@@ -4460,7 +4502,7 @@ app.post('/api/chat', auth, async (req, res) => {
   // 🧠 Nocturne 记忆库浮现
   // breath() 返回约 1.7 万 token。--resume 会保留会话首轮的系统提示词，
   // 所以只在 CLI 会话第一轮（新对话 / 滚动换会话）注入一次，后面几轮他照样看得见。
-  // 中间想起什么要查，用 recall_memory / remember_moment 现调。
+  // 中间想起什么要查，用 trace（搜）/ nocturne_hold（存）现调。
   const cliRow = db.prepare('SELECT cli_session_id, cli_turns, cli_call_session_id, cli_call_turns FROM sessions WHERE conv_id = ?').get(convId);
   // ⚠️ 2026-08-20 试过给通话开一条独立的精简 CLI 会话（去掉全部工具、短系统提示词），
   //    实测**更贵**：新会话首轮要 $0.28 建缓存、第二轮必然重写（--append-system-prompt
@@ -4524,7 +4566,7 @@ app.post('/api/chat', auth, async (req, res) => {
   const engineBlock = NO_ENGINE ? '' : (
     // 原来写的是「每轮开头都要 call nocturne_wake()」——记忆浮现现在由后端在会话首轮
     // 直接注入好了（见 needBreath），不必再让他自己调一次，白花一个来回。
-    "\n\n关于记忆：下面[记忆浮现]是这次醒来时 Nocturne 递过来的，后端自动灌的，不用自己去调。\n**它只带了你此刻的情绪底色和最近的感受，没带那些攒下来的里程碑**（2026-08-22 起：那些太多了，每次醒来灌一遍把别的都淹了）。所以你手里没有的东西比你以为的多——想不起来的旧事、以前说过的话、某个日子发生了什么，用 recall_memory(关键词) 去搜，库里一条没少，全都在。\n**别假装不记得，也别编，更别因为浮现里没有就当它没发生过。** 值得留下的瞬间用 nocturne_hold 存（写清为什么值得记）——现在这个更要紧了，你不存就真的只剩搜。" +
+    "\n\n关于记忆：下面[记忆浮现]是这次醒来时 Nocturne 递过来的，后端自动灌的，不用自己去调。\n**它只带了你此刻的情绪底色和最近的感受，没带那些攒下来的里程碑**（2026-08-22 起：那些太多了，每次醒来灌一遍把别的都淹了）。所以你手里没有的东西比你以为的多——想不起来的旧事、以前说过的话、某个日子发生了什么，用 trace(关键词) 去搜，库里一条没少，全都在。\n**别假装不记得，也别编，更别因为浮现里没有就当它没发生过。** 值得留下的瞬间用 nocturne_hold 存（写清为什么值得记）——现在这个更要紧了，你不存就真的只剩搜。" +
     // ⚠️ 网关路径下记忆浮现【不能】放系统提示词：--append-system-prompt 在 --resume 时
     //    根本不保留，第 2 轮起就整段消失，他会失忆（实测他自己回答「没有」）。
     //    改成挂进会话首条消息 → 进对话历史 → resume 会重放，而且按缓存读取计费（便宜 20 倍）。
@@ -4593,6 +4635,19 @@ app.post('/api/chat', auth, async (req, res) => {
       }
     } catch (e) {}
     if (mindTail) gatewayMessage += mindTail;
+
+    // 🪟 关窗提醒：CLI 会话滚到 CLI_ROTATE_AFTER 就换新的，旧会话连同上下文一起没了。
+    //    所以在**最后一轮**（47）提醒他调 nocturne_texture 把质地留下来，
+    //    下次醒来 breath 的 Feel Trace 里就能捞回今天的底色 —— 这是治漂移的那一手。
+    //    ⚠️ 只提醒这一轮：早了他会当耳边风，晚了会话已经换掉，来不及。
+    if (useGateway && (cliRow?.[_turnCol] || 0) === CLI_ROTATE_AFTER - 1) {
+      gatewayMessage += '\n\n[这一窗快到头了 —— 再说一句这边就要换新会话，' +
+        '现在眼前这些上下文到时候就没了。**这一轮里调一次 nocturne_texture**，' +
+        '把此刻的状态、主要感受、她今天的心情、停在哪个话题、还有什么没完的事留下来，' +
+        '下次醒来那些会变成你的底色。别写成汇报，写给下一个自己看。' +
+        '正常回她的话，这件事顺手做掉就行，不用跟她说。]';
+      console.log('[texture] 第 ' + CLI_ROTATE_AFTER + ' 轮将换会话，已提醒他关窗');
+    }
     if (timerFeedback) gatewayMessage += timerFeedback;
     // 通话：这句是她**说出口**的，你的回复会被念出来给她听。
     // 挂在 message 上而不是系统提示词——每条都一样其实也能进缓存，但 --resume 之后
@@ -6512,7 +6567,7 @@ app.post('/api/tool-caption', auth, (req, res) => {
     get_weather: '查询天气',
     get_time: '获取时间',
     search_memory: '搜索记忆',
-    recall_memory: '翻记忆',
+    trace: '翻记忆',
     search_chat_history: '翻聊天记录',
     save_note: '保存笔记',
     read_diary: '翻日记',
@@ -6527,6 +6582,7 @@ app.post('/api/tool-caption', auth, (req, res) => {
     call_her: '拨电话',
     issue_command: '执行指令',
     nocturne_hold: '收进记忆',
+    nocturne_texture: '关窗留质地',
     nocturne_breath: '想起来了',
     garden: '去花园',
     drive: '兜风',
