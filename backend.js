@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const JSZip = require('jszip');
 const iconv = require('iconv-lite');
+const sharp = require('sharp');   // 表情包提首帧用
 let neteaseApi = null;
 try { neteaseApi = require('NeteaseCloudMusicApi'); } catch(e) {}
 
@@ -276,6 +277,17 @@ db.exec(`
   try { db.exec('ALTER TABLE gallery_photos ADD COLUMN note TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('ALTER TABLE gallery_photos ADD COLUMN source_msg_id TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('ALTER TABLE gallery_photos ADD COLUMN src_data TEXT DEFAULT \'\''); } catch(_) {}
+  // 表情包扩展列 —— 原表只有 id/filename/category/tags，不够 AI 看懂一张表情
+  // owner: 'user' 她的 / 'assistant' 他的；status: draft|processing|ready_for_review|active|failed
+  // description 是 AI 理解这张表情的主要依据，没有描述 = 一张看不懂的图
+  try { db.exec('ALTER TABLE stickers ADD COLUMN owner TEXT DEFAULT \'user\''); } catch(_) {}
+  try { db.exec('ALTER TABLE stickers ADD COLUMN status TEXT DEFAULT \'active\''); } catch(_) {}
+  try { db.exec('ALTER TABLE stickers ADD COLUMN name TEXT DEFAULT \'\''); } catch(_) {}
+  try { db.exec('ALTER TABLE stickers ADD COLUMN description TEXT DEFAULT \'\''); } catch(_) {}
+  try { db.exec('ALTER TABLE stickers ADD COLUMN emotion_tags TEXT DEFAULT \'[]\''); } catch(_) {}
+  try { db.exec('ALTER TABLE stickers ADD COLUMN mime TEXT DEFAULT \'\''); } catch(_) {}
+  try { db.exec('ALTER TABLE stickers ADD COLUMN thumbnail TEXT DEFAULT \'\''); } catch(_) {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_stickers_owner_status ON stickers(owner, status)'); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN description TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN quiz_type TEXT DEFAULT NULL'); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN quiz_data TEXT DEFAULT NULL'); } catch(_) {}
@@ -1022,36 +1034,93 @@ app.delete('/api/reading/books/:id', auth, (req, res) => {
 // ── 表情包 API ──────────────────────────────────────────
 const stickerUpload = multer({ dest: path.join(__dirname, 'data', 'uploads', 'tmp'), limits: { fileSize: 10 * 1024 * 1024 } });
 
-app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, (req, res) => {
+// 动态表情：只收 GIF / animated WebP。原文件原样存，不转码、不压成静态图。
+// 首帧另存一张 PNG 缩略图 —— 给模型看的是它，不是整个动图（省 token 又稳定）。
+const STICKER_EXT = { '.gif': 'image/gif', '.webp': 'image/webp' };
+
+app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, async (req, res) => {
+  const tmpPath = req.file && req.file.path;
   try {
     if (!req.file) return res.status(400).json({ error: '请选择图片' });
     const ext = path.extname(req.file.originalname).toLowerCase();
-    if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return res.status(400).json({ error: '仅支持 PNG/JPG/GIF/WEBP' });
+    const mime = STICKER_EXT[ext];
+    if (!mime) return res.status(400).json({ error: '只支持 GIF / WebP 动图' });
+
+    // 描述是 AI 读懂这张表情的唯一依据，不许跳过
+    const name = (req.body.name || '').trim();
+    const description = (req.body.description || '').trim();
+    if (!name) return res.status(400).json({ error: '给它起个名字' });
+    if (!description) return res.status(400).json({ error: '画面描述不能空——没有描述的表情，他看不懂' });
+
+    let emotionTags = [];
+    try {
+      const raw = req.body.emotion_tags || '';
+      emotionTags = Array.isArray(raw) ? raw : (raw.trim().startsWith('[') ? JSON.parse(raw) : raw.split(/[,，、\s]+/));
+      emotionTags = emotionTags.map(t => String(t).trim()).filter(Boolean).slice(0, 5);
+    } catch(_) { emotionTags = []; }
+
+    const owner = req.body.owner === 'assistant' ? 'assistant' : 'user';
+    // sid 是服务端生成的，文件名不掺用户输入 —— 防路径遍历
     const sid = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const fname = sid + ext;
-    fs.copyFileSync(req.file.path, path.join(stickerDir, fname));
-    try { fs.unlinkSync(req.file.path); } catch(_) {}
+    const thumbName = sid + '_thumb.png';
+
+    fs.copyFileSync(tmpPath, path.join(stickerDir, fname));
+
+    // 提首帧。提不出来不算致命——表情照样能发，只是模型少了张图
+    let thumbnail = '';
+    try {
+      await sharp(path.join(stickerDir, fname), { pages: 1 }).png().toFile(path.join(stickerDir, thumbName));
+      thumbnail = thumbName;
+    } catch(e) {
+      console.warn('[sticker] 首帧提取失败 ' + sid + ': ' + e.message);
+    }
+
     const category = req.body.category || '默认';
     const tags = req.body.tags || '';
-    db.prepare('INSERT INTO stickers (id, filename, category, tags) VALUES (?, ?, ?, ?)').run(sid, fname, category, tags);
-    res.json({ id: sid, filename: fname, category, tags });
+    db.prepare(
+      'INSERT INTO stickers (id, filename, category, tags, owner, status, name, description, emotion_tags, mime, thumbnail) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+    ).run(sid, fname, category, tags, owner, 'active', name, description, JSON.stringify(emotionTags), mime, thumbnail);
+
+    res.json({
+      id: sid, filename: fname, owner, status: 'active', name, description,
+      emotion_tags: emotionTags, mime, thumbnail,
+      url: '/stickers/' + fname,
+      thumbnail_url: thumbnail ? '/stickers/' + thumbnail : ''
+    });
   } catch(e) {
     res.status(500).json({ error: '上传失败: ' + e.message });
+  } finally {
+    if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch(_) {} }
   }
 });
+
+// 出库前统一成第 4 节那个形状。emotion_tags 存的是 JSON 字符串，出去要是数组。
+function shapeSticker(s) {
+  if (!s) return null;
+  let tagsArr = [];
+  try { tagsArr = JSON.parse(s.emotion_tags || '[]'); } catch(_) { tagsArr = []; }
+  return {
+    id: s.id, owner: s.owner || 'user', status: s.status || 'active',
+    name: s.name || '', description: s.description || '',
+    emotion_tags: Array.isArray(tagsArr) ? tagsArr : [],
+    mime: s.mime || '', url: '/stickers/' + s.filename,
+    thumbnail: s.thumbnail ? '/stickers/' + s.thumbnail : '',
+    filename: s.filename, category: s.category || '默认', created_at: s.created_at
+  };
+}
 
 app.get('/api/stickers', (req, res) => {
   const cat = req.query.category || '';
   const search = req.query.q || '';
-  let stickers;
-  if (search) {
-    stickers = db.prepare("SELECT * FROM stickers WHERE tags LIKE ? OR category LIKE ? ORDER BY created_at DESC LIMIT 50").all('%'+search+'%', '%'+search+'%');
-  } else if (cat) {
-    stickers = db.prepare('SELECT * FROM stickers WHERE category = ? ORDER BY created_at DESC').all(cat);
-  } else {
-    stickers = db.prepare('SELECT * FROM stickers ORDER BY created_at DESC LIMIT 50').all();
-  }
-  res.json(stickers);
+  const owner = req.query.owner || '';        // 'user' 她的 / 'assistant' 他的
+  const where = [], args = [];
+  if (owner === 'user' || owner === 'assistant') { where.push('owner = ?'); args.push(owner); }
+  if (req.query.status) { where.push('status = ?'); args.push(req.query.status); }
+  if (search) { where.push('(name LIKE ? OR description LIKE ? OR emotion_tags LIKE ? OR tags LIKE ? OR category LIKE ?)'); const q = '%'+search+'%'; args.push(q,q,q,q,q); }
+  else if (cat) { where.push('category = ?'); args.push(cat); }
+  const sql = 'SELECT * FROM stickers' + (where.length ? ' WHERE ' + where.join(' AND ') : '') + ' ORDER BY created_at DESC LIMIT 200';
+  res.json(db.prepare(sql).all(...args).map(shapeSticker));
 });
 
 app.get('/api/stickers/categories', (req, res) => {
@@ -1063,6 +1132,7 @@ app.delete('/api/stickers/:id', auth, (req, res) => {
   const s = db.prepare('SELECT * FROM stickers WHERE id = ?').get(req.params.id);
   if (s) {
     try { fs.unlinkSync(path.join(stickerDir, s.filename)); } catch(_) {}
+    if (s.thumbnail) { try { fs.unlinkSync(path.join(stickerDir, s.thumbnail)); } catch(_) {} }
     db.prepare('DELETE FROM stickers WHERE id = ?').run(req.params.id);
   }
   res.json({ deleted: true });
@@ -1588,6 +1658,23 @@ app.post('/api/call/log', auth, (req, res) => {
   }
   const convId = req.body?.conv_id;
   if (!convId) return res.status(400).json({ error: 'conv_id required' });
+
+  // 「未接来电 已回拨」——参考图里那条。不是新写一条，是把之前漏掉的那条改掉：
+  // 她漏接之后 30 分钟内接通了任何一通，就说明她回拨了，把最近那条 missed 升级成 missed_back。
+  // ⚠️ 只认 30 分钟内、且还没升级过的那一条；隔了半天才通话不算回拨，那是新的一通。
+  if (kind === 'ended') {
+    try {
+      const back = db.prepare(
+        "SELECT id FROM messages WHERE conv_id = ? AND content LIKE '[CALL:missed|%'" +
+        " AND created_at >= strftime('%s','now') - 1800 ORDER BY id DESC LIMIT 1"
+      ).get(convId);
+      if (back) {
+        db.prepare("UPDATE messages SET content = replace(content, '[CALL:missed|', '[CALL:missed_back|') WHERE id = ?")
+          .run(back.id);
+      }
+    } catch (e) { console.error('[call] 回拨标记失败:', e.message); }
+  }
+
   // 通话记录挂在他那一侧（跟来电、去电都是他发起的对齐）
   db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)')
     .run(convId, 'assistant', '[CALL:' + kind + '|' + dur.replace(/[^0-9:]/g, '') + ']');
@@ -4204,12 +4291,25 @@ app.get('/api/usage', (req, res) => {
   // 真实订阅额度（5 小时窗口）——由 CLI 的 rate_limit_event 带下来，聊天时顺手存的。
   // ⚠️ 跟上面那些 cost_usd 不是一回事：cost_usd 是"按 API 价格算这轮值多少钱"，
   //    她走的是订阅，那个数只能当参考，真正会把她卡住的是这个 rate_limit。
+  // 2026-08-22：改成一次把所有窗口都给前端（five_hour / seven_day 各一条），
+  // 并且带上 stale_sec —— 这是张快照，CLI 不是每轮都报，**几小时前的数不能顶着"真实"两个字显示**。
+  let rate_limits = [];
   let rate_limit = null;
   try {
     const raw = db.prepare("SELECT value FROM settings WHERE key = 'rate_limit_state'").get();
-    if (raw && raw.value) rate_limit = JSON.parse(raw.value);
+    if (raw && raw.value) {
+      const parsed = JSON.parse(raw.value);
+      // 老格式是单个对象（带 status），新格式是 { type: {...} } 的表，两种都认
+      const map = (parsed && parsed.status) ? { [parsed.type || 'unknown']: parsed } : (parsed || {});
+      const nowSec = Math.floor(Date.now() / 1000);
+      rate_limits = Object.keys(map).map(k => {
+        const v = map[k] || {};
+        return { ...v, type: v.type || k, stale_sec: v.at ? (nowSec - v.at) : null };
+      }).sort((a, b) => (a.at || 0) < (b.at || 0) ? 1 : -1);
+      rate_limit = rate_limits[0] || null;   // 老前端还读这个字段，留着别断
+    }
   } catch (e) { /* 没有就是还没聊过天，前端自己兜底 */ }
-  res.json({ today, week, total, daily, recent, limits, spent: s, rate_limit, blocked: !!limitBlock() });
+  res.json({ today, week, total, daily, recent, limits, spent: s, rate_limit, rate_limits, blocked: !!limitBlock() });
 });
 
 app.post('/api/tools/list', (req, res) => {
@@ -4315,9 +4415,17 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
         if (evt.thinking) res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
         if (evt.tool_use) res.write('event: tool_use\ndata: ' + JSON.stringify(evt.tool_use) + '\n\n');
         if (evt.error) {
-          // 会话丢了（网关重启/记录过期）就清掉，下一句自动开新的
-          if (evt.error === 'session_lost') wpSession.set('');
-          res.write('event: error\ndata: ' + JSON.stringify({ message: evt.error }) + '\n\n');
+          // 会话丢了（网关重启/记录过期）就清掉，下一句自动开新的。
+          // ⚠️ 别把 'session_lost' 这个内部标记原样吐给她 —— 界面上蹦一个英文单词，
+          //    她不知道发生了什么、也不知道该重发。说人话。
+          if (evt.error === 'session_lost') {
+            wpSession.set('');
+            res.write('event: error\ndata: ' + JSON.stringify({
+              message: '上一条工作台会话过期了，我已经开了新的一条 —— 把刚才那句（连同附件）再发一遍就行。',
+            }) + '\n\n');
+          } else {
+            res.write('event: error\ndata: ' + JSON.stringify({ message: evt.error }) + '\n\n');
+          }
         }
         if (evt.usage) {
           const u = evt.usage;
@@ -4579,8 +4687,22 @@ async function handleGatewayChat(req, res, ctx) {
           // ⚠️ 跟 usage_log 里的 cost_usd 完全是两回事：那个是"按 API 价格算这轮值多少钱"，
           //    她走订阅，那个数跟她真实的额度消耗对不上——她说"用量跟真实用量不一致"就是这个。
           //    以前这里只赋值给 lastRateLimit 然后再没人用过，前端也没接，数据流到一半就丢了。
+          //    2026-08-22 又修一次：CLI 会分别报 five_hour 和 seven_day 两个窗口，
+          //    以前全塞进同一个 key，**后到的直接盖掉先到的**，两个窗口只活下来一个。
+          //    现在按 type 分开存成一张表 { five_hour: {...}, seven_day: {...} }。
           lastRateLimit = evt.rate_limit;
-          try { _setSetting('rate_limit_state', JSON.stringify({ ...evt.rate_limit, at: Math.floor(Date.now() / 1000) })); }
+          try {
+            const nowSec = Math.floor(Date.now() / 1000);
+            let map = {};
+            try {
+              const old = JSON.parse(_getSetting('rate_limit_state') || '{}');
+              // 老格式是单个对象（有 status 字段），迁进新表里它自己那一格
+              map = (old && old.status) ? (old.type ? { [old.type]: old } : {}) : (old || {});
+            } catch (_) { map = {}; }
+            const type = evt.rate_limit.type || 'unknown';
+            map[type] = { ...evt.rate_limit, at: nowSec };
+            _setSetting('rate_limit_state', JSON.stringify(map));
+          }
           catch (e) { console.error('[usage] 额度状态存库失败:', e.message); }
           res.write('event: rate_limit\ndata: ' + JSON.stringify(evt.rate_limit) + '\n\n');
         } else if (evt.usage) {
@@ -6318,17 +6440,65 @@ app.delete('/api/projects/:pid/files/:fid', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// === iPhone 的 HEIC 转成 JPEG ===================================================
+// 她 iPhone 直接发的图是 HEIC，但文件名往往是 `.jpeg`（相册导出时就这么命名的），
+// 后端只按扩展名走，于是一路存成「叫 jpeg 的 HEIC」。后果是**他看不见这张图**：
+// Read 打开直接报「不是合法图片」，而且报错长得像文件损坏，很容易查错方向。
+// 所以判断不能信扩展名，要看文件头的 magic bytes。2026-08-22 踩的。
+//
+// ⚠️ 依赖系统的 heif-convert（`sudo apt-get install -y libheif-examples`），
+//    不在 package.json 里，**每台机器各装一次**。没装就原样存 + 打日志，不让上传整个失败。
+function _heicToJpeg(srcPath) {
+  try {
+    const fd = fs.openSync(srcPath, 'r');
+    const head = Buffer.alloc(12);
+    const got = fs.readSync(fd, head, 0, 12, 0);
+    fs.closeSync(fd);
+    if (got < 12) return null;
+    // ISO 容器：第 4~8 字节是 'ftyp'，第 8~12 字节是 brand
+    if (head.slice(4, 8).toString('latin1') !== 'ftyp') return null;
+    const brand = head.slice(8, 12).toString('latin1');
+    if (!['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1', 'avif'].includes(brand)) return null;
+
+    const out = srcPath.replace(/\.[^.\/]*$/, '') + '.jpg';
+    require('child_process').execFileSync('heif-convert', ['-q', '88', srcPath, out],
+      { timeout: 30000, stdio: 'ignore' });
+    if (!fs.existsSync(out)) return null;
+    const size = fs.statSync(out).size;
+    if (!size) { try { fs.unlinkSync(out); } catch (e) {} return null; }
+    try { fs.unlinkSync(srcPath); } catch (e) {}   // 原图不留，省得两份占地方
+    console.log('[upload] HEIC(' + brand + ') → JPEG:', path.basename(out), size + 'B');
+    return { path: out, size };
+  } catch (e) {
+    // 没装 heif-convert 会走到这儿。原样存着，至少文件不丢，只是他读不了。
+    console.error('[upload] HEIC 转码失败（没装 heif-convert？）:', e.message);
+    return null;
+  }
+}
+
 // === 文件上传 ===
 app.post('/api/upload', auth, upload.array('files', 10), fixNames, (req, res) => {
   if (!req.files?.length) return res.status(400).json({ detail: '没有文件' });
   const attachments = req.files.map(f => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     const ext = path.extname(f.originalname) || '';
-    const finalPath = path.join(uploadDir, id + ext);
+    let finalPath = path.join(uploadDir, id + ext);
     fs.renameSync(f.path, finalPath);
+
+    // HEIC 就地转成 JPEG。名字也跟着改，否则前端和 Read 那头看到的还是 .heic/.jpeg，
+    // 是否图片的判断（_isImage 按扩展名）也会跟着错。
+    let name = f.originalname, size = f.size, isImage = f.mimetype.startsWith('image/');
+    const conv = _heicToJpeg(finalPath);
+    if (conv) {
+      finalPath = conv.path;
+      name = name.replace(/\.[^.]*$/, '') + '.jpg';
+      size = conv.size;
+      isImage = true;
+    }
+
     db.prepare('INSERT INTO uploads (id, filename, path, size) VALUES (?, ?, ?, ?)')
-      .run(id, f.originalname, finalPath, f.size);
-    return { path: id, name: f.originalname, filename: f.originalname, size: f.size, is_image: f.mimetype.startsWith('image/') };
+      .run(id, name, finalPath, size);
+    return { path: id, name: name, filename: name, size: size, is_image: isImage };
   });
   const convId = req.body.conversation_id || null;
   res.json({ attachments, conversation_id: convId });
@@ -7154,6 +7324,10 @@ function _setSetting(k, v) {
 function _getSettingNum(k) {
   var r = db.prepare('SELECT value FROM settings WHERE key = ?').get(k);
   return r ? parseFloat(r.value) || 0 : 0;
+}
+function _getSetting(k) {
+  var r = db.prepare('SELECT value FROM settings WHERE key = ?').get(k);
+  return r ? r.value : null;
 }
 
 // 素材：对话摘录（每条截 80 字）+ 同期他自己写的 feel/memory

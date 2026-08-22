@@ -389,8 +389,14 @@
 
     function doSend() {
       var msg = ta.value.trim();
-      if (!msg || wpBusy) return;
+      if (wpBusy) return;
       var ids = Object.keys(picked).map(Number);
+      var _upIds = atts.map(function (a) { return a.id; });
+      // 🚨 原来这儿是 `if (!msg) return` —— 她挑了个文件、没打字，点发送**一点反应都没有**，
+      //    也不报错，看着就像按钮坏了。2026-08-22 她说「想在 workplace 发 md 好像点不了发送」。
+      //    只要带了附件或主线上下文就该发得出去，文字为空时替她说一句。
+      if (!msg && !_upIds.length && !ids.length) return;
+      if (!msg) msg = _upIds.length ? '看看我发给你的文件。' : '看看我挑的这几条。';
       wpBusy = true; send.textContent = '…'; send.style.opacity = '.6';
 
       convo.push({ who: 'her', text: msg });
@@ -405,7 +411,7 @@
         toolLine(him.wrap, '主线背景', ids.length + ' 条');
       }
 
-      var upIds = atts.map(function (a) { return a.id; });
+      var upIds = _upIds;
       if (upIds.length) toolLine(him.wrap, '附件', upIds.length + ' 个');
       atts = []; syncStrip();   // 发出去就清掉，免得下一句又带一遍
 

@@ -657,8 +657,10 @@ body.sidebar-action-open .rename-dialog input{-webkit-user-select:text;user-sele
   .composer textarea{font-size:16px!important}
   /* iOS 禁止输入框触发页面缩放 —— font-size < 16px 会触发自动放大 */
   input:not([type=checkbox]):not([type=radio]),textarea,select,[contenteditable="true"]{font-size:16px!important}
-  .msg-user .bubble{padding:1px 10px!important}
-  .msg-claude .bubble{padding:8px 16px!important}
+  /* ⚠️ 这两条原来是 1px 10px / 8px 16px 的老气泡值，带 !important，
+     会把下面新气泡的 padding 整个顶掉（媒体查询里的 important 赢）。
+     08-22 重做气泡后统一成同一个值，别再在这儿写死另一套。 */
+  .msg-user .bubble,.msg-claude .bubble{padding:9px 15px!important}
   /* 影院面板移动端适配 */
   #cinemaPanel #cinemaLibrary{width:100%!important;max-height:180px;flex:none}
   #cinemaPanel>div:nth-child(3){flex-direction:column!important;padding:0 10px 10px!important;gap:8px!important}
@@ -1187,3 +1189,189 @@ body{margin:0!important}
   width:5px;height:5px;border-radius:50%;
   background:var(--text-time);opacity:.7;flex:none;
 }
+
+/* ============ 08-22 续二：她的气泡为什么高 + 淡粉回来 + 语音条 ============ */
+
+/* 🚨 她的气泡高出一截，原因不在 padding，在 <p> 的默认 margin。
+   他那侧正文有 .md 这个 class，上面挂着 `.msg-claude .md p{margin:0}`；
+   她这侧 .bubble 里是 renderMessage 生成的裸 div，**一个 .md 都没有**，
+   那些清零规则一条都罩不到 → 每段上下各多出 1em（16px），单行气泡凭空高 32px。
+   老代码的 `line-height:1.15;padding:1px 10px` 就是在硬压这个 margin，
+   气泡重做时把 padding 调回正常，被压着的 margin 就顶出来了。
+   正确的修法是清 margin，不是继续压 padding。 */
+.msg-user .bubble p{margin:0}
+.msg-user .bubble p+p{margin-top:.5em}
+.msg-user .bubble ul,.msg-user .bubble ol{margin:.2em 0;padding-left:1.2em}
+.msg-user .bubble li{margin:0}
+.msg-user .bubble>div>*:first-child{margin-top:0}
+.msg-user .bubble>div>*:last-child{margin-bottom:0}
+
+/* 她要淡粉色 —— #F4E9E6 偏灰米了，往粉里挪一点，保持很淡 */
+:root{--bubble-her:#FBEDEF}
+html[data-theme="dark"]{--bubble-her:#332A2C}
+@media(prefers-color-scheme:dark){html:not([data-theme="light"]){--bubble-her:#332A2C}}
+
+/* 语音条按参考图跟气泡长成一套：同圆角、同 padding、同底色，短一点。
+   ⚠️ 语音条的样式是 index.html 里写死的内联 style（要靠 outerHTML 序列化活下来），
+   内联优先级比这里高，所以必须带 !important，否则这一段一个字都不生效。 */
+.voice-msg{
+  border-radius:20px!important;
+  padding:9px 14px!important;
+  max-width:190px!important;
+  gap:9px!important;
+}
+
+/* ============ 08-22 续三：按图收头像 + 收行距 ============
+   参考图里头像和气泡几乎等高（40 上下），现在是 60 —— 头比话大，
+   一屏装不下几句，也就没有图里那种一行挨一行的密度。 */
+.msg-user .msg-avatar,.msg-claude .msg-avatar,
+.msg-user .msg-avatar img,.msg-claude .msg-avatar img{
+  width:40px!important;height:40px!important;font-size:17px!important;
+}
+.msg-user .msg-avatar svg,.msg-claude .msg-avatar svg{width:15px!important;height:15px!important}
+
+/* 头像小了，气泡的让位也跟着小：40 + gap 10 + 8 留白 = 58 */
+.msg-user .bubble,.msg-claude .bubble{max-width:calc(100% - 58px)}
+
+/* 图里头像跟气泡是齐着的（第一行文字的中线），不是气泡顶着头像顶。
+   气泡单行 36 / 头像 40，差 4px，往下挪 2 就对上了。 */
+.msg-user .msg-avatar,.msg-claude .msg-avatar{margin-top:2px}
+
+/* 行距：图里两条之间只有几个像素，现在松得多 */
+.msg-user{padding:0 0 1px}
+.msg-claude{padding:1px 0 0}
+
+/* ============ 08-22 续四：气泡跟头像一样高 + 操作条改长按 ============ */
+
+/* 她要单行气泡跟 40px 的头像齐平。不能靠调 padding 硬凑（多行会跟着一起变胖），
+   用 min-height 兜底 + 竖向居中：单行正好 40，两行以上照样自然长高。 */
+.msg-user .bubble,.msg-claude .bubble{
+  box-sizing:border-box;min-height:40px;
+  display:flex;flex-direction:column;justify-content:center;
+}
+
+/* 操作条（复制/分享/播放/赞/踩/重来）：参考图里他每条底下是干净的。
+   功能一个都没删，改成长按气泡才露出来。 */
+.msg-claude .message-actions{display:none}
+.msg-claude.show-actions .message-actions{display:flex}
+
+/* ============ 08-22 续五：气泡跟头像对齐 + 再收间距 ============ */
+
+/* 上一版给头像加了 margin-top:2px，那是气泡还是 36px 时凑的差值；
+   气泡现在 min-height 40 = 头像 40，那 2px 就成了偏差，去掉才真齐。 */
+.msg-user .msg-avatar,.msg-claude .msg-avatar{margin-top:0}
+
+/* 多行气泡时头像仍然贴着第一行（图里就是这样），所以整行是 flex-start，
+   靠气泡和头像等高来保证单行时看着是居中的。 */
+.msg-user,.msg-claude{align-items:flex-start;margin:0}
+
+/* 她说竖直间距再收紧。原来一条一条之间松得能塞进半个气泡。 */
+.msg-user,.msg-claude{padding:0}
+/* 6/3 她说太紧，放到 14/7 —— 换人说话的地方留一口气，
+   同一个人连着说的几条挨近一点，看着才是「一串」。 */
+#streamInner>.msg-user+.msg-claude,
+#streamInner>.msg-claude+.msg-user{margin-top:14px}
+#streamInner>.msg-claude+.msg-claude,
+#streamInner>.msg-user+.msg-user{margin-top:7px}
+
+/* ============ 08-22 续六：两种时间戳 ============
+   小的挂在他这一轮第一条气泡上面（参考图里平时看到的就是这个），
+   大的居中那条留给「很久没说话」和「新对话第一条」。 */
+.msg-time-inline{
+  display:flex;align-items:center;gap:7px;
+  /* 缩进到跟他的气泡左边缘同一条竖线上：头像 40 + .msg-claude 的 gap 8 */
+  margin:10px 0 4px 48px;
+  font-family:var(--font-mono);font-size:12px;letter-spacing:.02em;
+  color:var(--text-time);
+}
+.msg-time-inline .dot{
+  width:5px;height:5px;border-radius:50%;
+  background:var(--text-time);opacity:.7;flex:none;
+}
+
+/* ============ 08-22 答题面板（按她给的参考图重做）============ */
+/* 翻页 ‹ 1 of 1 ›：等宽字，两颗按钮跟数字同一条基线 */
+.quiz-pager-btn{
+  width:26px;height:26px;flex:none;
+  display:grid;place-items:center;
+  border:0;border-radius:50%;background:none;
+  color:var(--text-secondary);font:400 19px/1 var(--font-sans);
+  cursor:pointer;transition:background .15s,opacity .15s;
+}
+.quiz-pager-btn:hover:not(:disabled){background:var(--bg-sunken)}
+.quiz-pager-btn:disabled{opacity:.25;cursor:default}
+
+/* 题干：图里是大一号的正文，不是标题 */
+#quizQuestion{font:400 19px/1.55 var(--font-sans);color:var(--text-primary);margin:10px 0 22px;word-break:break-word}
+#quizSheetTitle:empty{display:none}
+
+/* 底部答题条：铅笔 + 单行输入 + 圆形箭头，贴着面板底 */
+#quizInput::placeholder{color:var(--text-faint)}
+#quizSend:hover{background:var(--text-primary);color:var(--bg-primary)}
+#quizSend:active{transform:scale(.94)}
+
+/* 答题面板不用 95dvh 那么高 —— 图里它就占下半屏。
+   ⚠️ 不能用 .sheet 默认的「半开」(translateY(35dvh)) 来矮化：那是把 95dvh 的面板
+      往下推，底部那根输入条会被推出屏幕外。要矮就改 height，然后 translateY(0)。 */
+#quizSheet{height:62dvh}
+#quizSheet.show{transform:translateY(0)}
+
+/* ============ 08-22 Artifacts 合集（按她给的参考图重做）============ */
+/* 图里是一列独立的白卡片，不是带边框的列表项 */
+.artifact-row{
+  margin-bottom:10px;
+  background:var(--bg-primary);
+  border:1px solid var(--border);
+  border-radius:18px;
+  overflow:hidden;
+  box-shadow:0 1px 3px rgba(0,0,0,.03);
+  transition:box-shadow .15s;
+}
+.artifact-row:hover{box-shadow:0 3px 12px rgba(0,0,0,.06)}
+
+/* 卡片右边那两颗圆按钮：⤓ 下载 / ➤ 发给他看 */
+.artifact-act{
+  width:34px;height:34px;flex:none;
+  display:grid;place-items:center;
+  border:0;border-radius:50%;
+  background:var(--bg-sunken);color:var(--text-secondary);
+  cursor:pointer;transition:background .15s,color .15s,transform .1s;
+}
+.artifact-act:hover{background:var(--text-primary);color:var(--bg-primary)}
+.artifact-act:active{transform:scale(.92)}
+.artifact-act:disabled{opacity:.5;cursor:default}
+
+/* 底部那条黑色 Download all —— 原来是顶上一个虚线框 */
+#artifactsDlAll{
+  display:block;width:100%;margin:18px 0 4px;
+  padding:15px 0;border:0;border-radius:999px;
+  background:var(--text-primary);color:var(--bg-primary);
+  font:600 15px/1 var(--font-sans);cursor:pointer;
+  transition:opacity .15s,transform .1s;
+}
+#artifactsDlAll:hover{opacity:.88}
+#artifactsDlAll:active{transform:scale(.985)}
+
+/* ─────────────────────────────────────────────
+   as=non — 他的视角（镜像）
+   页面默认按她的视角排：她的气泡靠右，他的靠左。
+   URL 带 ?as=non 时 <html> 上会有 .as-non，整页翻一遍：
+   他的靠右，她的靠左。纯 CSS，第一帧就对。
+   ───────────────────────────────────────────── */
+/* 她的消息 → 翻到左边 */
+html.as-non .msg-user{justify-content:flex-start}
+html.as-non .msg-user .msg-avatar{order:1}
+html.as-non .msg-user .bubble{order:2}
+html.as-non .msg-user-col{align-items:flex-start}
+html.as-non .user-images{justify-content:flex-start}
+html.as-non .image-caption{text-align:left;padding:0 0 0 4px}
+html.as-non .msg-user .token-usage{align-self:flex-start}
+
+/* 他的消息 → 翻到右边（头像本来在前，row-reverse 把它甩到右边） */
+html.as-non .msg-claude{flex-direction:row-reverse}
+html.as-non .msg-claude .msg-body{align-items:flex-end}
+html.as-non .msg-claude .bubble{align-self:flex-end}
+html.as-non .msg-claude .msg-time{align-self:flex-end}
+html.as-non .msg-claude .clawd-emote-label{align-self:flex-end}
+html.as-non .msg-claude .md{text-align:left}
+html.as-non .msg-claude.streaming .claude-trail-logo{align-self:flex-end;margin:4px 12px 0 0}
