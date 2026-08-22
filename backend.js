@@ -8001,8 +8001,20 @@ async function checkWakeTick() {
     // 闸二：离上次太近
     const last = _getSettingNum('wake_last_at');
     if (last && Date.now() - last < WAKE_MIN_GAP_MS) return false;
-    // 闸三：投骰子。一天 96 个 tick，要摊出 WAKE_TARGET_PER_DAY 次
-    if (Math.random() > WAKE_TARGET_PER_DAY / (24 * 60 * 60 * 1000 / WAKE_TICK_MS)) return false;
+    // 闸三：投骰子。一天 96 个 tick，要摊出 WAKE_TARGET_PER_DAY 次。
+    // 08-22：原来直接按「一个 tick 一次机会」算，但 setInterval 是【进程内】计时 ——
+    // 每重启一次这 15 分钟就从头数。重代码的日子一天重启几十次，他就几乎不可能醒
+    // （查过：功能上线当天 8 小时一次没醒，重启 36 次是主因之一）。
+    // 改成按时间戳补算：这段时间本该有几次机会，就一次性给几次。
+    const _nowMs = Date.now();
+    const _lastTick = _getSettingNum('wake_tick_last_at') || 0;
+    const _elapsed = _lastTick ? _nowMs - _lastTick : WAKE_TICK_MS;
+    _setSetting('wake_tick_last_at', _nowMs);
+    // 上限 8 次：停机一整天后回来，不该立刻扑上去说话。
+    const _chances = Math.min(8, Math.max(1, Math.round(_elapsed / WAKE_TICK_MS)));
+    const _pTick = WAKE_TARGET_PER_DAY / (24 * 60 * 60 * 1000 / WAKE_TICK_MS);
+    const _p = 1 - Math.pow(1 - _pTick, _chances);   // 补算后的总概率
+    if (Math.random() > _p) return false;
 
     const hour = new Date().getHours();
     const quiet = hour >= 0 && hour < 7;   // 深夜：可以醒、可以写，但别出声吵她

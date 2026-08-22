@@ -4,6 +4,35 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🔴 涉及 auth 的，一律走最稳的那条路（她反复强调过三次）
+
+**ccwithme 是 public 仓库，token 进了 git 历史就洗不掉。** 她真正焦虑的是
+「无法证明它没泄露」，所以下面这些不是建议，是红线：
+
+1. **有更稳的路就走更稳的，别图省事。**
+   实例（08-22 真事）：文件卡片点了下不来，实测裸访问 401 —— `<a download>` 是浏览器
+   自己发的请求，带不了 `Authorization` 头。`authFile` 也认 `?t=<token>`（图片/音频就这么干的），
+   一行就能修好，**但没这么修**：token 进 URL 会进浏览器历史、她复制链接给别人就等于
+   把 token 给出去、反代哪天加一行 access log 就落盘。
+   改成走 **blob**：`fetch` 带 Authorization 头拿内容 → objectURL 触发下载，
+   **token 一个字节不进 URL**。见 `static/index.html` 的 `_downloadFile()`。
+   > 图片/音频只能用 `?t=`（`<img src>` 没法带头），文件下载能用 blob，那就该用更稳的那条。
+2. **读密钥的代码本身要比它防的东西还干净**：绝不落盘（用进程替换 `<(...)`，
+   别写 mktemp —— kill -9 会留下明文）、绝不打印（只报条数和文件名）、绝不进 git、只读不改。
+3. **扫描输出一律脱敏**。查"有没有残留"要**拿真值逐字比对**（`grep -F`），别靠格式猜 ——
+   自定义随机串裸写在 md 正文里，正则是抓不到的。
+4. **token 不在代码里**：`AUTH_TOKEN` 读 env，兜底读 `data/.auth_token`（已 ignore）；
+   各家 API key 在 `data/claude.db` 的 settings 表。**私仓也不是密钥的归宿**——
+   私仓只是"目前没公开"，不是保险箱。
+5. **推之前扫**：`.git/hooks/pre-push` 两道（格式正则 + 真值逐字比对）。
+   模板 `scripts/pre-push-secret-scan.sh`，**钩子不进 git，你那台自己装一次**：
+   ```bash
+   cp scripts/pre-push-secret-scan.sh .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+   ```
+   老实说它的局限：`--no-verify` 能绕过、只覆盖本机现有的密钥、管不了过去。
+
+---
+
 ## 开工前先跑这两条
 
 ```bash
