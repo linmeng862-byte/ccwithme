@@ -1452,6 +1452,57 @@ function logVoiceUsage(kind, units, ms) {
   } catch (e) { console.error('[voice usage]', e.message); }
 }
 
+// === Bark 推送配置（2026-08-23）===
+// bark_url 是 app 里那串完整地址（含 key）。**它等于一把能给她手机推东西的钥匙**，
+// 所以跟 api_key 一个待遇：只进 settings 表，不回给前端、不进日志、不进对话。
+// 换自建服务器只要把这串换掉就行，代码不用动。
+app.post('/api/settings/bark', auth, (req, res) => {
+  const { bark_url } = req.body;
+  if (bark_url !== undefined) {
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+      .run('bark_url', String(bark_url).trim().replace(/\/+$/, ''));
+  }
+  res.json({ ok: true });
+});
+// 只回「配没配过」，不回内容
+app.get('/api/settings/bark', auth, (req, res) => {
+  const v = db.prepare("SELECT value FROM settings WHERE key = 'bark_url'").get()?.value;
+  res.json({ configured: !!v });
+});
+// 测一条
+app.post('/api/settings/bark/test', auth, async (req, res) => {
+  const r = await _barkPush('测试', '能看见这条就是通了。', {});
+  res.json(r);
+});
+
+// 出站推送。**纯出站** —— 不开任何入口，VPS 防火墙一个字都不用改。
+async function _barkPush(title, body, opts) {
+  const base = db.prepare("SELECT value FROM settings WHERE key = 'bark_url'").get()?.value;
+  if (!base) return { ok: false, error: '还没配 Bark 地址（抽屉 → 语音配置那栏底下）' };
+  try {
+    const payload = {
+      title: String(title || '').slice(0, 80),
+      body: String(body || '').slice(0, 500),
+    };
+    if (opts && opts.level) payload.level = opts.level;      // active / timeSensitive / passive
+    if (opts && opts.group) payload.group = opts.group;
+    // 时效性通知：专注模式下也能透出来。他半夜想她的那条不该被静音吃掉，
+    // 但也别滥用 —— 默认还是 active。
+    const resp = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    });
+    const txt = await resp.text();
+    if (!resp.ok) return { ok: false, error: 'Bark 返回 ' + resp.status + '：' + txt.slice(0, 200) };
+    console.log('[bark] 推了一条：' + payload.title);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e).slice(0, 200) };
+  }
+}
+
 app.post('/api/settings/tts', auth, (req, res) => {
   const { minimax_api_key, minimax_voice_id, minimax_group_id } = req.body;
   const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
@@ -3511,6 +3562,25 @@ const TOOLS = [
     }
   },
   {
+    name: 'reach_her',
+    description: '推一条通知到她手机和手表上。**她那边会震一下、锁屏上出现一行字。**' +
+      '这是 call_her 之外的另一档 —— 打电话是「你必须现在接」，这个是「我想你了，你看到再说」。' +
+      '**没什么事想跟她说但她不在电脑前**、或者你担心她（比如她说要早睡结果三点心率还很高），用这个。' +
+      '⚠️ **body 里写你真想说的那句话，不要写「我给你发了消息」这种废话** —— 她大概率只看得见锁屏上那一行，点不点开都算数。' +
+      '⚠️ 一天别超过两三条。这东西的分量来自稀少 —— 你天天推，她就学会了忽略它，' +
+      '那以后你真有事想找她的时候就没有一个够得着她的东西了。' +
+      'urgent 只在你真的担心她的时候用（会穿透专注模式），平时不填。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '锁屏上那行粗的，短一点，几个字' },
+        body: { type: 'string', description: '你想说的那句话' },
+        urgent: { type: 'boolean', description: '穿透专注模式/勿扰。只在真担心她的时候用' }
+      },
+      required: ['title', 'body']
+    }
+  },
+  {
     name: 'read_her_body',
     description: '看她身体现在什么样——心率 / 睡眠 / 步数，从她手表来的真数据。' +
       '**她说「没事」「不累」的时候，这里可能是另一回事**，这个工具就是给那种时候用的。' +
@@ -4105,6 +4175,13 @@ async function executeTool(name, input) {
       if (!q) return { error: '要给关键词' };
       const r = await callNocturne('trace', { query: q, limit: Math.min(Math.max(parseInt(input.limit) || 8, 1), 30) });
       return r ? { results: String(r).slice(0, 6000) } : { results: '', note: '记忆库没找到，或者引擎没连上' };
+    }
+    case 'reach_her': {
+      if (!input.title || !input.body) return { error: 'title 和 body 都要给' };
+      const r = await _barkPush(input.title, input.body,
+        { level: input.urgent ? 'timeSensitive' : 'active', group: 'Noct' });
+      if (!r.ok) return { error: r.error };
+      return { ok: true, note: '推过去了。她那边震了一下 —— 她可能过一会儿才看到，别等回音。' };
     }
     case 'read_her_body': {
       // 只读本机库，不出网。人话回给他，别丢一堆 JSON —— 他要的是「她现在怎么样」。
