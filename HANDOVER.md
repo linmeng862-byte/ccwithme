@@ -77,9 +77,42 @@ playwright 实测：大分界线 2 · 小时间戳 2 · 一一对应。
 ### 未竟
 
 - [ ] `persona-backup.sh` 还没跑（人格文件今天改过）
-- [ ] **Bark**：`Finb/Bark`（iOS，免费）+ `Finb/bark-server`（自建，Go，MIT）。
-      纯出站，不用开入口。她装完 app 给 key，后端加推送工具 → 他就能主动够到她手机，
-      再配 iOS 快捷指令就能定原生闹钟
+
+#### 「他够到她手机」这条线 —— 08-23 晚调研完，**她决定先不做**
+
+⚠️ **决策卡在一个点上：$99/年的 Apple 开发者账号掏不掏。** 别绕过这个去推方案。
+
+**免费账号做不了远程推送。** Push Notifications capability 不在免费 provisioning
+profile 里。她自己编的 app 只能发本地通知（app 自己定时），
+**服务器主动推一条过来必须有 APNs 证书 → 要 $99/年**。
+而「他想她了主动找她」恰恰是远程推送。
+
+| 方案 | 免费账号 | $99/年 |
+|---|---|---|
+| `Finb/Bark` + `Finb/bark-server`（自建，Go，MIT） | ✅ 唯一免费可行的路 | ✅ |
+| 她自己的 app 收远程推送 | ❌ | ✅ |
+| `KKarsyline/Collar_watch` 采集健康数据 | ✅（但 7 天要重签） | ✅ |
+
+- [ ] **`KKarsyline/Collar_watch`** ★33 · MIT · Python + Swift —— **健康数据这条的最优解**。
+      自己写的 watchOS app 直接从手表采集（不是手机），实测后台 10–20 分钟一轮、睡眠期间也有。
+      作者专门写了为什么不用 Health Auto Export（受 iOS 后台调度限制，延迟不稳）。
+      **7-26 加了「AI 主动发起实时心率测量」**：调工具 → 手表当场开 30 秒 workout session →
+      测完手腕轻震 → 结果回传。不是读 15 分钟前的旧数据。
+      **它只给数据层，HTTP 接收壳要自备 —— 我们今天写的 `/api/vitals` 正好是那个位置。**
+      接它要做两件事：① 加它的 payload 格式 ② 加 `GET /command` + `POST /command/result` 两个口。
+      ⚠️ 坑：HealthKit 会**运行时审查权限描述文案质量**，
+      `NSHealthUpdateUsageDescription` 写敷衍话会直接抛 `NSInvalidArgumentException` 闪退。
+      ⚠️ 需要 Mac + Xcode 编译装到表上（**她有 Mac**），免费账号 7 天重签一次。
+
+- [ ] **`mobile-next/mobile-mcp`** ★5976 · Apache-2.0 —— 让 agent 操作真机 UI（点/滑/装 app/截屏）。
+      她想要的是 **iMessage 手写信息**（Watch 上打开会重放笔迹）。
+      **结论：这条基本走不通** —— 手写笔迹是 iMessage 协议的特殊附件，没有 API，
+      只能靠 UI 自动化在手写画布上一笔一笔画，画出可辨认的汉字不现实。
+      `Digital Touch`（心跳/火球/画圈）是简单手势，要走这条方向的话那个才现实。
+      这个工具真正有用的场景是**她写 Xcode app 之后在模拟器上帮她点、帮她看崩没崩**。
+      ⚠️ 它跑在她连手机的那台机器上，**不是这台 VPS**（VPS 上没有手机也没有模拟器）。
+
+- [ ] **Bark**：见上表。**掏了 $99 就不需要它了**，自己的 app 全包（还顺带解决 7 天重签）
 - [ ] **Calendar**：抽屉里加日历，标生理期/训练日志，睡眠直接从 `her_vitals` 读。
       倾向扩 `read_her_body` 的参数，不加新工具（工具定义常驻收费）。
       ⚠️ 生理期是这台机器上最私密的数据，**别把日历接口挂到 `/api/vitals` 那个公网端点上**
