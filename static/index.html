@@ -227,6 +227,7 @@
       <button class="mobile-sidebar-nav-item" id="atrioBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="atrio"></span><span>会客厅</span></button>
             <button class="mobile-sidebar-nav-item" id="artifactsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="artifacts"></span><span>workplace</span></button>
       
+      <button class="mobile-sidebar-nav-item" id="openVoiceFav" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg></span><span>收藏的语音</span></button>
       <button class="mobile-sidebar-nav-item" id="openMemory"><span class="mobile-sidebar-nav-icon" data-icon="memory"></span><span>Memory</span></button>
       <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><path d="M2 13h12M4 13V8M8 13V4M12 13v-3"/></svg></span><span>usage</span></button>
 
@@ -382,6 +383,8 @@
 <section class="sheet" id="artifactsSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeArtifacts">×</button><h2 class="sheet-title">Artifacts</h2><span></span></header><div class="sheet-content" id="artifactsContent"></div></section>
 
 <div class="overlay" id="todoOverlay" aria-hidden="true" inert></div>
+<div class="overlay" id="voiceFavOverlay" aria-hidden="true" inert></div>
+<section class="sheet" id="voiceFavSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeVoiceFav">×</button><h2 class="sheet-title">收藏的语音</h2><span></span></header><div class="sheet-content" id="voiceFavContent"></div></section>
 <section class="sheet" id="todoSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeTodo">×</button><h2 class="sheet-title">待办</h2><span></span></header><div class="sheet-content" id="todoContent"></div></section>
 
 <div class="overlay" id="modelOverlay" aria-hidden="true" inert></div>
@@ -871,6 +874,47 @@ async function _loadArtifactsFromDB(){try{var r=await api('/api/artifacts');var 
 // 正文按需拉。展开卡片前调它，拉回来就缓在内存里不再重复请求。
 async function _fetchArtifactContent(art){if(!art||!art._lazy||art.content)return art;try{var r=await api('/api/artifacts/'+art.id);var d=await r.json();if(d&&d.content!=null){art.content=d.content;art._lazy=false}}catch(e){}return art}
 $('closeArtifacts').onclick=function(){sheet('artifacts',false)};$('artifactsOverlay').onclick=function(){sheet('artifacts',false)};
+
+// ── 收藏的语音 ──
+$('closeVoiceFav').onclick=function(){sheet('voiceFav',false)};
+$('voiceFavOverlay').onclick=function(){sheet('voiceFav',false)};
+$('openVoiceFav').onclick=function(){closeDrawer();_renderVoiceFavs();sheet('voiceFav',true)};
+function _renderVoiceFavs(){
+  var c=$('voiceFavContent');if(!c)return;
+  c.innerHTML='<div style="padding:24px;text-align:center;font:13px var(--font-sans);color:var(--text-faint)">正在拿…</div>';
+  _loadVoiceFavs().then(function(items){
+    if(!items.length){
+      c.innerHTML='<div style="padding:40px 24px;text-align:center;font:13px/1.7 var(--font-sans);color:var(--text-faint)">'+
+        '还没有收藏过语音。<br>在任何一条语音条右边点那颗小心，就会留在这儿。</div>';
+      return;
+    }
+    var h='<div style="padding:6px 16px 40px">';
+    items.forEach(function(it){
+      var when=new Date((it.created_at||0)*1000);
+      var ds=(when.getMonth()+1)+'/'+when.getDate()+' '+String(when.getHours()).padStart(2,'0')+':'+String(when.getMinutes()).padStart(2,'0');
+      var url='/api/files/'+encodeURIComponent(it.file_id)+'?t='+encodeURIComponent(state.token||'');
+      h+='<div class="vfav-row" style="display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid var(--border)">';
+      if(it.missing){
+        // 原文件没了 —— 画成灰的，别假装还能放
+        h+='<span style="width:15px;height:15px;display:grid;place-items:center;flex:none;color:var(--text-faint);font-size:13px">·</span>'+
+           '<div style="flex:1;min-width:0"><div style="font:13px var(--font-sans);color:var(--text-faint)">这条音频已经不在了</div>'+
+           '<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:2px">'+ds+'</div></div>';
+      }else{
+        h+='<button class="voice-play-btn" data-url="'+url+'" onclick="_toggleVoicePlay(this)" style="width:26px;height:26px;border:0;border-radius:50%;background:var(--bg-sunken);color:var(--text-secondary);display:grid;place-items:center;cursor:pointer;flex:none;padding:0">'+
+           '<svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><polygon points="7,4 19,12 7,20"/></svg></button>'+
+           '<div style="flex:1;min-width:0">'+
+             '<div style="font:13px var(--font-sans);color:var(--text-primary)">'+(it.note?escHtml(it.note):'语音 '+(it.dur||''))+'</div>'+
+             '<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:2px">'+ds+(it.note&&it.dur?' · '+it.dur:'')+'</div>'+
+           '</div>';
+      }
+      h+='<button class="voice-fav-btn is-fav" data-fid="'+escHtml(it.file_id)+'" onclick="_toggleVoiceFav(this);setTimeout(_renderVoiceFavs,180)" title="取消收藏" style="border:0;background:transparent;color:var(--accent);cursor:pointer;padding:0;width:15px;height:15px;display:grid;place-items:center;flex:none">'+
+        _VOICE_HEART_SVG(true)+'</button>';
+      h+='</div>';
+    });
+    h+='</div>';
+    c.innerHTML=h;
+  });
+}
 // ── 收据风待办清单（Timed Checklist） ──
 var _todos=JSON.parse(localStorage.getItem('chat_todos')||'[]');
 // 迁移旧格式：{id,text,done} → {id,body,done,is_fixed,trigger_at,created_by}
@@ -1397,6 +1441,43 @@ function _msgContentEl(row){
     if(c.tagName==='DIV'&&!c.classList.contains('message-attachments'))return c}}
   return null;
 }
+// 收藏过的语音 id。进页面拉一次，之后本地跟着 toggle 走 —— 每条语音条渲染时都要问它，
+// 不能每次都打后端。
+var _voiceFavIds=new Set();
+function _VOICE_HEART_SVG(filled){
+  return filled
+    ? '<svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg>';
+}
+function _loadVoiceFavs(){
+  return fetch('/api/voice/favorites',{headers:{'Authorization':'Bearer '+(state.token||'')}})
+    .then(function(r){return r.json()})
+    .then(function(d){_voiceFavIds=new Set((d.items||[]).map(function(x){return x.file_id}));return d.items||[]})
+    .catch(function(){return []});
+}
+// 点心 → 翻面。先动界面再发请求，失败了翻回来 —— 网络慢的时候不至于点了没反应。
+function _toggleVoiceFav(btn){
+  var fid=btn.getAttribute('data-fid');if(!fid)return;
+  var was=_voiceFavIds.has(fid);
+  _paintVoiceFav(fid,!was);
+  fetch('/api/voice/favorite',{method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
+    body:JSON.stringify({file_id:fid,dur:(btn.parentNode&&btn.parentNode.querySelector('span:not([class])')||{}).textContent||'',conv_id:state.convId||null})})
+    .then(function(r){return r.json()})
+    .then(function(d){if(typeof d.favorited==='boolean')_paintVoiceFav(fid,d.favorited)})
+    .catch(function(){_paintVoiceFav(fid,was)});
+}
+// 同一条语音可能在页面上出现好几次（分条渲染、翻历史），全部一起翻。
+function _paintVoiceFav(fid,on){
+  if(on)_voiceFavIds.add(fid);else _voiceFavIds.delete(fid);
+  document.querySelectorAll('.voice-fav-btn[data-fid="'+(window.CSS&&CSS.escape?CSS.escape(fid):fid)+'"]').forEach(function(b){
+    b.innerHTML=_VOICE_HEART_SVG(on);
+    b.classList.toggle('is-fav',on);
+    b.style.color=on?'var(--accent)':'var(--text-time)';
+    b.style.opacity=on?'1':'.6';
+  });
+}
+
 function _renderVoiceCards(row){
   var md=_msgContentEl(row);if(!md)return;
   var text=md.textContent||"";
@@ -1426,7 +1507,17 @@ function _renderVoiceCards(row){
     tBtn.title="转文字";
     tBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="11" height="11"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>';
     tBtn.setAttribute("onclick","event.stopPropagation();_transcribeVoice(this,'"+id.replace(/'/g,"")+"')");
-    wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);
+    // 收藏：一颗小心。空心=没收，实心=收了。
+    // ⚠️ 跟上面转文字那颗一样，必须写成 onclick 属性 —— 这整块最后是 outerHTML
+    //    序列化塞回去的，.onclick 那种属性式处理器活不过序列化。
+    var fBtn=document.createElement("button");fBtn.className="voice-fav-btn";
+    fBtn.setAttribute("data-fid",id);
+    fBtn.style.cssText="border:0;background:transparent;color:var(--text-time);cursor:pointer;padding:0;width:13px;height:13px;display:grid;place-items:center;flex:none;opacity:.6";
+    fBtn.title="收藏这条";
+    fBtn.innerHTML=_VOICE_HEART_SVG(_voiceFavIds.has(id));
+    if(_voiceFavIds.has(id)){fBtn.classList.add('is-fav');fBtn.style.color='var(--accent)';fBtn.style.opacity='1'}
+    fBtn.setAttribute("onclick","event.stopPropagation();_toggleVoiceFav(this)");
+    wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);wrap.appendChild(fBtn);
     md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
     _hit=true;
   }
@@ -4663,6 +4754,10 @@ function _selectDate(dateStr){
     if(p&&p.fullName){var hn=$('homeName');if(hn)hn.textContent=p.fullName}
     if(p&&p.nickname){var hn2=$('homeName');if(hn2)hn2.textContent=p.nickname}
   }catch(e){/* 用默认名字 */}
+
+  // 先把收藏过的语音 id 拉回来，再让消息流去画语音条 —— 不然翻历史时
+  // 已经收藏过的那几条心是空的，要等她点开一次合集才对得上。
+  try{ await _loadVoiceFavs(); }catch(e){}
 
   document.querySelectorAll('.home-nav-item').forEach(function(el){
     el.addEventListener('click',function(){

@@ -474,6 +474,21 @@ db.exec(`
   )
 `);
 
+// === 收藏的语音（2026-08-23）===
+// 语音条本身是 [VOICE:file_id|时长] 标记，文件在 data/uploads 里躺着。
+// 这张表只存「她圈了哪几条」—— 不复制音频，删了原文件收藏也就空了，这是对的：
+// 收藏是个书签，不是备份。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS voice_favorites (
+    file_id TEXT PRIMARY KEY,
+    dur TEXT,
+    note TEXT,
+    conv_id TEXT,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_vfav_time ON voice_favorites(created_at DESC);
+`);
+
 // === 她的身体 · vitals（2026-08-23）===
 // 数据从她手表来：Health Auto Export 那个 app，或者以后她自己用 Xcode 编的。
 // 两边推的格式我们只认下面这一张白名单，多余字段一律丢掉。
@@ -2071,6 +2086,44 @@ function auth(req, res, next) {
   }
   next();
 }
+
+// === 收藏的语音 ===
+// 走 auth（她自己的 token）——跟 vitals 那个公网端点不是一回事，别混。
+app.post('/api/voice/favorite', auth, (req, res) => {
+  const { file_id, dur, note, conv_id } = req.body || {};
+  if (!file_id) return res.status(400).json({ error: '要给 file_id' });
+  const had = db.prepare('SELECT file_id FROM voice_favorites WHERE file_id = ?').get(file_id);
+  if (had) {
+    db.prepare('DELETE FROM voice_favorites WHERE file_id = ?').run(file_id);
+    return res.json({ ok: true, favorited: false });
+  }
+  db.prepare('INSERT INTO voice_favorites (file_id, dur, note, conv_id) VALUES (?,?,?,?)')
+    .run(file_id, dur || null, note || null, conv_id || null);
+  res.json({ ok: true, favorited: true });
+});
+
+app.get('/api/voice/favorites', auth, (req, res) => {
+  const rows = db.prepare('SELECT file_id, dur, note, conv_id, created_at FROM voice_favorites ORDER BY created_at DESC LIMIT 500').all();
+  // 原文件可能已经被清掉了 —— 标出来，前端画成一条灰的，不要假装还能放。
+  // ⚠️ 音频不是按 file_id 当文件名躺在 uploads 目录里的，真实路径在 uploads 表的 path 字段，
+  //    别拿 path.join(uploadDir, file_id) 去判断存在与否 —— 那样永远判成「丢了」。
+  const q = db.prepare('SELECT path FROM uploads WHERE id = ?');
+  rows.forEach(r => {
+    try {
+      const f = q.get(r.file_id);
+      r.missing = (!f || !fs.existsSync(f.path)) ? 1 : 0;
+    } catch(e) { r.missing = 0; }
+  });
+  res.json({ items: rows });
+});
+
+// 备注：给某条收藏写一句「为什么留着它」
+app.post('/api/voice/favorite/note', auth, (req, res) => {
+  const { file_id, note } = req.body || {};
+  if (!file_id) return res.status(400).json({ error: '要给 file_id' });
+  const r = db.prepare('UPDATE voice_favorites SET note = ? WHERE file_id = ?').run(note || null, file_id);
+  res.json({ ok: true, updated: r.changes });
+});
 
 // === 她的身体 · 接收端（2026-08-23）===
 // ⚠️ 全站唯一一个从公网写进来的端点。改它之前先想清楚：
