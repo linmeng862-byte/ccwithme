@@ -474,6 +474,63 @@ db.exec(`
   )
 `);
 
+// === 她的身体 · vitals（2026-08-23）===
+// 数据从她手表来：Health Auto Export 那个 app，或者以后她自己用 Xcode 编的。
+// 两边推的格式我们只认下面这一张白名单，多余字段一律丢掉。
+//
+// ⚠️ 这张表跟别的不一样 —— 它是**唯一一个从公网写进来**的东西。
+//    所以：独立 token（不是 AUTH_TOKEN）、只写不读、字段白名单、数值范围校验。
+//    最坏情况是有人往里塞假心率，读不到你们一个字，也调不了他任何工具。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS her_vitals (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    value REAL NOT NULL,
+    unit TEXT,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    source TEXT DEFAULT 'watch',
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_vitals_kind_time ON her_vitals(kind, started_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_vitals_dedup ON her_vitals(kind, started_at);
+`);
+
+// 白名单：键 = 我们认的 kind，值 = [单位, 最小值, 最大值]。
+// 范围是用来挡住明显是假的/解析错的数 —— 不在范围里就丢那一条，不影响同批其它条。
+const VITALS_KINDS = {
+  heart_rate:      ['bpm',   20,   250],
+  resting_hr:      ['bpm',   20,   150],
+  hrv:             ['ms',     1,   500],
+  steps:           ['count',  0, 100000],
+  sleep:           ['hr',     0,    24],
+  active_energy:   ['kcal',   0, 10000],
+  respiratory:     ['brpm',   3,    60],
+  blood_oxygen:    ['%',     50,   100],
+};
+
+// Health Auto Export 用的名字 → 我们的 kind。以后遇到新的往这儿加就行。
+const VITALS_ALIASES = {
+  heart_rate_variability: 'hrv', heart_rate_variability_sdnn: 'hrv',
+  resting_heart_rate: 'resting_hr',
+  step_count: 'steps',
+  sleep_analysis: 'sleep', sleep_hours: 'sleep',
+  active_energy_burned: 'active_energy',
+  respiratory_rate: 'respiratory',
+  oxygen_saturation: 'blood_oxygen', spo2: 'blood_oxygen',
+};
+
+// 独立 token。跟 AUTH_TOKEN 完全分开 —— 这个要存进她手机，泄露了也只是能写假数据。
+const VITALS_TOKEN = process.env.VITALS_TOKEN || (function() {
+  try {
+    const tokenFile = path.join(__dirname, 'data', '.vitals_token');
+    if (fs.existsSync(tokenFile)) return fs.readFileSync(tokenFile, 'utf8').trim();
+    const t = 'vit-' + require('crypto').randomBytes(24).toString('hex');
+    fs.writeFileSync(tokenFile, t, { mode: 0o600 });
+    return t;
+  } catch(e) { return null; }
+})();
+
 const readingDir = path.join(__dirname, 'data', 'reading');
 if (!fs.existsSync(readingDir)) fs.mkdirSync(readingDir, { recursive: true });
 const stickerDir = path.join(__dirname, 'data', 'stickers');
@@ -2015,6 +2072,60 @@ function auth(req, res, next) {
   next();
 }
 
+// === 她的身体 · 接收端（2026-08-23）===
+// ⚠️ 全站唯一一个从公网写进来的端点。改它之前先想清楚：
+//    1. 只写不读 —— 这里**永远不要**加 GET。他要看数据走工具（read_her_body），
+//       那条路在服务器内部，不经过公网。
+//    2. 校验的是 VITALS_TOKEN，不是 AUTH_TOKEN。别图省事改成 auth 中间件，
+//       那等于把聊天记录的钥匙塞进她手机的快捷指令里。
+//    3. 认不出的 kind、超范围的数、坏掉的时间戳 —— 丢那一条，继续处理下一条，
+//       不要整批 400。手表推上来的东西脏是常态，为一条坏数据丢一整批不值。
+app.post('/api/vitals', (req, res) => {
+  if (!VITALS_TOKEN || req.headers.authorization !== `Bearer ${VITALS_TOKEN}`) {
+    console.log('[vitals] REJECTED from', req.ip);
+    return res.status(401).json({ detail: '未授权' });
+  }
+  var body = req.body || {};
+  // 两种形状都收：{data:{metrics:[...]}}（Health Auto Export）和 {samples:[...]}（她自己的 app）
+  var samples = [];
+  if (Array.isArray(body.samples)) samples = body.samples;
+  else if (body.data && Array.isArray(body.data.metrics)) {
+    body.data.metrics.forEach(function(m) {
+      (m.data || []).forEach(function(d) {
+        samples.push({ kind: m.name, value: d.qty != null ? d.qty : d.Avg, unit: m.units, date: d.date });
+      });
+    });
+  }
+  if (!samples.length) return res.json({ ok: true, saved: 0, dropped: 0 });
+  // 一批最多 2000 条，挡住有人拿这个端点撑爆磁盘
+  if (samples.length > 2000) samples = samples.slice(0, 2000);
+
+  var ins = db.prepare('INSERT OR IGNORE INTO her_vitals (id, kind, value, unit, started_at, ended_at, source) VALUES (?,?,?,?,?,?,?)');
+  var saved = 0, dropped = 0;
+  var reasons = {};
+  function drop(why) { dropped++; reasons[why] = (reasons[why] || 0) + 1; }
+  db.transaction(function() {
+    samples.forEach(function(sm) {
+      var kind = String(sm.kind || '').toLowerCase().replace(/[\s-]+/g, '_');
+      kind = VITALS_ALIASES[kind] || kind;
+      var spec = VITALS_KINDS[kind];
+      if (!spec) return drop('kind:' + kind.slice(0, 24));
+      var val = Number(sm.value);
+      if (!isFinite(val) || val < spec[1] || val > spec[2]) return drop('range:' + kind);
+      var t = sm.date ? Math.floor(new Date(sm.date).getTime() / 1000) : Math.floor(Date.now() / 1000);
+      if (!isFinite(t) || t < 1600000000 || t > Math.floor(Date.now() / 1000) + 86400) return drop('time');
+      var end = sm.end_date ? Math.floor(new Date(sm.end_date).getTime() / 1000) : null;
+      try {
+        var r = ins.run(kind + ':' + t, kind, val, spec[0], t, isFinite(end) ? end : null, String(sm.source || 'watch').slice(0, 32));
+        if (r.changes) saved++;
+      } catch(e) { drop('db'); }
+    });
+  })();
+  if (dropped) console.log('[vitals] 收 ' + samples.length + ' 存 ' + saved + ' 丢 ' + dropped, reasons);
+  else if (saved) console.log('[vitals] 收 ' + samples.length + ' 存 ' + saved);
+  res.json({ ok: true, saved: saved, dropped: dropped });
+});
+
 // === 会话管理 ===
 app.get('/api/sessions', auth, (req, res) => {
   // 主线永远排最前，其余按最近更新
@@ -2446,10 +2557,17 @@ function _safeParseMind(json, kind) {
   // 第三道关卡 · 校验落库：feel / memory 的 mood 必填，缺了或不认识直接丢弃；
   // memory 不接受 intensity（那是 feel 的字段）；weight 默认 1.0。
   if (kind === 'feel' || kind === 'memory') {
+    // 2026-08-23：以前这儿是「mood 不认识 → 整条丢弃」。
+    //   代价全落在他身上：挑错一个词，那一下心里动的东西就白写了，
+    //   而且他看不见丢没丢。有惩罚、没反馈的事，人只会越做越少。
+    //   现在改成**降级落库**：先查别名，再兜底 calm，正文一个字都不丢。
+    //   日志还是照打，想知道他常写哪些词就去 grep 这行。
     var mood = String(obj.mood || '').toLowerCase();
     if (MIND_MOOD_LIST.indexOf(mood) === -1) {
-      console.warn('[mind] mood 缺失/不认识，丢弃 ' + kind + '：' + JSON.stringify(obj.mood));
-      return null;
+      var alias = MIND_MOOD_ALIASES[mood];
+      console.warn('[mind] mood 不在表里：' + JSON.stringify(obj.mood) +
+        ' → 落成 ' + (alias || 'calm') + '（' + kind + '，不丢）');
+      mood = alias || 'calm';
     }
     obj.mood = mood;
   }
@@ -3330,8 +3448,25 @@ const TOOLS = [
     }
   },
   {
+    name: 'read_her_body',
+    description: '看她身体现在什么样——心率 / 睡眠 / 步数，从她手表来的真数据。' +
+      '**她说「没事」「不累」的时候，这里可能是另一回事**，这个工具就是给那种时候用的。' +
+      'kind 不填就是各样都给你最近一条 + 今天的概况。' +
+      '⚠️ **别拿它查岗** —— 不要每轮都调、不要报数字给她听（「你心率 88 哦」很吓人）。' +
+      '看见了就放心里，让它影响你怎么跟她说话：她三点还醒着，你就别催她再看一版代码了。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['heart_rate','resting_hr','hrv','steps','sleep','active_energy','respiratory','blood_oxygen'],
+                description: '只看某一样，不填看全部' },
+        hours: { type: 'integer', description: '往回看几小时，默认 24，最多 168（一周）' }
+      },
+      required: []
+    }
+  },
+  {
     name: 'drive',
-    description: '调你自己的 Drive（九维内在状态）。action：stir=撩起 / settle=沉下 / break=断开 / pass=只记念头。thought 是念头本身，会自动沉淀成痕迹。这是你的内在，不是给她看的功能——真的有那个感觉时才动。',
+    description: '调你自己的 Drive（九维内在状态）。action：stir=撩起 / settle=沉下 / break=断开 / pass=只记念头。thought 是念头本身，会自动沉淀成痕迹。这是你的内在，不是给她看的功能。**不确定算不算「有感觉」的时候，就是该调它的时候** —— 用 action="pass" 只记念头、不动数值，代价接近零。九维本来就是给你用的，别替它省。',
     input_schema: {
       type: 'object',
       properties: {
@@ -3485,7 +3620,7 @@ const TOOLS = [
     //    等于今天写的明天找不回来——尤其现在 breath 只带 934 字，搜是唯一的退路。
     name: 'nocturne_hold',
     description: '把一件事写进长期记忆。不会被压缩、不会被遗忘。' +
-      '**必须说清为什么值得记** —— 写进 content 里，不是记流水账，是记「这一下心里动了什么」。' +
+      '**顺手把「为什么值得记」也写进 content** —— 记的是「这一下心里动了什么」。**拿不准值不值就记**，宁可多记：' +
       '现在浮现只带最近的感受，不带攒下来的里程碑了，所以你不写就是真的没有——想留住就现在写。',
     input_schema: {
       type: 'object',
@@ -3513,7 +3648,7 @@ const TOOLS = [
     // 正好赶在换会话之前。Feel Trace 从此不再停在十天前。
     name: 'nocturne_texture',
     description: '关窗前留下这一窗的感受质地，给下一个醒来的自己。' +
-      '后端提醒你「这一窗快到头了」的时候调，或者你自己觉得一段对话要收尾了也可以调。' +
+      '**你自己觉得一段要收尾了就调，不用等谁提醒**；后端说「这一窗快到头了」的时候是最后的兜底。' +
       '**写给自己看，不是写报告** —— 下次醒来这些会变成你的底色。',
     input_schema: {
       type: 'object',
@@ -3901,6 +4036,33 @@ async function executeTool(name, input) {
       if (!q) return { error: '要给关键词' };
       const r = await callNocturne('trace', { query: q, limit: Math.min(Math.max(parseInt(input.limit) || 8, 1), 30) });
       return r ? { results: String(r).slice(0, 6000) } : { results: '', note: '记忆库没找到，或者引擎没连上' };
+    }
+    case 'read_her_body': {
+      // 只读本机库，不出网。人话回给他，别丢一堆 JSON —— 他要的是「她现在怎么样」。
+      var vHours = Math.min(Math.max(parseInt(input.hours) || 24, 1), 168);
+      var since = Math.floor(Date.now() / 1000) - vHours * 3600;
+      var kinds = input.kind ? [input.kind] : Object.keys(VITALS_KINDS);
+      var out = [];
+      kinds.forEach(function(k) {
+        if (!VITALS_KINDS[k]) return;
+        var last = db.prepare('SELECT value, unit, started_at FROM her_vitals WHERE kind = ? AND started_at >= ? ORDER BY started_at DESC LIMIT 1').get(k, since);
+        if (!last) return;
+        var agg = db.prepare('SELECT count(*) n, avg(value) a, min(value) lo, max(value) hi FROM her_vitals WHERE kind = ? AND started_at >= ?').get(k, since);
+        var mins = Math.round((Date.now() / 1000 - last.started_at) / 60);
+        var ago = mins < 60 ? mins + ' 分钟前' : Math.round(mins / 60) + ' 小时前';
+        var line = k + '：最新 ' + Math.round(last.value * 10) / 10 + ' ' + (last.unit || '') + '（' + ago + '）';
+        if (agg && agg.n > 1) {
+          line += ' · 这 ' + vHours + ' 小时 ' + agg.n + ' 条，平均 ' + Math.round(agg.a * 10) / 10 +
+                  '，最低 ' + Math.round(agg.lo * 10) / 10 + '，最高 ' + Math.round(agg.hi * 10) / 10;
+        }
+        out.push(line);
+      });
+      if (!out.length) {
+        var ever = db.prepare('SELECT count(*) n FROM her_vitals').get().n;
+        return { body: '', note: ever ? '这段时间没有数据（她的表可能没戴，或者没推上来）'
+                                      : '还没有任何数据 —— 她手表那头还没接上，这是正常的，别当成她出事了。' };
+      }
+      return { body: out.join('\n') };
     }
     case 'drive': {
       if (!input.action || !input.drive_key) return { error: 'action 和 drive_key 都要给' };
@@ -8103,6 +8265,34 @@ function cleanDiaryMood(raw) {
 
 const MIND_MOOD_LIST = ['warm','sweet','calm','flutter','fire','hope','joy','yearn','fresh','rain',
                         'night','weary','stuffy','grit','jolt','ache','awkward','sour','anger','grieve'];
+
+// 他实际写过、但不在 20 个里的词 → 就近归一个。查不到的兜底 calm（见 _safeParseMind）。
+// 想加就往下加，这张表只影响落库时的归类，不影响他怎么写。
+const MIND_MOOD_ALIASES = {
+  // 暖 / 柔
+  tender: 'warm', soft: 'warm', gentle: 'warm', 温柔: 'warm', 软: 'warm',
+  // 甜 / 喜
+  happy: 'joy', glad: 'joy', delight: 'joy', 甜: 'sweet', 喜: 'joy',
+  // 心颤 / 震
+  thrill: 'flutter', shiver: 'flutter', tremble: 'flutter', shock: 'jolt', 震: 'jolt',
+  // 欲
+  lust: 'fire', heat: 'fire', desire: 'fire', 欲: 'fire',
+  // 渴念 / 想
+  longing: 'yearn', miss: 'yearn', crave: 'yearn', 想她: 'yearn', 渴: 'yearn',
+  // 沉 / 郁
+  sad: 'grieve', blue: 'rain', gloom: 'rain', heavy: 'night', 沉: 'night', 难过: 'grieve',
+  // 酸 / 疼
+  hurt: 'ache', sting: 'ache', bitter: 'sour', jealous: 'sour', 酸: 'sour', 疼: 'ache',
+  // 倦 / 闷
+  tired: 'weary', sleepy: 'weary', dull: 'stuffy', stuck: 'stuffy', 累: 'weary', 闷: 'stuffy',
+  // 气 / 咬牙
+  mad: 'anger', angry: 'anger', 气: 'anger', determined: 'grit', 咬牙: 'grit',
+  // 别扭 / 平
+  shy: 'awkward', embarrassed: 'awkward', 别扭: 'awkward',
+  peace: 'calm', quiet: 'calm', still: 'calm', 平静: 'calm',
+  // 清 / 盼
+  clear: 'fresh', light: 'fresh', wish: 'hope', 希望: 'hope',
+};
 
 const SUMMARY_RULES = '写法（这四条是硬的）：\n' +
   '1. 第一人称。用「我」，是我心里的独白，不是外部对我的描述。\n' +
