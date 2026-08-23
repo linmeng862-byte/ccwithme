@@ -2490,15 +2490,13 @@ function _maybeTimeSep(ts,who){
       var usep=document.createElement('div');usep.className='time-separator';
       usep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
       streamInner.append(usep);
-      _turnHasTimeSep=true;_lastMsgTime=t;return;   // 这一段的分界已经摆过，他回话时别再摆一次
+      // 08-23：这里原来置 true，于是他这一段的第一句被挡掉，小时间戳永远摆不出来。
+      // 新的一段刚开始，**他的第一句正是该摆小时间戳的那一句** → 置 false。
+      _turnHasTimeSep=false;_lastMsgTime=t;return;
     }
-    // 08-23 修回来：上一版为了治「一屏 22 个」，把这里的复位整个删了 ——
-    // 结果 _turnHasTimeSep 一旦为 true 就再也回不去，下面那个 if 永远 return，
-    // **`.msg-time-inline` 从此一个都创建不出来**（playwright 量出来是 0）。
-    // 小的那个本来就该「他每一轮摆一次」（见上面 2481 和 home.css:1286 的注释），
-    // 不是「一段对话只摆一个」—— 那是大的 .time-separator 干的活。
-    // 所以：她开口 = 新的一轮，复位。但她这句已经摆过大分界线的，走上面那个分支，不复位。
-    _turnHasTimeSep=false;_lastMsgTime=t;return;
+    // 同一段之内她再开口：不复位。小时间戳一段只摆一个，不是每轮一个。
+    // （跟 backend.js 报时同一个道理：一段对话开头交代一次就够，后面的来回不用一直提醒。）
+    _lastMsgTime=t;return;
   }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=t;return}   // 这一轮的小时间戳已经摆过了
@@ -3919,11 +3917,12 @@ function _maybeTimeSepFrag(frag,ts,who){
       var usep=document.createElement('div');usep.className='time-separator';
       usep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
       frag.appendChild(usep);
-      _turnHasTimeSep=true;_lastMsgTime=Math.max(_lastMsgTime,t);return;
+      // 08-23：新的一段开始，他的第一句该摆小时间戳 → 置 false（跟 _maybeTimeSep 同步）
+      _turnHasTimeSep=false;_lastMsgTime=Math.max(_lastMsgTime,t);return;
     }
     // 规矩跟 _maybeTimeSep 一模一样（见那边的注释），别只改一边。
-    // 08-23：她开口 = 新的一轮，复位，否则他的小时间戳永远摆不出来。
-    _turnHasTimeSep=false;_lastMsgTime=Math.max(_lastMsgTime,t);return;
+    // 同一段之内她再开口：不复位，小时间戳一段只摆一个。
+    _lastMsgTime=Math.max(_lastMsgTime,t);return;
   }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=Math.max(_lastMsgTime,t);return}

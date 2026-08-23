@@ -1290,12 +1290,15 @@ html[data-theme="dark"]{--bubble-her:#332A2C}
 .msg-time-inline{
   display:flex;align-items:center;gap:7px;
   /* 缩进到跟他的气泡左边缘同一条竖线上：头像 40 + .msg-claude 的 gap 8 */
-  margin:10px 0 4px 48px;
-  font-family:var(--font-mono);font-size:12px;letter-spacing:.02em;
+  /* 08-23 她要的：再小一点、离他的气泡再近一点（原来 12px / 下边距 4px 显得飘） */
+  /* ⚠️ margin-left 在下面 1448 行被 `56px!important` 覆盖了（她要的「往右挪一点」），
+     改这儿的左边距没用，去改那条。这里只有上/下边距和字号是真正生效的。 */
+  margin:8px 0 1px 48px;
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.02em;
   color:var(--text-time);
 }
 .msg-time-inline .dot{
-  width:5px;height:5px;border-radius:50%;
+  width:4px;height:4px;border-radius:50%;
   background:var(--text-time);opacity:.7;flex:none;
 }
 
@@ -1449,6 +1452,8 @@ html.as-non .msg-claude.streaming .claude-trail-logo{align-self:flex-end;margin:
      基础上再加，不是从 0 开始。改这个数之前先看它原来是多少。 */
   margin-left:56px!important;
   color:var(--text-primary)!important;
+  /* 字号和上下边距在 1290 行那条（08-23 改成 10.5px / 下边距 1px：她要「小一点、离气泡近一点」）。
+     两条规则管同一个东西，改之前两边都看一眼。 */
 }
 .msg-time-inline .dot{background:var(--text-primary)!important;opacity:.75!important}
 
