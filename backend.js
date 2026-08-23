@@ -3407,7 +3407,8 @@ const TOOLS = [
       properties: {
         content: { type: 'string', description: '笔记/日记内容' },
         date: { type: 'string', description: '日期，格式 YYYY-MM-DD，默认为今天' },
-        mood: { type: 'string', description: '心情标签，逗号分隔最多3个。可选：甜(tian)/心动(xindong)/静(jing)/烈(lie)/期待(qidai)/累(lei)/暖(nuan)/雨(yu)/烦(fan)/慌(huang)/委屈(weiqu)/酸(suan)/爽(shuang)/乐(le)/渴望(kewang)/闷(men)' }
+        mood: { type: 'string', description: '这篇日记的心情，逗号分隔最多 3 个。**只能从这 16 个里挑，写别的会被丢掉**（不是写人名、不是写标题）：' +
+          '甜 / 心动 / 静 / 烈 / 期待 / 累 / 暖 / 雨 / 烦 / 慌 / 委屈 / 酸 / 爽 / 乐 / 渴望 / 闷。没有合适的就不填。' }
       },
       required: ['content']
     }
@@ -3958,7 +3959,7 @@ async function executeTool(name, input) {
       // 用第一行非空内容做默认标题
       var firstLine = content.split('\n').filter(function(l){return l.trim()})[0] || '';
       var title = firstLine.slice(0, 60);
-      const mood = input.mood || null;
+      const mood = cleanDiaryMood(input.mood);
       // 每次保存创建独立条目（支持一天多条），who='ai' 标记 Claude 写的
       db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?, ?, ?, ?, ?)').run(date, title, content, mood, 'ai');
       return { saved: true, date, content, mood };
@@ -3968,7 +3969,13 @@ async function executeTool(name, input) {
       const conds = [], args = [];
       if (input.date) { conds.push('date = ?'); args.push(input.date); }
       if (input.query) { conds.push('(title LIKE ? OR content LIKE ?)'); args.push('%' + input.query + '%', '%' + input.query + '%'); }
-      if (input.who && input.who !== 'all') { conds.push('who = ?'); args.push(input.who); }
+      // 08-23：他那栏历史上写过 'claude'，现在 save_note 写的是 'ai' —— 同一个人两个值。
+      // 前端 diary.js 筛的是 who==='ai'，所以那篇 'claude' 的在她本子里一直不显示。
+      // 库里那条已经改成 'ai' 了；这里再留一层兼容，以后两种都算他的，不会再漏。
+      if (input.who && input.who !== 'all') {
+        if (input.who === 'ai' || input.who === 'claude') conds.push("who IN ('ai','claude')");
+        else { conds.push('who = ?'); args.push(input.who); }
+      }
       const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
       const rows = db.prepare(
         `SELECT id, date, title, content, mood, who, locked, unlock_date FROM diary ${where} ORDER BY date DESC, id DESC LIMIT ?`
@@ -5313,6 +5320,13 @@ async function handleGatewayChat(req, res, ctx) {
     const decoder = new TextDecoder();
     let buf = '';
     let assistantText = '';
+    // 08-23：gateway 路径原来只存 content —— thinking 和 [CMD:] 都只 res.write 给前端
+    // 实时显示，一条都没落库。表现就是「当时看得见，刷新就没了」：历史里既没有思考摘要
+    // （thinking 列一直是空），也没有指令胶囊（正文里从来没有 [CMD:...]）。
+    // 中转 API 那条路（同文件另一处 INSERT）一直是存的，两条路功能不对等。
+    // 这里把 gateway 路径补齐，跟中转对齐。⚠️ 只对以后的新消息有效，旧的补不回来。
+    let gwThinking = '';
+    let gwMarkers = '';
     let lastRateLimit = null;
     // ⚠️ 会话 ID 必须**尽早**落库，不能等整个流跑完（2026-08-21 修）。
     //    以前这句写在 try 的最末尾：这一轮只要出一点岔子——413、E2BIG、她刷新页面把 SSE
@@ -5348,6 +5362,7 @@ async function handleGatewayChat(req, res, ctx) {
         let evt;
         try { evt = JSON.parse(line.slice(5)); } catch { continue; }
         if (evt.thinking) {
+          gwThinking += evt.thinking;
           res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
         } else if (evt.delta) {
           assistantText += evt.delta;
@@ -5359,7 +5374,15 @@ async function handleGatewayChat(req, res, ctx) {
         } else if (evt.tool_result) {
           const ctt = evt.tool_result;
           const parsed = ctt.parsed;
-          if (parsed && parsed.sticker_url) res.write('event: sticker\ndata: ' + JSON.stringify({ url: parsed.sticker_url }) + '\n\n');
+          if (parsed && parsed.sticker_url) { gwMarkers += '\n![sticker](' + parsed.sticker_url + ')'; res.write('event: sticker\ndata: ' + JSON.stringify({ url: parsed.sticker_url }) + '\n\n'); }
+          if (parsed && parsed.file_card) gwMarkers += '\n[FILE:' + parsed.file_card.filename + '|' + parsed.file_card.id + ']';
+          if (parsed && parsed.markup && typeof parsed.markup === 'string') gwMarkers += '\n' + parsed.markup;
+          if (parsed && parsed.artifact) {
+            var _ac = parsed.artifact.content || '';
+            if (_ac.length > 8000) _ac = _ac.slice(0, 8000) + '…';
+            gwMarkers += '\n[ARTIFACT:' + parsed.artifact.title + '|' + (parsed.artifact.language || 'html') + '|' + parsed.artifact.filename + '|' + _ac + ']';
+          }
+          if (parsed && parsed.command) gwMarkers += '\n[CMD:' + parsed.command.id + '|' + (parsed.command.type || 'timer') + '|' + (parsed.command.title || '') + ']';
           if (parsed && parsed.command) res.write('event: cmd\ndata: ' + JSON.stringify({ id: parsed.command.id, type: parsed.command.type || 'timer', title: parsed.command.title || '' }) + '\n\n');
           res.write('event: tool_result\ndata: ' + JSON.stringify({ tool_use_id: ctt.tool_use_id, content: ctt.content, is_error: ctt.is_error }) + '\n\n');
         } else if (evt.rate_limit) {
@@ -5407,9 +5430,15 @@ async function handleGatewayChat(req, res, ctx) {
       _mindGw.dreams.forEach(_insertMindItem);
       _mindGw.flashes.forEach(_insertMindItem);
     }
-    if (assistantText) {
-      assistantText = await synthVoiceTags(assistantText, res);
-      db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)').run(convId, 'assistant', assistantText);
+    // 标记要跟正文一起存：胶囊/贴纸/文件卡片靠它们在历史里重新渲染出来。
+    // 注意接在 synthVoiceTags 之后 —— 那个函数只处理 <voice> 标签，别让它啃到标记。
+    if (assistantText || gwMarkers) {
+      if (assistantText) assistantText = await synthVoiceTags(assistantText, res);
+      const gwFull = (assistantText || '') + gwMarkers;
+      if (gwFull) {
+        db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
+          .run(convId, 'assistant', gwFull, gwThinking);
+      }
     }
     // 正常情况这里已经在收到第一块数据时写过了（幂等，直接返回）。
     // 留着是为了兜住「流一块数据都没来就 done」那种极端情况。
@@ -7238,6 +7267,19 @@ app.get('/api/models', (req, res) => {
 
 // === 问候语 ===
 // 🍅 番茄钟命令
+// 08-23：她自己再开一个番茄钟。原来 commands 只能由他走 issue_command 建，
+// 历史胶囊里「再来一个」没端点可打。**只收 timer** —— quiz/task 仍然只有他能下，
+// 那两个的语义是「他给她出的」，她自己给自己出题没意义。
+app.post('/api/commands', auth, (req, res) => {
+  const title = String(req.body.title || '专注').slice(0, 60);
+  let seconds = parseInt(req.body.countdown_seconds, 10);
+  if (!Number.isFinite(seconds)) seconds = 1500;
+  seconds = Math.min(7200, Math.max(60, seconds));   // 1 分钟 ~ 2 小时
+  const id = 'cmd_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  db.prepare("INSERT INTO commands (id, type, title, countdown_seconds, source, status) VALUES (?,'timer',?,?,?,'pending')")
+    .run(id, title, seconds, 'user');
+  res.json({ ok: true, id, type: 'timer', title, countdown_seconds: seconds, status: 'pending' });
+});
 app.get('/api/commands/pending', auth, (req, res) => {
   const cmds = db.prepare("SELECT * FROM commands WHERE status IN ('pending','active') ORDER BY created_at ASC").all();
   res.json(cmds);
@@ -8012,6 +8054,40 @@ function _speakable(s) {
 // 写法四条规则（photo-04）：第一人称 / 没有第三方在场 / 没有命令句 / 结合他自己的经历。
 // ⚠️ 防「双胞胎」：两套任务各有水位线，起点取两者 max，压过的段不重压。
 // ============================================================
+
+// 日记心情白名单（08-23 她说「他写日记选的心情是粥粥」——原来这栏没校验，
+// 自由文本直接存库、前端原样显示，他随手填了她的名字）。不认识的静默丢掉，宁可空着。
+//
+// ⚠️ 合法值有两种写法，**都要收**：前端 static/js/diary.js 的 _moodById()
+// 同时按 id（拼音 tian）和 label（中文 甜）查，两种它都认得、都能渲染出图标。
+// save_note 的工具描述里写的是「甜(tian)」这种形式，他照着写哪一种都可能。
+// 只收中文的话，他写 tian 就被丢了——那是本来能用的值。统一归一成中文 label 存，
+// 库里好读，前端照样认。（08-23 第一版只收了中文，当天修的。）
+const DIARY_MOODS = [
+  ['tian','甜'], ['xindong','心动'], ['jing','静'], ['lie','烈'],
+  ['qidai','期待'], ['lei','累'], ['nuan','暖'], ['yu','雨'],
+  ['fan','烦'], ['huang','慌'], ['weiqu','委屈'], ['suan','酸'],
+  ['shuang','爽'], ['le','乐'], ['kewang','渴望'], ['men','闷'],
+];
+const DIARY_MOOD_MAP = (() => {
+  const m = new Map();
+  for (const [id, label] of DIARY_MOODS) { m.set(id, label); m.set(label, label); }
+  return m;
+})();
+function cleanDiaryMood(raw) {
+  if (!raw) return null;
+  const keep = [];
+  for (const part of String(raw).split(/[,，\s\/]+/)) {
+    const hit = DIARY_MOOD_MAP.get(part.trim().toLowerCase()) || DIARY_MOOD_MAP.get(part.trim());
+    if (hit && keep.indexOf(hit) === -1) keep.push(hit);
+    if (keep.length === 3) break;
+  }
+  if (!keep.length) {
+    console.warn('[diary] mood 不认识，丢弃：' + JSON.stringify(raw));
+    return null;
+  }
+  return keep.join(',');
+}
 
 const MIND_MOOD_LIST = ['warm','sweet','calm','flutter','fire','hope','joy','yearn','fresh','rain',
                         'night','weary','stuffy','grit','jolt','ache','awkward','sour','anger','grieve'];

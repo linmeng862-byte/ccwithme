@@ -21,12 +21,12 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787408558">
+<link rel="stylesheet" href="/css/home.css?v=1787414800">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
 <script src="/js/books.js?v=49"></script>
-<script src="/js/diary.js?v=7"></script>
+<script src="/js/diary.js?v=8"></script>
 <script src="/js/gallery.js?v=1"></script>
 <script src="/js/memory.js?v=1"></script>
 <script src="/js/mind.js?v=2"></script>
@@ -2796,7 +2796,16 @@ function _downloadFile(ev,id,name){
   return false;
 }
 function _renderToolFileCard(fc,parent){if(!fc||!fc.id||!parent)return;var name=fc.filename||'file';var id=fc.id;var sizeStr=fc.size?_formatFileSize(fc.size):'';var url='#';var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var card=document.createElement('a');card.href=url;card.download=name;card.onclick=function(ev){return _downloadFile(ev,id,name)};card.className='file-card';card.dataset.fileId=id;card.dataset.fileName=name;card.style.cssText='display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s';card.onmouseenter=function(){card.style.background='var(--bg-hover)'};card.onmouseleave=function(){card.style.background='var(--bg-surface)'};var iconSpan=document.createElement('span');iconSpan.style.cssText='display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none';iconSpan.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var infoSpan=document.createElement('span');infoSpan.style.cssText='flex:1;min-width:0';var nameEl=document.createElement('span');nameEl.style.cssText='display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';nameEl.textContent=name;var metaEl=document.createElement('span');metaEl.className='file-card-meta';metaEl.style.cssText='display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px';var parts=[ext.toLowerCase()];if(sizeStr)parts.push(sizeStr);metaEl.textContent=parts.join(' · ');var dlSpan=document.createElement('span');dlSpan.style.cssText='flex:none;color:var(--text-time)';dlSpan.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';infoSpan.append(nameEl,metaEl);card.append(iconSpan,infoSpan,dlSpan);parent.appendChild(card)}
-function _renderCmdCapsulesAfter(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html2=md.innerHTML;var re=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;var capsules=[];while((match=re.exec(html2))!==null){changed=true;var cid=match[1],ctype=match[2],ctitle=match[3];var cmdIcon=ctype==='quiz'?'\u{1F4DD}':ctype==='task'?'\u{1F4CB}':'\u23F1\uFE0F';var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',cid);cap.setAttribute('data-cmd-type',ctype);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.innerHTML='<span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});capsules.push(cap);html2=html2.replace(match[0],'')}if(changed){md.innerHTML=html2;var bubbleEl=body.querySelector('.bubble');var after=bubbleEl||md;capsules.forEach(function(c){after.after(c);after=c})}var existing=md.querySelectorAll('.cmd-capsule[data-cmd-id]');if(existing.length){var bubbleEl2=body.querySelector('.bubble');var after2=bubbleEl2||md;existing.forEach(function(c){c.remove();after2.after(c);after2=c})}}
+function _renderCmdCapsulesAfter(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html2=md.innerHTML;var re=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;var capsules=[];while((match=re.exec(html2))!==null){changed=true;var cid=match[1],ctype=match[2],ctitle=match[3];var cmdIcon=ctype==='quiz'?'\u{1F4DD}':ctype==='task'?'\u{1F4CB}':'\u23F1\uFE0F';var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',cid);cap.setAttribute('data-cmd-type',ctype);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.innerHTML='<span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});capsules.push(cap);html2=html2.replace(match[0],'')}if(changed){md.innerHTML=html2;var bubbleEl=body.querySelector('.bubble');var after=bubbleEl||md;capsules.forEach(function(c){after.after(c);after=c})}var existing=md.querySelectorAll('.cmd-capsule[data-cmd-id]');if(existing.length){var bubbleEl2=body.querySelector('.bubble');var after2=bubbleEl2||md;existing.forEach(function(c){c.remove();after2.after(c);after2=c})}
+  // 08-23 她说「指令胶囊出现了三次」。上面这句只在 `md` 里找已有胶囊，可它把找到的
+  // 移到了 msg-body（bubble 之后）—— 移出去就不在查询范围里了。于是 renderMessage
+  // 每重渲染一次 md 就新建一个，旧的没人认领，一次次累积。库里 [CMD:] 只有一条，
+  // 是这儿渲染重了。收尾按 cmd-id 在整行范围内去重，只留第一个。
+  var _seenCmd={};
+  row.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){
+    var k=c.getAttribute('data-cmd-id');
+    if(_seenCmd[k])c.remove(); else _seenCmd[k]=1;
+  });}
 // 08-22：Clawd 那行小字（「Clawd替你开心」）刷新后就没了。
 // 根因不是标记丢了 —— [clawd:happy|…] 好好地存在 messages.content 里 ——
 // 而是渲染时机不对：renderMessage 里往 `.msg-claude.streaming` 插，
@@ -2826,19 +2835,40 @@ function _renderFileCards(row){var body=row.querySelector('.msg-body');if(!body)
 //    有一条不满足就原样返回 null，走下面 `---` 那条老路。
 function _chatLineSplit(raw){
   var s=String(raw||'').trim();
-  if(!s||s.indexOf('```')>=0||s.indexOf('<')>=0)return null;
+  if(!s||s.indexOf('\u0060\u0060\u0060')>=0||s.indexOf('<')>=0)return null;
+  // 08-23：带方括号标记的整条都不拆。[VOICE:f_xxx|0:04] 后面跟一句正文正好是两行，
+  // 会被下面按行拆成两条气泡 —— 而拆出来那条只有裸标记，没人调 _renderVoiceCards，
+  // 她看到的就是「语音条变成 [VOICE:f_mt5jf7x75p8h|0:04]」。语音条跟它的正文本来
+  // 就该在同一条里；[CMD:/[FILE:/[ARTIFACT: 同理，拆开都会掉渲染。
+  if(/\[(VOICE|VOICEC|CMD|FILE|ARTIFACT|CALL):/.test(s))return null;
   var lines=s.split(/\n+/).map(function(x){return x.trim()}).filter(Boolean);
   if(lines.length<2||lines.length>4)return null;
   for(var i=0;i<lines.length;i++){
     var L=lines[i];
     if(L.length>40)return null;
     if(/^(#{1,6}\s|[-*+]\s|>\s|\||\d+[.)]\s)/.test(L))return null;
+    // 08-23 修空白气泡：`---` 是 `-` 接 `-`，不匹配上面那条 `[-*+]\s`，
+    //   于是被当成一句随口聊天切出去，renderMessage 渲染成 <hr> = 一个什么都没有的气泡。
+    //   而他正是被教「想分几条就用单独一行的 --- 隔开」的，这行到处都是。
+    if(/^[-*_]{3,}$/.test(L))return null;
   }
   // 原文里以四个空格开头的行是 markdown 代码块，split 后看不出来了，这儿单独查一次
   if(/^\s{4,}\S/m.test(s))return null;
   return lines;
 }
-function _splitMessages(row){var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}if(parts.length<2)return;var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);var tb=clone.querySelector('.thinking-summary');if(tb)tb.remove();var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();parent.insertBefore(clone,next.nextSibling);next=clone})}
+function _partIsBlank(p){
+  // 08-23：切出来但「渲染完什么都没有」的段，一律不许变成气泡。
+  // 三条切分路径（\n---\n / 按行 / <hr>）都可能吐出这种段，所以兜在最后统一挡。
+  var s=String(p||'').trim();
+  if(!s)return true;
+  if(/^[-*_]{3,}$/.test(s))return true;                 // 纯分隔线 → <hr>
+  if(s.indexOf('<')>=0){                                 // html 那条路：图片/音视频算有内容
+    if(/<(img|video|audio|iframe)\b/i.test(s))return false;
+    return !s.replace(/<[^>]*>/g,'').trim();
+  }
+  return false;
+}
+function _splitMessages(row){var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=parts[0]}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);var tb=clone.querySelector('.thinking-summary');if(tb)tb.remove();var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();parent.insertBefore(clone,next.nextSibling);next=clone})}
 function _addHtmlPreviews(md){if(!md)return;md.querySelectorAll('pre code').forEach(function(block){var cls=block.className||'';var pre=block.parentElement;if(pre.querySelector('.html-preview-btn'))return;var isHtml=/language-html|language-htm|lang-html|lang-htm/i.test(cls);var isCss=/language-css|lang-css/i.test(cls);var isJs=/language-js|language-javascript|lang-js/i.test(cls);if(!isHtml&&!isCss&&!isJs)return;var btn=document.createElement('button');btn.className='html-preview-btn';btn.textContent='▸ Preview';btn.style.cssText='margin-top:6px;padding:5px 14px;border:1px solid var(--accent);border-radius:16px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;font-family:var(--font-sans)';var iframe=null;btn.onclick=function(){if(iframe){iframe.remove();iframe=null;btn.textContent='▸ Preview';return}var code=block.textContent;if(isCss){code='<style>'+code+'<\/style>'}else if(isJs){code='<script>'+code+'<\/script>'}iframe=document.createElement('iframe');iframe.style.cssText='width:100%;max-width:440px;min-height:550px;border:1px solid var(--border);border-radius:14px;background:#fff;margin-top:8px;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob(['<!DOCTYPE html><html><head><meta charset=\"utf-8\"><\/head><body>'+code+'</body></html>'],{type:'text/html'}));pre.after(iframe);btn.textContent='▸ Hide preview'};pre.after(btn)})}
 async function refineThoughtSummary(summary,thinking){if(!thinking)return;setThoughtSummary(summary,thinking,'Thinking summary...');try{const r=await api('/api/thinking-summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thinking})});if(!r.ok)throw Error();const data=await r.json();setThoughtSummary(summary,thinking,data.summary||'')}catch{setThoughtSummary(summary,thinking)}}
 function thoughtSummary(thinking){const summary=document.createElement('button');summary.className='thinking-summary show';setThoughtSummary(summary,thinking);refineThoughtSummary(summary,thinking);summary.onclick=()=>{$('thoughtContent').textContent=thinking;sheet('thought',true)};return summary}
@@ -4837,19 +4867,36 @@ function pollCommands(){
     // ── 任务同步 → todoSheet ──
     var changed2=false;
     cmds.forEach(function(cmd2){
-      if(cmd2.type!=='task')return;
+      // 08-23：原来只同步 task。番茄钟跟小票之间一行代码都没连着 ——
+      // 她说「番茄钟应该跟这个和 receipt 联动」，是对的设计，只是没实现。
+      // timer 也进 _todos，body 带 ⏱ 前缀跟手写待办区分开。
+      if(cmd2.type!=='task'&&cmd2.type!=='timer')return;
       var existing=_todos.find(function(t){return t._cmdId===cmd2.id});
       if(cmd2.status==='done'||cmd2.status==='cancelled'){
         if(existing&&!existing.done){existing.done=1;existing.done_at=Date.now();changed2=true}
-      }else if(cmd2.status==='active'){
+      }else if(cmd2.status==='active'||(cmd2.type==='timer'&&cmd2.status==='pending')){
         if(!existing){
-          _todos.push({id:Date.now()+Math.random(),body:cmd2.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd2.id});
+          _todos.push({id:Date.now()+Math.random(),body:(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd2.id});
           changed2=true;
         }
       }
     });
     if(changed2){_saveTodos();_updateTodoBadge()}
   }).catch(function(e){console.log('pollCommands error:',e)});
+}
+// 番茄钟结束时结清小票上那一行。
+// 注意：/api/commands/pending 只返回 pending+active，done/cancelled 永远不回 ——
+// 所以打勾**不能**指望下一轮 poll，必须在结束的那三个入口就地做。
+// 跑完 = 打勾（留在小票上跟着撕掉动画走）；放弃 = 整行拿掉，不在小票上挂个烂账。
+function _settleTimerTodo(cmdId,completed){
+  if(!cmdId)return;
+  var i=-1;
+  for(var k=0;k<_todos.length;k++){if(_todos[k]._cmdId===cmdId){i=k;break}}
+  if(i===-1)return;
+  if(completed){_todos[i].done=1;_todos[i].done_at=Date.now()}
+  else _todos.splice(i,1);
+  _saveTodos();
+  if(typeof _renderTodos==='function'){try{_renderTodos()}catch(_){}}
 }
 function showTimerWidget(){
   var w=$('timerWidget');if(!w){console.log('timerWidget element NOT FOUND');return;}
@@ -4925,7 +4972,7 @@ function startTimerCountdown(){
 $('timerDone').onclick=function(){
   if(!_timerCmd)return;
   fetch('/api/commands/'+_timerCmd.id+'/complete',{method:'POST',headers:{'Authorization':'Bearer '+state.token}}).then(function(){
-    clearInterval(_timerInterval);var title=_timerCmd.title,cmdId=_timerCmd.id;clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
+    clearInterval(_timerInterval);var title=_timerCmd.title,cmdId=_timerCmd.id;_settleTimerTodo(cmdId,true);clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
     $('timerProgressBar').style.transform='scaleX(0)';setOvertimeStyle(false);
     hideTimerWidget();hideTimerPill();
     showTimerDoneToast(title);
@@ -4934,7 +4981,7 @@ $('timerDone').onclick=function(){
 $('timerCancel').onclick=function(){
   if(!_timerCmd)return;
   fetch('/api/commands/'+_timerCmd.id+'/cancel',{method:'POST',headers:{'Authorization':'Bearer '+state.token}}).then(function(){
-    clearInterval(_timerInterval);var cmdId=_timerCmd.id;clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
+    clearInterval(_timerInterval);var cmdId=_timerCmd.id;_settleTimerTodo(cmdId,false);clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
     $('timerProgressBar').style.transform='scaleX(0)';setOvertimeStyle(false);
     hideTimerWidget();hideTimerPill();
     showTimerCancelToast();   // 卡片上点取消也要有反馈，跟长按取消一致
@@ -5079,7 +5126,7 @@ function endPillSwipe(e){
     p.classList.add('timer-pill-complete');
     if(_timerCmd){
       fetch('/api/commands/'+_timerCmd.id+'/complete',{method:'POST',headers:{'Authorization':'Bearer '+state.token}}).then(function(){
-        clearInterval(_timerInterval);var title=_timerCmd.title,cmdId=_timerCmd.id;clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
+        clearInterval(_timerInterval);var title=_timerCmd.title,cmdId=_timerCmd.id;_settleTimerTodo(cmdId,true);clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
         setOvertimeStyle(false);
         showTimerDoneToast(title);
         setTimeout(function(){hideTimerPill()},2500);
@@ -5122,7 +5169,7 @@ function _pillHoldFire(){
   if(pl){pl.classList.add('timer-pill-cancel-leaving');pl.style.pointerEvents='none';}
   if(!_timerCmd){showTimerCancelToast();return}
   fetch('/api/commands/'+_timerCmd.id+'/cancel',{method:'POST',headers:{'Authorization':'Bearer '+state.token}}).then(function(){
-    clearInterval(_timerInterval);var cmdId=_timerCmd.id;clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
+    clearInterval(_timerInterval);var cmdId=_timerCmd.id;_settleTimerTodo(cmdId,false);clearLaUpdateInterval();focusLockStop();laEndTimer(cmdId);_timerCmd=null;_timerOvertimed=false;_timerDocked=false;
     setOvertimeStyle(false);
     var ring=$('timerPillHold');if(ring){ring.style.opacity='0';ring.style.strokeDashoffset='81.68'}
     setTimeout(function(){hideTimerPill()},450);
@@ -5828,6 +5875,47 @@ $('stickerFileInput').onchange = async function() {
 	  api('/api/commands/'+cmdId).then(function(r){return r.json()}).then(function(cmd){
 	    _currentQuizCmd=cmd;
 	    if(cmd.type==='quiz'){openQuizSheet(cmd)}
+	    // 08-23 她说「下指令那个生成的小框我点不动」。查下来：SSE 实时下发时
+	    // timer 走 pollCommands() 弹浮窗、**不建胶囊**；但历史消息重渲染
+	    // （renderMessage / _renderCmdCapsulesAfter）按 [CMD:id|type|title] 解析，
+	    // 不分 type，timer 也渲染成一颗 ⏱ 胶囊 —— 而这儿只有 quiz/task 两个分支，
+	    // timer 落到函数底部静默返回。不报错、不反应，就是「点不动」。
+	    else if(cmd.type==='timer'){
+	      var _mins=Math.floor((cmd.countdown_seconds||0)/60);
+	      // 还在跑：把浮窗拉回来，别重新计时
+	      if(cmd.status==='active'){
+	        _timerCmd=cmd;showTimerWidget();
+	        $('timerTitle').textContent=cmd.title||'专注';
+	        $('timerSub').textContent=_mins+' min';
+	        startTimerCountdown();
+	        if(typeof focusLockStart==='function')focusLockStart();
+	        toast('番茄钟还在跑');
+	        return;
+	      }
+	      // 还没开始：交给 pollCommands 走它原本那套 start 流程，不另开一条路
+	      if(cmd.status==='pending'){pollCommands();return}
+	      // 已结束：只读状态卡
+	      var _doneTxt=cmd.status==='done'?'\u2713 已完成':'已放弃';
+	      sheet('quiz',true);
+	      $('quizSheetTitle').textContent=cmd.title||'番茄钟';
+	      $('quizQuestion').textContent='';
+	      $('quizResult').classList.add('hidden');
+	      $('quizTextInput').classList.add('hidden');
+	      var tOpt=$('quizOptions');tOpt.classList.remove('hidden');
+	      tOpt.innerHTML='<div style="font:15px/1.5 var(--font-serif);color:var(--text-secondary);padding:8px 0 4px">'+_mins+' min \u00b7 '+_doneTxt+'</div>'
+	        +'<div style="font:13px/1.5 var(--font-sans);color:var(--text-time);padding:0 0 16px">这个番茄钟已经结束了。</div>'
+	        +'<div style="display:flex;gap:10px"><button id="timerAgainBtn" style="flex:1;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:12px;font:600 15px/1 var(--font-sans);cursor:pointer">\u21bb 再来一个</button>'
+	        +'<button id="timerCloseBtn" style="flex:0 0 auto;padding:12px 20px;background:var(--bg-surface);color:var(--text-secondary);border:1px solid var(--border);border-radius:12px;font:500 14px/1 var(--font-sans);cursor:pointer">关闭</button></div>';
+	      $('timerCloseBtn').onclick=function(){sheet('quiz',false)};
+	      $('timerAgainBtn').onclick=function(){
+	        api('/api/commands',{method:'POST',headers:{'Content-Type':'application/json'},
+	          body:JSON.stringify({type:'timer',title:cmd.title||'专注',countdown_seconds:cmd.countdown_seconds||1500})})
+	          .then(function(r){return r.json()})
+	          .then(function(){sheet('quiz',false);pollCommands()})
+	          .catch(function(){toast('开不起来')});
+	      };
+	      return;
+	    }
 	    else if(cmd.type==='task'){
 	      sheet('quiz',true);
 	      $('quizSheetTitle').textContent=cmd.title||'任务';

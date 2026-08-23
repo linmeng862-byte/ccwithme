@@ -149,12 +149,12 @@ function _renderWeekCalendar() {
 
   var daysWithEntries = {};
   _diaryEntries.forEach(function(e) {
-    if (e.date && e.who === 'ai') daysWithEntries[e.date] = true;
+    if (e.date && (e.who === 'ai' || e.who === 'claude')) daysWithEntries[e.date] = true;
   });
 
   var moodsByDay = {};
   _diaryEntries.forEach(function(e) {
-    if (e.date && e.mood && e.who === 'ai') {
+    if (e.date && e.mood && (e.who === 'ai' || e.who === 'claude')) {
       if (!moodsByDay[e.date]) moodsByDay[e.date] = [];
       var mArr = e.mood.split(/[,，]/);
       for (var mi = 0; mi < mArr.length; mi++) {
@@ -305,7 +305,7 @@ function _renderCalendarView() {
     if (e.mood) { var moods = e.mood.split(/[,，]/); for (var mi=0;mi<moods.length;mi++) { var mid = moods[mi].trim(); if (mid) moodMap[key].push(mid); } }
     if (!authorMap[key]) authorMap[key] = { zhou:0, claude:0 };
     // Count by author — default to zhou for entries without author field
-    if (e.who === 'ai') authorMap[key].claude++;
+    if ((e.who === 'ai' || e.who === 'claude')) authorMap[key].claude++;
     else authorMap[key].zhou++;
   });
 
@@ -315,7 +315,7 @@ function _renderCalendarView() {
   var totalEntries = monthEntries.length;
   var zhouCount = 0, claudeCount = 0;
   monthEntries.forEach(function(e) {
-    if (e.who === 'ai') claudeCount++;
+    if ((e.who === 'ai' || e.who === 'claude')) claudeCount++;
     else zhouCount++;
   });
 
@@ -476,7 +476,7 @@ function _renderStatsView() {
 
   // Filter entries by person
   var personEntries = _diaryEntries.filter(function(e) {
-    if (_statsPerson === 'claude') return e.who === 'ai';
+    if (_statsPerson === 'claude') return (e.who === 'ai' || e.who === 'claude');
     if (_statsPerson === 'zhou') return e.who !== 'ai';
     return true; // all
   });

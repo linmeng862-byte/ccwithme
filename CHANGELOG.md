@@ -5,6 +5,76 @@
 
 ---
 
+## [未发布] — 2026-08-23
+
+> 这一批全是「实时看得见、刷新就没了」和「能力在但没人告诉他」两类问题。
+> 改动集中在 **gateway 路径**（走 CLI 那条），中转 API 路径本来就是对的。
+
+### 🐛 修复
+
+#### gateway 路径回复落库不全（根因，下面三个现象都从这儿来）
+`backend.js` 里有两条保存助手回复的路径，功能长期不对等：
+
+| | 中转 API 路径 | gateway 路径（她在用的） |
+|---|---|---|
+| `content` | ✅ | ✅ |
+| `thinking` | ✅ | ❌ 只 `res.write` 推给前端，没存 |
+| `traces` | ✅ | ❌ |
+| `[CMD:]` 指令标记 | ✅ | ❌ 只推 `event: cmd`，没写进正文 |
+| `![sticker]` / `[FILE:]` / `[ARTIFACT:]` | ✅ | ❌ |
+
+表现：**当时那一轮看得见，刷新之后全没了。** 历史里既没有思考摘要，
+也没有指令胶囊。已补齐，跟中转路径对齐。
+⚠️ 只对新消息有效，旧消息入库时就是空的，补不回来。
+
+#### 语音条被拆成裸标记 `[VOICE:f_xxx|0:04]`
+上一个 commit 加的「他打两行就分两个气泡」（`_chatLineSplit`）本身没问题，
+但它按行拆 2–4 行的消息，而 `[VOICE:f_xxx|0:04]\n\n正文` 正好两行 ——
+语音标记被拆成独立一条气泡，那条没人调 `_renderVoiceCards`，标记就裸着了。
+现在带 `[VOICE:/[VOICEC:/[CMD:/[FILE:/[ARTIFACT:/[CALL:` 的整条都不拆。
+
+#### 指令胶囊重复渲染（同一条出现 3 次）
+`_renderCmdCapsulesAfter` 里 `md.querySelectorAll()` 只在 `.md` 内部找已有胶囊，
+却把找到的移到了 `.msg-body`（bubble 之后）—— 移出去就不在查询范围里了。
+于是 `renderMessage` 每重渲染一次就新建一个，旧的没人认领，一次次累积。
+收尾按 `data-cmd-id` 在整行范围内去重。
+
+#### 番茄钟胶囊点不动
+`openCmdCapsule` 只有 `quiz` / `task` 两个分支，`timer` 落到函数底部静默返回 ——
+请求发了、数据拿了、什么都不做。补了 timer 分支：还在跑的把浮窗拉回来、
+没开始的走原本 start 流程、已结束的显示只读状态卡（带「再来一个」）。
+
+#### 日记两处
+- `save_note` 的 `mood` 完全没校验，自由文本直接进库、前端原样显示
+  （她看到过心情是「粥粥」）。加白名单：**拼音 id 和中文 label 都收**
+  （前端 `_moodById` 两种都认），不认识的静默丢掉。
+- `who` 字段同一个人有两个值：历史写过 `claude`，现在 `save_note` 写 `ai`，
+  而前端筛的是 `who === ai` —— 他 08-22 写的那篇日记一直不显示。
+  库里那条已订正，前后端都加了 `ai`/`claude` 兼容。
+
+#### 思考摘要把气泡挤下去
+`.msg-claude` 是 `align-items:flex-start`，头像对齐的是 `.msg-body` 整体，
+而 `.msg-body` 是 column：`[thinking-summary][bubble]` —— 摘要占了第一格，
+头像就跟摘要齐了。现在头像下移一个「摘要占位」，重新跟气泡对齐，
+摘要单独贴在气泡上面。占位做成变量（`--ts-line` / `--ts-gap`），间距 20px → 8px。
+
+### 🚀 新增
+
+- `POST /api/commands`（带 auth）——**只收 timer**。原来 commands 只能由 AI 走
+  `issue_command` 建，历史胶囊里「再来一个」没端点可打。时长夹在 1 分钟~2 小时。
+- 番茄钟跟待办小票联动：下发就进 `_todos`（`⏱` 前缀），跑完打勾、放弃移除。
+  以前这两个之间一行代码都没连着。
+
+### 🔧 架构
+
+- `.mcp.json` 去掉直挂的 `nocturne-engine`。8-21 加 `chat-c` 时没拿掉旧的，
+  两套并存 85 个工具定义（~10.3k token/轮常驻），其中一批是通往同一后端的两条路。
+  现在回到设计意图：core 只经 backend 转发 hold / breath / trace / leave_texture。
+- 聊天侧的 CLI 走独立 `CLAUDE_CONFIG_DIR`，跟终端 CLI 分家（会话历史已迁移，
+  认证软链共享 —— 两份各持 refresh token 会互相踢下线）。
+
+---
+
 ## [v1.0.0] — 2026-07-01
 
 ### 🚀 新增功能
