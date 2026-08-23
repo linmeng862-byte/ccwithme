@@ -5008,6 +5008,10 @@ app.post('/api/tools/exec', async (req, res) => {
 // 改动只落在 git 工作树，要她在界面上点「确认」才 commit + 重启。
 const WORKPLACE_URL = 'http://127.0.0.1:9876/workplace';
 const REPO = __dirname;
+// 自己在 pm2 里叫什么。pm2 spawn 时会把 name=<应用名> 注进环境，所以两台各拿各的
+// （这台 chat-c，evoxt 那台 ccwithme），不用写死、也不用进 CLAUDE.local.md。
+// 不在 pm2 下跑（直接 node backend.js 调试）时兜底 chat-c。
+const PM2_APP = process.env.name || 'chat-c';
 
 // usage_log 要能分辨钱是谁花的；usage_limits 给 workplace 单独一份日额度
 try { db.exec("ALTER TABLE usage_log ADD COLUMN source TEXT DEFAULT 'chat'"); } catch(e) {}
@@ -5221,8 +5225,13 @@ app.post('/api/workplace/apply', auth, (req, res) => {
         git(['rev-parse', '--short', 'HEAD'], (e3, sha) => {
           res.json({ ok: true, commit: (sha || '').trim(), output: (out || '').trim(), restarting: true });
           // 响应已经发出去了，再重启自己
+          // 08-23 修：这里原来硬写 'ccwithme' —— **那是另一台的进程名，这台叫 chat-c**。
+          // 后果很阴：commit 成功、接口返回 restarting:true，但重启打在一个不存在的进程上，
+          // 她点了「确认」看着改动没生效，会以为是代码改错了。
+          // pm2 会把 name=<应用名> 注进进程环境（cat /proc/<pid>/environ 验过），
+          // 所以两台都不用写死：这台拿到 chat-c，那台拿到 ccwithme。
           setTimeout(() => {
-            require('child_process').execFile('pm2', ['restart', 'ccwithme'], () => {});
+            require('child_process').execFile('pm2', ['restart', PM2_APP], () => {});
           }, 400);
         });
       });

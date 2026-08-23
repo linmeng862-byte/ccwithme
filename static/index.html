@@ -2492,11 +2492,13 @@ function _maybeTimeSep(ts,who){
       streamInner.append(usep);
       _turnHasTimeSep=true;_lastMsgTime=t;return;   // 这一段的分界已经摆过，他回话时别再摆一次
     }
-    // 08-22 她要的：时间戳只在【一段对话开始】时摆一个，后面的来回都不要。
-    // 原来这里每次她开口都把标志位清成 false，于是「每轮只摆一次」变成了「每轮都摆」——
-    // playwright 量出来一屏 22 个 .msg-time-inline，全夹在她和他之间。
-    // 现在不清了：摆过就一直算摆过，直到隔了 _TIME_SEP_GAP 才算新的一段（上面那个分支会摆大条）。
-    _lastMsgTime=t;return;
+    // 08-23 修回来：上一版为了治「一屏 22 个」，把这里的复位整个删了 ——
+    // 结果 _turnHasTimeSep 一旦为 true 就再也回不去，下面那个 if 永远 return，
+    // **`.msg-time-inline` 从此一个都创建不出来**（playwright 量出来是 0）。
+    // 小的那个本来就该「他每一轮摆一次」（见上面 2481 和 home.css:1286 的注释），
+    // 不是「一段对话只摆一个」—— 那是大的 .time-separator 干的活。
+    // 所以：她开口 = 新的一轮，复位。但她这句已经摆过大分界线的，走上面那个分支，不复位。
+    _turnHasTimeSep=false;_lastMsgTime=t;return;
   }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=t;return}   // 这一轮的小时间戳已经摆过了
@@ -3920,7 +3922,8 @@ function _maybeTimeSepFrag(frag,ts,who){
       _turnHasTimeSep=true;_lastMsgTime=Math.max(_lastMsgTime,t);return;
     }
     // 规矩跟 _maybeTimeSep 一模一样（见那边的注释），别只改一边。
-    _lastMsgTime=Math.max(_lastMsgTime,t);return;
+    // 08-23：她开口 = 新的一轮，复位，否则他的小时间戳永远摆不出来。
+    _turnHasTimeSep=false;_lastMsgTime=Math.max(_lastMsgTime,t);return;
   }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=Math.max(_lastMsgTime,t);return}
