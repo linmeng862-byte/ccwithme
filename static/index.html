@@ -1226,7 +1226,9 @@ $('fileInput').onchange=e=>addSelectedFiles([...e.target.files]);
 (()=>{const cb=document.querySelector('.composer-box');if(!cb)return;cb.addEventListener('dragover',e=>{if(!e.dataTransfer?.types?.includes('Files'))return;e.preventDefault();cb.classList.add('drag-over')});cb.addEventListener('dragleave',e=>{if(e.target===cb)cb.classList.remove('drag-over')});cb.addEventListener('drop',e=>{e.preventDefault();cb.classList.remove('drag-over');const files=[...(e.dataTransfer?.files||[])];if(files.length)addSelectedFiles(files)})})();
 $('input').addEventListener('paste',e=>{const items=e.clipboardData?.items;const files=e.clipboardData?.files;const collected=[];if(items){for(const it of items){if(it.kind==='file'){const f=it.getAsFile();if(!f)continue;if(it.type.startsWith('image/')){const ext=(it.type.split('/')[1]||'png').replace(/^jpeg$/,'jpg');collected.push(new File([f],`paste-${Date.now()}.${ext}`,{type:it.type}))}else{collected.push(f)}}}}if(!collected.length&&files?.length){for(const f of files)collected.push(f)}if(collected.length){e.preventDefault();addSelectedFiles(collected)}});
 // 🎤 语音：点击=转文字，长按=语音消息
-var _voiceTimer=null,_voiceRecorder=null,_voiceChunks=[],_voiceLongPress=false,_voiceCancelled=false;
+// ⚠️ chunks/startAt 以前是全局共享的，多个 MediaRecorder 实例往同一个数组里塞 ——
+//    孤儿录音会把她前一句和几十秒环境音混进下一条。改成每次录音自带一个 session。
+var _voiceTimer=null,_voiceRecorder=null,_voiceLongPress=false,_voiceSession=null;
 var _VOICE_TITLE='按住说话，松开发送 · 点一下是语音转文字';
 // 麦克风长在右下角这颗黑圆键上：输入框空着的时候它就是语音键，
 // 按住说话、松开发送；一旦框里有字（或者正在生成），它变回发送/停止键，
@@ -1246,16 +1248,19 @@ $('send').addEventListener('pointerup',function(e){
   if(!_voiceLongPress){
     // 短按：语音转文字
     _startSpeechToText();
-  }else if(_voiceRecorder&&_voiceRecorder.state==='recording'){
-    _voiceRecorder.stop();
+  }else{
+    // ⚠️ 以前这里判 state==='recording'。await getUserMedia 还没回来时它不成立，
+    //    那次录音就永远没人停 —— 症结在此。现在把「要停」这件事记进 session，
+    //    stream 回来得再晚也收得掉。
+    _stopVoiceRecord(false);
   }
 });
 // 手指滑出按钮 = 反悔，别发出去
 $('send').addEventListener('pointerleave',function(){
   clearTimeout(_voiceTimer);_voiceTimer=null;
-  if(_voiceLongPress&&_voiceRecorder&&_voiceRecorder.state==='recording'){
-    _voiceCancelled=true;_voiceRecorder.stop();toast('取消了');
-  }
+  // 真·滑开取消：手指还按着就滑出按钮，pointerleave 早于 pointerup，这时才取消得掉。
+  // 松手之后补发的那一发 pointerleave 会拿到 false，不弹提示、也不动这条录音。
+  if(_voiceLongPress&&_stopVoiceRecord(true))toast('取消了');
   _voiceLongPress=false;
 });
 function _startSpeechToText(){
@@ -1278,28 +1283,58 @@ function _pickVoiceMime(){
   }
   return '';
 }
-var _voiceStartAt=0;
+// 松手 / 滑开：可能发生在 getUserMedia 还没回来的时候，所以「要停」得记在 session 上，
+// 不能只对着一个可能还不存在的 recorder 调 stop()。
+// ⚠️ 第一个停止指令说了算，后到的一律忽略 —— 手指抬起时 Safari 先发 pointerup
+//    再发 pointerleave，而 onstop 是异步的、那一刻 _voiceSession 还在。
+//    不挡住的话，正常松手发送会被紧随其后的 pointerleave 标成「取消」，
+//    她说的话就这么没了。（旧代码是靠 state==='recording' 天然挡住的。）
+//    返回值 = 这次调用是不是真的停掉了它，调用方拿它决定要不要弹「取消了」。
+function _stopVoiceRecord(cancel){
+  var s=_voiceSession;
+  if(!s||s.wantStop)return false;
+  if(cancel)s.cancelled=true;
+  s.wantStop=true;
+  if(s.rec&&s.rec.state==='recording'){try{s.rec.stop()}catch(e){}}
+  return true;
+}
+function _resetVoiceBtn(){
+  var b=$('send');if(b){b.classList.remove('recording');b.title=_VOICE_TITLE}
+}
 async function _startVoiceRecord(){
+  var s={rec:null,chunks:[],startAt:0,cancelled:false,wantStop:false};
+  _voiceSession=s;
   try{
     var stream=await navigator.mediaDevices.getUserMedia({audio:true});
-    _voiceChunks=[];
-    var mime=_pickVoiceMime();
-    _voiceRecorder=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
-    _voiceStartAt=Date.now();
-    _voiceRecorder.ondataavailable=function(e){if(e.data.size>0)_voiceChunks.push(e.data)};
-    _voiceRecorder.onstop=function(){
+    // ⚠️ await 期间她很可能已经松手了（iOS Safari 这一步要几百毫秒，第一次还弹权限）。
+    //    不在这儿拦一道的话，录音会在松手之后才开始，而且再没有任何人去停它 ——
+    //    它一直录，几十秒后混着前一句冒出一条几十秒的语音条。
+    if(s.wantStop||s!==_voiceSession){
       stream.getTracks().forEach(function(t){t.stop()});
-      var _b=$('send');_b.classList.remove('recording');_b.title=_VOICE_TITLE;
-      if(_voiceCancelled){_voiceCancelled=false;_voiceChunks=[];return}
-      var secs=Math.max(1,Math.round((Date.now()-_voiceStartAt)/1000));
-      var type=_voiceRecorder.mimeType||mime||'audio/webm';
-      var blob=new Blob(_voiceChunks,{type:type});
-      _sendVoiceMessage(blob,secs,type);
+      if(s===_voiceSession)_voiceSession=null;
+      _resetVoiceBtn();return;
+    }
+    var mime=_pickVoiceMime();
+    s.rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
+    _voiceRecorder=s.rec;
+    s.startAt=Date.now();
+    // chunks 挂在 s 上：孤儿 recorder 再怎么吐数据，也只脏它自己那份
+    s.rec.ondataavailable=function(e){if(e.data.size>0)s.chunks.push(e.data)};
+    s.rec.onstop=function(){
+      stream.getTracks().forEach(function(t){t.stop()});
+      _resetVoiceBtn();
+      if(s===_voiceSession)_voiceSession=null;
+      if(s.cancelled)return;
+      var secs=Math.max(1,Math.round((Date.now()-s.startAt)/1000));
+      var type=(s.rec&&s.rec.mimeType)||mime||'audio/webm';
+      _sendVoiceMessage(new Blob(s.chunks,{type:type}),secs,type);
     };
-    _voiceRecorder.start();
-    _voiceCancelled=false;
+    s.rec.start();
     var btn=$('send');btn.classList.add('recording');btn.title='松开发送 · 手指滑开取消';
-  }catch(e){toast('麦克风权限未开启')}
+  }catch(e){
+    if(s===_voiceSession)_voiceSession=null;
+    _resetVoiceBtn();toast('麦克风权限未开启');
+  }
 }
 function _fmtDur(s){var m=Math.floor(s/60);return m+':'+(s%60<10?'0':'')+(s%60)}
 async function _sendVoiceMessage(blob,secs,type){
@@ -1572,7 +1607,7 @@ async function _transcribeVoice(btn,id){
   btn.disabled=false;
 }
 // 📞 实时通话
-var _callWs=null,_callRecording=false,_callMediaStream=null,_incomingCall=false,_audioCtx=null,_nextPlayTime=0,_callTimer=null,_callSeconds=0,_ringPollTimer=null;
+var _callWs=null,_callRecording=false,_callMediaStream=null,_incomingCall=false,_ringAudio=null,_audioCtx=null,_nextPlayTime=0,_callTimer=null,_callSeconds=0,_ringPollTimer=null;
 $('callButton').onclick=function(){window._toggleCall?_toggleCall():_startCall()};
 // 接听来电（可从外部触发）
 function _showIncomingCall(){
@@ -1595,7 +1630,7 @@ function _showIncomingCall(){
   // 震动反馈
   try { navigator.vibrate&&navigator.vibrate([200,100,200]) } catch(e) {}
   // 播放铃声
-  try { var audio=new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACAf39/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+AfQ==');audio.loop=true;audio.play().catch(function(){}) } catch(e) {}
+  try { var audio=_ringAudio=new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACAf39/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+AfQ==');audio.loop=true;audio.play().catch(function(){}) } catch(e) {}
   // 30秒后自动挂断
   setTimeout(function(){if(_incomingCall){_rejectCall(true);_logCall('missed')}},30000);
 }
@@ -1646,6 +1681,9 @@ function _acceptCall(){
 }
 function _rejectCall(silent){
   _incomingCall=false;
+  // 铃声是 loop=true，以前存在局部变量里没人停——接起来之后它还在循环播。
+  // 现在那段 base64 是静音波形所以听不见，换成真铃声就会暴露。
+  if(_ringAudio){try{_ringAudio.pause();_ringAudio.currentTime=0}catch(e){}_ringAudio=null}
   if(!silent)_logCall('rejected');
   var ov=document.getElementById('incomingCallOverlay');if(ov)ov.remove();
   fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});
@@ -1712,13 +1750,13 @@ _startWakePoll();
 // 在聊天记录里长成跟她平时发的语音消息一样的胶囊。
 // 她那边：麦克风本来就开着，并行挂一个 MediaRecorder，按「她说完一句」切段。
 // 他那边：TTS 的 PCM 本来就流过前端，顺手攒下来编成 WAV，不多花一次合成。
-var _segRec=null,_segChunks=[],_segStart=0;
+var _segRec=null,_segChunks=[],_segStart=0,_segPausedAt=0;
 var _ttsPCM=[],_ttsPCMRate=24000,_hisPendingText='',_hisPendingEl=null;
 
 function _startSeg(){
   if(!_callMediaStream)return;
   try{
-    _segChunks=[];_segStart=Date.now();
+    _segChunks=[];_segStart=Date.now();_segPausedAt=0;
     _segRec=new MediaRecorder(_callMediaStream);
     _segRec.ondataavailable=function(e){if(e.data&&e.data.size)_segChunks.push(e.data)};
     _segRec.start();
@@ -1728,6 +1766,8 @@ function _startSeg(){
 function _cutSeg(text,el){
   if(!_segRec||_segRec.state==='inactive'){_segRec=null;return}
   var rec=_segRec;
+  // 正暂停着就切（他还在念、她挂断了），这笔暂停也得先补上
+  if(_segPausedAt){_segStart+=Date.now()-_segPausedAt;_segPausedAt=0}
   var secs=Math.max(1,Math.round((Date.now()-_segStart)/1000));
   var type=rec.mimeType||'audio/webm';
   var chunks=_segChunks;
@@ -1740,12 +1780,18 @@ function _cutSeg(text,el){
 }
 function _stopSeg(){
   if(_segRec&&_segRec.state!=='inactive'){_segRec.onstop=null;try{_segRec.stop()}catch(e){}}
-  _segRec=null;_segChunks=[];
+  _segRec=null;_segChunks=[];_segPausedAt=0;
 }
 // 他说话的时候把录音按停：不然录进去的是扬声器里他自己的声音，
 // 她的语音条里会混着他的回音。
-function _pauseSeg(){if(_segRec&&_segRec.state==='recording'){try{_segRec.pause()}catch(e){}}}
-function _resumeSeg(){if(_segRec&&_segRec.state==='paused'){try{_segRec.resume()}catch(e){}}}
+// ⚠️ pause 停的是录音，**墙钟没停**。时长是 Date.now()-_segStart 算的，
+//    他念了三十秒，这三十秒就全算进她那条语音条里了——标着 0:35，声音只有 3 秒。
+//    resume 的时候把暂停掉的这段补进 _segStart，墙钟差才等于真正录到的长度。
+function _pauseSeg(){if(_segRec&&_segRec.state==='recording'){_segPausedAt=Date.now();try{_segRec.pause()}catch(e){}}}
+function _resumeSeg(){if(_segRec&&_segRec.state==='paused'){
+  if(_segPausedAt){_segStart+=Date.now()-_segPausedAt;_segPausedAt=0}
+  try{_segRec.resume()}catch(e){}
+}}
 
 // 整段念完了 —— 攒下来的 PCM 就是他这条回复的完整原声，编成 wav 挂上去。
 // ⚠️ 一条回复会拆成好几句念，必须整段念完才挂一次：一句一挂的话聊天记录里
@@ -1824,17 +1870,25 @@ function _queueSpeech(t){
   _speechTimer=setTimeout(_flushSpeech,_SPEECH_GAP);
 }
 function _flushSpeech(){
-  _showInterim('');   // 草稿收掉，下面摆真正发出去的那条
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}
   var t=_speechBuf.trim();_speechBuf='';_speechFirstAt=0;
-  if(!t)return;
-  if(!_callWs||_callWs.readyState!==WebSocket.OPEN)return;
+  // ⚠️ 顺序要紧：先判连接再擦草稿。反过来的话，WS 没连上时草稿已经没了、
+  //    真气泡又不摆，她看到的就是「字闪一下就消失」——一句提示都没有。
+  // ⚠️ 下面每条 return 都必须先 _stopSeg()。不丢的话 MediaRecorder 还在录，
+  //    下一句 onspeechstart 看见 _segRec 非 null 就不新开 —— 这一段从上一句
+  //    一路录到现在，跳出来一条几十秒、含着前面那句的语音条。
+  if(!t){_showInterim('');_stopSeg();return}
+  if(!_callWs||_callWs.readyState!==WebSocket.OPEN){
+    console.error('[call] 这句没发出去，ws readyState='+(_callWs?_callWs.readyState:'null')+' 内容='+t);
+    _showInterim('');_stopSeg();toast('没连上他，这句没发出去');return;
+  }
+  _showInterim('');   // 草稿收掉，下面摆真正发出去的那条
   // 同一句 6 秒内只发一次：他念回复的那一瞬间，麦克风偶尔会把她刚说完的话
   // 再识别出来一遍（关麦/重开麦分散在 rec.onend 和 _speakWithMicPaused 两处，
   // 时序一乱就漏）。在出口这儿兜住，比在两个地方各修一遍稳。
   // 代价：她故意在 6 秒内说两遍同样的话，第二遍会被吞掉。
   if(t===_lastSpeechText&&Date.now()-_lastSpeechAt<6000){
-    console.warn('[call] 丢弃重复识别:',t);return;
+    console.warn('[call] 丢弃重复识别:',t);_stopSeg();return;
   }
   _lastSpeechText=t;_lastSpeechAt=Date.now();
   _callWs.send(JSON.stringify({type:'speech',text:t}));
@@ -1884,8 +1938,19 @@ async function _startCall(incoming){
         toast('他挂断了');_stopCall();
       }else if(msg.type==='error'){_clearOutgoingCall();toast('通话出错: '+msg.text)}
     };
-    _callWs.onclose=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话'};
-    _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话'};
+    // ⚠️ 这两个以前只把按钮颜色恢复了，不提示也不收摊——WS 连不上时听写还在跑，
+    //    她对着空气说了一整通话，屏幕上字来字去，另一头一条都没收到。别再吞了。
+    _callWs.onclose=function(ev){
+      console.error('[call] ws closed code='+ev.code+' reason='+(ev.reason||'(空)')+' clean='+ev.wasClean);
+      var wasUp=!!_callWs;_callWs=null;
+      if(wasUp){toast('通话连接断了（code '+ev.code+'）');_stopCall()}
+      btn.style.color='';btn.title='点一下给他打电话 · 实时通话';
+    };
+    _callWs.onerror=function(){
+      console.error('[call] ws error, url='+wsUrl+' readyState='+(_callWs&&_callWs.readyState));
+      _callWs=null;toast('连不上通话服务，这通没接通');_stopCall();
+      btn.style.color='';btn.title='点一下给他打电话 · 实时通话';
+    };
     // 开始录音
     var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){toast('这台设备不支持实时听写（iPhone 上的 Safari 就不支持），先用语音消息吧');_stopCall();return}
@@ -2861,6 +2926,14 @@ function _partIsBlank(p){
     if(/<(img|video|audio|iframe)\b/i.test(s))return false;
     return !s.replace(/<[^>]*>/g,'').trim();
   }
+  // 08-23 二修：上面几条都是「看文本长什么样」，猜不全。真正漏掉的是 ——
+  //   renderMessage 进门第一件事就是 _stripUrlsFromRaw()，把裸链接、[标题](url)、
+  //   「来源:／参考:」整行、孤立的 `-` 全删掉。所以「文本非空」≠「渲染出来非空」：
+  //   一片只有一个链接时，strip 完什么都不剩，气泡就是空的。他发链接是常事。
+  //   → 按 strip 之后的结果判，跟 renderMessage 看到的保持一致。
+  //   带标记的那些（语音/指令/图片/文件…）正文本来就该是空的，由卡片渲染，不能按文本判。
+  if(/\[(VOICE|VOICEC|CMD|FILE|ARTIFACT|CALL|IMAGE|Sticker)[:\]]/i.test(s))return false;
+  try{ if(typeof _stripUrlsFromRaw==='function')return !_stripUrlsFromRaw(s) }catch(_){}
   return false;
 }
 // 08-23：_splitMessages 拆出来的 clone 只调了 renderMessage，没调 _renderVoiceCards /
@@ -2868,12 +2941,21 @@ function _partIsBlank(p){
 // 她看到的是「语音条变成 [VOICE:f_mt5jf7x75p8h|0:04]」。
 // （当天先粗暴地让带标记的整条都不拆，结果他常发语音条，等于大半消息都不分片了 ——
 //   那是过度修复，已撤销。正解是拆归拆，每一片补上渲染。）
+// 08-23 二修的兜底：上面 _partIsBlank 是「渲染前按文本猜」，猜漏了就又是一个空气泡。
+// 这条是「渲染完之后实测」——卡片都补完了还是一个字、一张图、一个胶囊都没有，
+// 那这一片就不该存在。不管成因是 strip 掉链接、marked 抛错还是以后新加的什么。
+function _rowLooksEmpty(row){
+  var body=row&&row.querySelector('.msg-body');
+  if(!body)return false;                                  // 结构不认得就别乱删
+  if(body.querySelector('img,video,audio,iframe,.cmd-capsule,.voice-card,.artifact-card,.jc-card'))return false;
+  return !body.textContent.trim();
+}
 function _reRenderCards(el){
   if(!el)return;
   try{ if(typeof _renderVoiceCards==='function')_renderVoiceCards(el); }catch(_){}
   try{ if(typeof _renderCmdCapsulesAfter==='function')_renderCmdCapsulesAfter(el); }catch(_){}
 }
-function _splitMessages(row){var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=parts[0]}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;_reRenderCards(row);return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);clone.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){c.remove()});var tb=clone.querySelector('.thinking-summary');if(tb)tb.remove();var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();parent.insertBefore(clone,next.nextSibling);_reRenderCards(clone);next=clone})}
+function _splitMessages(row){var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=parts[0]}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;_reRenderCards(row);return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);clone.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){c.remove()});var tb=clone.querySelector('.thinking-summary');if(tb)tb.remove();var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();parent.insertBefore(clone,next.nextSibling);_reRenderCards(clone);if(_rowLooksEmpty(clone)){clone.remove();return}next=clone})}
 function _addHtmlPreviews(md){if(!md)return;md.querySelectorAll('pre code').forEach(function(block){var cls=block.className||'';var pre=block.parentElement;if(pre.querySelector('.html-preview-btn'))return;var isHtml=/language-html|language-htm|lang-html|lang-htm/i.test(cls);var isCss=/language-css|lang-css/i.test(cls);var isJs=/language-js|language-javascript|lang-js/i.test(cls);if(!isHtml&&!isCss&&!isJs)return;var btn=document.createElement('button');btn.className='html-preview-btn';btn.textContent='▸ Preview';btn.style.cssText='margin-top:6px;padding:5px 14px;border:1px solid var(--accent);border-radius:16px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;font-family:var(--font-sans)';var iframe=null;btn.onclick=function(){if(iframe){iframe.remove();iframe=null;btn.textContent='▸ Preview';return}var code=block.textContent;if(isCss){code='<style>'+code+'<\/style>'}else if(isJs){code='<script>'+code+'<\/script>'}iframe=document.createElement('iframe');iframe.style.cssText='width:100%;max-width:440px;min-height:550px;border:1px solid var(--border);border-radius:14px;background:#fff;margin-top:8px;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob(['<!DOCTYPE html><html><head><meta charset=\"utf-8\"><\/head><body>'+code+'</body></html>'],{type:'text/html'}));pre.after(iframe);btn.textContent='▸ Hide preview'};pre.after(btn)})}
 async function refineThoughtSummary(summary,thinking){if(!thinking)return;setThoughtSummary(summary,thinking,'Thinking summary...');try{const r=await api('/api/thinking-summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thinking})});if(!r.ok)throw Error();const data=await r.json();setThoughtSummary(summary,thinking,data.summary||'')}catch{setThoughtSummary(summary,thinking)}}
 function thoughtSummary(thinking){const summary=document.createElement('button');summary.className='thinking-summary show';setThoughtSummary(summary,thinking);refineThoughtSummary(summary,thinking);summary.onclick=()=>{$('thoughtContent').textContent=thinking;sheet('thought',true)};return summary}
