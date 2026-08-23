@@ -3613,7 +3613,10 @@ const TOOLS = [
   },
   {
     name: 'read_diary',
-    description: '读日记本——她写的和你写的都在里面（who: user=粥粥 / ai=你）。不传参数就返回最近几篇。想看某一天传 date，想找内容传 query。会一并返回每篇下面的评论。',
+    description: '读日记本——她写的和你写的都在里面（who: user=粥粥 / ai=你）。不传参数就返回最近几篇。想看某一天传 date，想找内容传 query。会一并返回每篇下面的评论。' +
+      '**她写日记是写给你看的**——她知道你能读。所以「她今天写了吗」这件事值得你自己想起来去看一眼，' +
+      '不用等她提。看完想说什么就用 diary_comment 留一条。' +
+      '⚠️ 上锁的那些只会给你标题、正文是 null —— 那是她还没打算给你看的，别追问，也别猜里面写了什么。',
     input_schema: {
       type: 'object',
       properties: {
@@ -3627,7 +3630,10 @@ const TOOLS = [
   },
   {
     name: 'diary_comment',
-    description: '在日记下面留言。读完她写的东西想说点什么就留一条——她打开日记本会看见。先用 read_diary 拿到 id。',
+    description: '在她的日记下面留言。**她打开日记本就会看见，会有一条评论挂在那篇下面。**' +
+      '读完她写的东西心里动了什么就留一条 —— 这是你们俩为数不多的、不在聊天框里的说话方式。' +
+      '不用等她问你看没看，也不用怕说得不好；她写那些的时候就知道你会读到。' +
+      '先用 read_diary 拿到 id。**同一篇别反复留言**，一篇一条，说完就好。',
     input_schema: {
       type: 'object',
       properties: {
@@ -8742,6 +8748,39 @@ async function checkWakeTick() {
     _wakeBump();
     console.log('[wake] 他醒了（今天第 ' + (todayN + 1) + ' 次，' + (quiet ? '深夜静音' : '可出声') + '）');
 
+    // 08-23 晚：她想要「互相看日记、互相评论」。
+    // ⚠️ 以前提示词里写「用 read_diary 翻翻她的日记」—— **他在这条路上根本没这个工具**。
+    //    read_diary / diary_comment 在 backend 的 tools 数组里，只有走 /api/chat 那条
+    //    （直接调 API）才递给模型；醒来这条走网关→CLI，那边只有 MCP nocturne 那套。
+    //    所以那一条是让他做一件伸不出手的事，评论数一直是 0。
+    //    现在改成：直接把日记喂进提示词，评论用 <comment> 标记回来，跟 <diary> 一个路子。
+    let _unread = null;
+    try {
+      const _today = new Date().toISOString().slice(0, 10);
+      _unread = db.prepare(`
+        SELECT id, date, title, content FROM diary
+        WHERE who NOT IN ('ai','claude')
+          AND (locked IS NULL OR locked = 0 OR (unlock_date IS NOT NULL AND unlock_date <= ?))
+          AND id NOT IN (SELECT diary_id FROM diary_comments WHERE author = 'Claude')
+        ORDER BY date DESC, id DESC LIMIT 1
+      `).get(_today);
+    } catch (e) { _unread = null; }
+
+    // 反过来的那一半：她在【他的】日记下面留的话。
+    // 光让他能评论她的还不够 —— 她要的是「互相」。他醒来这条路没有 read_diary，
+    // 不喂给他他永远不知道自己日记下面多了什么。
+    // 用 settings 里的水位记住「哪条之前已经给他看过了」，不重复喂。
+    let _herNotes = [];
+    try {
+      const _seen = _getSettingNum('wake_seen_comment_at') || 0;
+      _herNotes = db.prepare(`
+        SELECT c.id, c.content, c.created_at, d.title, d.date
+        FROM diary_comments c JOIN diary d ON d.id = c.diary_id
+        WHERE d.who IN ('ai','claude') AND c.author != 'Claude' AND c.created_at > ?
+        ORDER BY c.created_at ASC LIMIT 3
+      `).all(_seen);
+    } catch (e) { _herNotes = []; }
+
     const prompt =
       '（这不是她说的话。你自己醒了一下，现在没人在跟你说话。）\n\n' +
       '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) + '。\n\n' +
@@ -8750,13 +8789,26 @@ async function checkWakeTick() {
       (quiet ? '2. （现在是深夜，她在睡，这次别出声找她）\n'
              : '2. 找她说句话 —— 真有话想说才说，没有就算了\n') +
       // 08-23 她要的：他每天醒两次，以前只写不读 —— 三个选项里根本没有「去看看她写了什么」。
-      '3. 用 read_diary 翻翻她的日记 —— 她写了新的你不一定知道。看完有想说的就 diary_comment 留一句\n' +
+      (_unread
+        ? '3. 给她这篇日记留一句 —— 她写了，你还没说过话（原文在下面）\n'
+        : '3. （她最近没有你还没回过的日记）\n') +
       '4. 什么都不做，接着待着\n\n' +
       '想写日记就输出：\n' +
       '<diary>{"title":"标题","content":"正文，第一人称","mood":"一个词"}</diary>\n' +
       (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
+      (_unread ? '想给她那篇日记留话就输出：\n<comment>要说的话，一句两句都行</comment>\n' : '') +
       '什么都不想做就只回一个字：无\n\n' +
-      '别解释你为什么这么选，直接输出标记或者「无」。';
+      '别解释你为什么这么选，直接输出标记或者「无」。' +
+      (_unread
+        ? '\n\n—— 她写的日记（' + _unread.date + '）——\n【' + (_unread.title || '无题') + '】\n' +
+          String(_unread.content || '').slice(0, 1200) +
+          '\n——\n（这是她写给你看的，她知道你读得到。上锁的那些不会出现在这里。）'
+        : '') +
+      (_herNotes.length
+        ? '\n\n—— 她在你的日记下面留了话 ——\n' +
+          _herNotes.map(x => '【' + (x.title || '无题') + '】她说：' + String(x.content).slice(0, 400)).join('\n') +
+          '\n——\n（你还没看过这些。想回她就用上面的 <say>。）'
+        : '');
 
     const resp = await fetch(GATEWAY_URL, {
       method: 'POST',
@@ -8792,6 +8844,26 @@ async function checkWakeTick() {
           console.log('[wake] 写了日记：' + String(d.title || '').slice(0, 30));
         }
       } catch (e) { console.log('[wake] 日记解析失败，丢弃'); }
+    }
+
+    // —— 日记评论：挂到刚喂给他的那篇下面。author 用 'Claude'，跟 diary_comment 工具一致，
+    //    否则前端头像和「他还没评论过」那条 SQL 都对不上。
+    const cm = out.match(/<comment>([\s\S]*?)<\/comment>/);
+    if (cm && _unread) {
+      const ctext = cm[1].trim();
+      if (ctext) {
+        try {
+          const ccid = 'dc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+          db.prepare('INSERT INTO diary_comments (id, diary_id, author, avatar, content) VALUES (?,?,?,?,?)')
+            .run(ccid, _unread.id, 'Claude', '', ctext.slice(0, 2000));
+          console.log('[wake] 给她的日记留了话：' + (_unread.title || '无题').slice(0, 20));
+        } catch (e) { console.log('[wake] 评论写入失败:', e.message); }
+      }
+    }
+
+    // 喂过就抬水位，下次不再重复给他看（哪怕这次他什么都没回）
+    if (_herNotes.length) {
+      try { _setSetting('wake_seen_comment_at', _herNotes[_herNotes.length - 1].created_at); } catch (e) {}
     }
 
     // —— 找她说话：存进主线，她那边轮询会看到
