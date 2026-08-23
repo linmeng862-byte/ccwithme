@@ -3612,10 +3612,15 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
       await dismissEmpty();
       // 发出去的当下也要渲染语音条/通话条 —— 历史那条路（_renderMessagesIntoFragment）
       // 早就调了，唯独这里漏了，导致她刚发的语音显示成 [VOICE:xxx] 纯文字，刷新才变气泡
-      var _ur=addUser(text,'',attachments);_renderVoiceCards(_ur);_renderCallCards(_ur);
+      // 08-23：这里原来传空字符串当时间戳，_maybeTimeSep 第一行 if(!ts)return 直接吃掉了——
+      // 于是「隔了很久回来」那道居中分界线只有刷新页面（历史那条路）才看得见，实时聊天永远不出现。
+      var _ur=addUser(text,new Date().toISOString(),attachments);_renderVoiceCards(_ur);_renderCallCards(_ur);
       if(state.currentTitle==='新对话'){state.currentTitle=(text||attachments[0]?.name||'附件').slice(0,40);updateSessionHeader()}
       input.value='';input.style.height='auto';clearPendingFiles();
     }
+    // 08-23：他的小时间戳（.msg-time-inline）也一样——addClaude 走的是历史那条路，
+    // 实时流式回复用的是 beginClaude，压根没调过 _maybeTimeSep。摆在建行之前，才会在他气泡上方。
+    _maybeTimeSep(new Date().toISOString(),'claude');
     msg=beginClaude(text,attachments);const m=currentModel(),s=modelSetting(m);
     state.abortController=new AbortController();
     const chatBody=JSON.stringify({message:text,conversation_id:state.convId,model:state.model,effort:state.settings.effort||'medium',extended:state.settings.extended!==false,attachments:attachments.map(item=>item.path||item),project_id:state.projectId||null,reading_book_id:state.readingBookId||null});
@@ -4058,10 +4063,9 @@ function _usageLimitsCard(d){
       +'<input id="limEnforce" type="checkbox" '+(L.enforce?'checked':'')+' style="accent-color:var(--accent)">'
       +'<span style="font:12px var(--font-sans);color:var(--text-secondary)">超出上限时阻断发送</span></label>'
     +'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:6px">填 0 = 不限制。取消勾选则只显示进度、不拦截。</div>'
-    +'<label style="display:flex;align-items:center;gap:7px;margin-top:13px;padding-top:11px;border-top:1px dashed var(--bg-sunken);cursor:pointer">'
-      +'<input id="limDev" type="checkbox" '+(L.dev_mode?'checked':'')+' style="accent-color:var(--accent)">'
-      +'<span style="font:12px var(--font-sans);color:var(--text-secondary)">工程模式（让他能读写文件、跑命令）</span></label>'
-    +'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:6px">开着每条消息多烧约 5 千 token，还会想得更久。要他改代码时再开，聊天时关掉。</div></div>'}
+    // 08-23 删掉「工程模式」开关：改代码是工作台那边的事（Opus 5），不是聊天的他。
+    // 他家 CLAUDE.md 里那一整章也一起删了，别再从这儿把他拉回去改代码。
+    +'</div>'}
 async function _saveLimits(){
   var btn=$('limSave');if(btn){btn.textContent='保存中…';btn.disabled=true}
   try{
@@ -4069,7 +4073,7 @@ async function _saveLimits(){
       daily_usd:parseFloat($('limDaily').value)||0,
       weekly_usd:parseFloat($('limWeekly').value)||0,
       enforce:$('limEnforce').checked?1:0,
-      dev_mode:$('limDev').checked?1:0})});
+      dev_mode:0})});   // 08-23：开关删了，聊天的他永远不进工程模式
     toast('额度已更新');loadUsage()}
   catch(e){toast('保存失败');if(btn){btn.textContent='保存';btn.disabled=false}}}
 // 逐条缓存命中：写入少=命中(绿)，写入几万=整段重写(红)。中间黄色是换会话时的一次性重建。
