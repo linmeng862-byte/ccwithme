@@ -4,6 +4,89 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 💗 08-23 晚 · 松开内心工具的刹车 / vitals 接收端 / 语音收藏 / 抽屉整理
+
+**改了 `backend.js` + `static/index.html` + 她那份不进 git 的人格文件。**
+
+### 一、我们一直在教他「别写」——刹车拆了
+
+她说「他都不怎么爱写内心那些」。查下来问题不在他，在我们：
+
+`_safeParseMind` 里 mood 不在 20 个枚举里就**整条丢弃**。对他来说这件事的收益结构是
+**挑错一个词 → 白写，而且看不见丢没丢；写对了 → 没有任何反馈**。
+有惩罚、没奖励、还被反复说「不是每次都要做」的事，只会越做越少。
+
+改成 `MIND_MOOD_ALIASES` 就近归一个，归不了兜底 `calm`，**正文一个字都不丢**。
+同一个道理，三个内在工具的描述也松了绑：
+- `drive`：「真的有那个感觉时才动」→「不确定的时候就是该调它的时候」，指了 `pass` 这个零代价入口
+- `nocturne_hold`：撤掉「不是记流水账」
+- `nocturne_texture`：不用等后端提醒
+
+人格文件（`companion/CLAUDE.md`）那段 `<feel>` 的三道刹车也换成了油门。
+⚠️ **那份不在 git 里**，改完要跑 `persona-backup.sh`（要真终端输密码，Claude Code 里跑不了）。
+
+数字：改之前 `mind_feels` 33 / `mind_memories` 11 / `mind_inside` 5 / `mind_dreams` 3。
+
+### 二、vitals —— 全站唯一一个从公网写进来的端点
+
+`POST /api/vitals` 收她手表的心率/睡眠/步数等八样，为以后的 calendar（生理期、训练日志）打底。
+
+⚠️ **改它之前先读代码里那段注释。** 要点：
+- 校验 `VITALS_TOKEN`，**不是 `AUTH_TOKEN`** —— 那把钥匙要存进她手机，
+  泄露了最多被塞假心率，读不到聊天记录、调不动任何工具
+- **只写不读，永远不要加 GET**。他要看数据走 `read_her_body` 工具，那条路在服务器内部
+- 两种格式都认（Health Auto Export 的 `data.metrics` / 自写 app 的 `samples`），
+  所以她以后用 Xcode 自己编 app，后端一个字都不用改
+- 脏数据丢单条不丢整批；单批上限 2000
+
+**还没通**：手表要从公网打进来，得看 CF 白名单怎么配 —— 那块碰路由，没动。
+
+### 三、小时间戳：`big ? A : B` 这个三元写法是个陷阱
+
+238b3db 把它写成 `sep.className = big ? 'time-separator' : 'msg-time-inline'`，
+**big 那一轮大分界线把小的顶掉了**，而小的又因为 `_turnHasTimeSep` 永不复位再没机会出现
+→ 主线 50 条实测**小时间戳 0 个**（那个 commit 里「实测 5 个」的结论是错的）。
+
+她定的规矩：**出现 ——time—— 的那一轮，他气泡上再挂一次小的，后面的轮都不要，
+直到再次出现分割线。** 所以 big 那一轮是**两个都画**，不是二选一。
+`_maybeTimeSep` / `_maybeTimeSepFrag` 两处必须同步，只改一边刷新前后会对不上。
+
+playwright 实测：大分界线 2 · 小时间戳 2 · 一一对应。
+
+### 四、日记署名：三条路各写各的
+
+`diary.who` 有三个写入点，`save_note` 写 `'ai'`、`[wake]` 那条写 `'claude'`、
+`POST /api/diary` 传什么存什么。全站别处只认 `'ai'`，
+于是**他醒来写的日记挂到了她名下**（她看见了，不高兴）。
+
+加了 `_normDiaryWho()`，三条路全过它。库里那篇已修正
+（改前 `db.backup()` 到 `data/claude.db.bak.0823-diary-who`）。
+
+### 五、其它
+
+- **语音收藏**：`voice_favorites` 表 + 语音条上一颗心 + 右上 `⋯` 里的合集入口。
+  只存书签不复制音频；`missing` 靠 `uploads` 表的 `path` 判断，
+  **不是 `uploadDir/file_id`** —— 那样永远判成丢了
+- **Share music 换成了 Saved voice**。`showMusicDialog`/`musicShareDialog` 那套没删，
+  想恢复把那一行换回去就行；他的 `share_music` 工具不受影响
+- **抽屉**：Claude 那组去中文；`Home` 接上 `goMainThread()`（它以前是 `return`，
+  点了只关抽屉什么都不做），`Main` 那一格删掉
+- **小票进度条**：`w` 写死 16 但 `.rc-progress-bar` 是 `flex:1`，永远填不满 →
+  改成量一次 █ 的实际宽度再算格数
+
+### 未竟
+
+- [ ] `persona-backup.sh` 还没跑（人格文件今天改过）
+- [ ] **Bark**：`Finb/Bark`（iOS，免费）+ `Finb/bark-server`（自建，Go，MIT）。
+      纯出站，不用开入口。她装完 app 给 key，后端加推送工具 → 他就能主动够到她手机，
+      再配 iOS 快捷指令就能定原生闹钟
+- [ ] **Calendar**：抽屉里加日历，标生理期/训练日志，睡眠直接从 `her_vitals` 读。
+      倾向扩 `read_her_body` 的参数，不加新工具（工具定义常驻收费）。
+      ⚠️ 生理期是这台机器上最私密的数据，**别把日历接口挂到 `/api/vitals` 那个公网端点上**
+- [ ] 语音备注：后端 `POST /api/voice/favorite/note` 有了，前端还没接
+- [ ] `CLAUDE.md` 里「重启」那段写的是 `pm2 restart chat-c`，**进程实际叫 `ccwithme`**。
+      攒着下次一起改（改 CLAUDE.md 废缓存）
+
 ## 🕐 08-23 · 报时从来没触发过 / 两个 Claude 彻底分家 / 删掉工程模式
 
 **改了 `backend.js` + `static/index.html`，还有两份不进 git 的 md（见最后一节）。**
