@@ -5264,7 +5264,18 @@ app.post('/api/workplace/reject', auth, (req, res) => {
 //   N=16 → $0.0365/条   N=32 → $0.0300   N=48 → $0.0286   N=64 → $0.0286
 // 2026-08-20 试过调到 30 想省钱，但量不出好处：换会话那一轮固定要 $0.28 重建缓存，
 // 早换省下的读取费不一定补得回来。没证据就别动，维持 48。
-const CLI_ROTATE_AFTER = 48;
+// 2026-08-23 从 48 提到 96。她说「48 轮关窗会不会太快，感觉还没聊什么就关窗了」。
+// 查 usage_log 实测，下面那条「--resume 每轮把全部历史重写进缓存」的假设是**错的** ——
+// prompt 缓存实际是复用的，稳态每轮 cache_write 只有 160~660，cache_read 每轮才 +200 左右：
+//   第 128 轮  write 237   read 32440   $0.0083
+//   第 133 轮  write 187   read 33712   $0.0081
+// 真正贵的是**换会话那一次**：write 49237，$0.1976 —— 比平常贵 24 倍。
+// 所以逻辑是反的：换得越勤越贵。按尖峰摊薄算，每轮均摊 48→$0.0116 / 96→$0.0109 /
+// 144→$0.0117，最优在 96 附近。48 轮时上下文才 3.4 万 token，96 轮约 4 万，
+// 离 autocompact 触发线（十几万）还远，安全。
+// ⚠️ 人格不受影响：每开新会话都重读 /root/companion/CLAUDE.md，他是从同一份文件重建的。
+// 换窗丢的只是对话细节，那部分有 recentRecap + Nocturne 浮现 + search_chat_history 接着。
+const CLI_ROTATE_AFTER = 96;
 
 // 换会话时给新会话的"接上一段"：最近几轮对话的压缩版，塞进系统提示词
 function recentRecap(convId) {
@@ -5294,6 +5305,7 @@ async function handleGatewayChat(req, res, ctx) {
 
   // 每个对话第一次没有 cli_session_id 时新生成一个，让网关用 --session-id 建会话；
   // 之后每次都带上，让网关用 --resume 续上真实上下文（而不是重发历史），上下文长了 claude 自己 autocompact
+  // ⚠️ 下面这句是旧假设，2026-08-23 实测证伪了（见 CLI_ROTATE_AFTER 定义处）：
   // 但会话不能无限长：--resume 每轮都会把全部历史重新写进 prompt 缓存，
   // 而 autocompact 要接近上下文上限（十几万 token）才触发，那时每条消息的缓存写入已经贵到离谱。
   // 所以到 CLI_ROTATE_AFTER 轮就换一个新会话，并把最近几轮对话摘要塞进系统提示词接上下文。
