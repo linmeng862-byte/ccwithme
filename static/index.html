@@ -892,13 +892,47 @@ function _resolveTriggerAt(o){if(o.trigger_at!=null){var n=Number(o.trigger_at);
 function _badgeText(ts){var d=new Date(ts),n=new Date();var hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');return d.toDateString()===n.toDateString()?hh+':'+mm:String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+hh+':'+mm}
 var _rcTimePicking=null;
 
+// 小票进度条能放下几格。第一次渲染时是 null，画完量一次存这儿；
+// 之后换屏幕/转屏/侧边栏宽度变了，下次渲染就跟着变。
+var _rcBarCells=null;
+var _rcFitting=false;
+// 量一下 .rc-progress-bar 这一格实际有多宽，换算成能塞几个 █。
+// 用真实的 █ 去量，不猜字宽 —— 它是全角，跟 CSS 里的 letter-spacing 一起算才准。
+function _rcFitBar(c){
+  try{
+    var bar=c.querySelector('.rc-progress-bar');
+    if(!bar)return;
+    var avail=bar.clientWidth;
+    if(!avail)return;                       // 面板还没显示出来，量到 0，这次先不动
+    var probe=document.createElement('span');
+    probe.textContent='█'.repeat(10);
+    probe.style.cssText='position:absolute;visibility:hidden;white-space:nowrap';
+    bar.appendChild(probe);
+    var per=probe.getBoundingClientRect().width/10;
+    probe.remove();
+    if(!per)return;
+    var cells=Math.max(8,Math.min(64,Math.floor(avail/per)));
+    // 量准了重画一次。_rcFitting 是防呆栓 —— 万一哪天容器宽度反过来被内容撑着走，
+    // 这两个值会互相追，没这个栓就是死循环把页面卡死。
+    if(cells!==_rcBarCells&&!_rcFitting){
+      _rcBarCells=cells;
+      _rcFitting=true;
+      try{_renderTodos()}finally{_rcFitting=false}
+    }
+  }catch(e){}
+}
+
 function _renderTodos(){
   _dailyReset();var c=$('todoContent');c.innerHTML='';var d=new Date();
   var y=d.getFullYear(),mo=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
   var wd=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
   var hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');
   var total=_todos.length,done=_todos.filter(function(x){return x.done}).length;
-  var pct=total?done/total:0,w=16,filled=Math.round(pct*w);
+  // 08-23：w 以前写死 16 —— 但 .rc-progress-bar 是 flex:1，容器剩多少宽都归它，
+  //   16 格填不满，右边永远空一截，看着就是「进度条很短」。
+  //   现在用上一次量到的格数（_rcBarCells），渲染完再量一次存起来（见 _rcFitBar）。
+  //   量不到就退回 16 —— 跟以前一样，不至于画不出来。
+  var pct=total?done/total:0,w=_rcBarCells||16,filled=Math.round(pct*w);
   var minsLeft=(24-d.getHours())*60-d.getMinutes();
   var dash='· '.repeat(80).trim();
   // 是否已全部结清（settlement 状态）
@@ -953,6 +987,7 @@ function _renderTodos(){
   // 底部撕裂边
   tail+='<div class="rc-tear-bottom"></div>';
   var tailDiv=document.createElement('div');tailDiv.innerHTML=tail;c.appendChild(tailDiv);
+  _rcFitBar(c);
 }
 
 function _buildRow(it){
