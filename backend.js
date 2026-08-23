@@ -474,6 +474,16 @@ db.exec(`
   )
 `);
 
+// diary.who 只有两个合法值：'user'=粥粥自己写的，'ai'=他写的。
+// ⚠️ 2026-08-23：醒来那条路（见 [wake] 那段）一直往里写 'claude'，
+//    别处全认 'ai' —— 于是他醒来写的日记不算他写的，在日记本里挂到了她名下。
+//    三条写入路径（save_note 工具 / wake / POST /api/diary）现在都过这个函数。
+function _normDiaryWho(w) {
+  var v = String(w == null ? '' : w).trim().toLowerCase();
+  if (['ai','claude','assistant','他','你','noct'].indexOf(v) !== -1) return 'ai';
+  return 'user';
+}
+
 // === 收藏的语音（2026-08-23）===
 // 语音条本身是 [VOICE:file_id|时长] 标记，文件在 data/uploads 里躺着。
 // 这张表只存「她圈了哪几条」—— 不复制音频，删了原文件收藏也就空了，这是对的：
@@ -4176,7 +4186,7 @@ async function executeTool(name, input) {
       var title = firstLine.slice(0, 60);
       const mood = cleanDiaryMood(input.mood);
       // 每次保存创建独立条目（支持一天多条），who='ai' 标记 Claude 写的
-      db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?, ?, ?, ?, ?)').run(date, title, content, mood, 'ai');
+      db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?, ?, ?, ?, ?)').run(date, title, content, mood, _normDiaryWho('ai'));
       return { saved: true, date, content, mood };
     }
     case 'read_diary': {
@@ -6913,7 +6923,7 @@ app.post('/api/diary', auth, (req, res) => {
   const { date, title, content, mood, locked, unlock_date, who } = req.body;
   const result = db.prepare(`INSERT INTO diary (date, title, content, mood, locked, unlock_date, who, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))`)
-    .run(date, title || '', content || '', mood || '', locked ? 1 : 0, unlock_date || '', who || 'user');
+    .run(date, title || '', content || '', mood || '', locked ? 1 : 0, unlock_date || '', _normDiaryWho(who));
   res.json({ ok: true, id: result.lastInsertRowid });
 });
 
@@ -8778,7 +8788,7 @@ async function checkWakeTick() {
         const d = JSON.parse(dm[1]);
         if (d && d.content) {
           db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?,?,?,?,?)')
-            .run(_wakeToday(), String(d.title || '').slice(0, 60), String(d.content), String(d.mood || '').slice(0, 20), 'claude');
+            .run(_wakeToday(), String(d.title || '').slice(0, 60), String(d.content), String(d.mood || '').slice(0, 20), _normDiaryWho('ai'));
           console.log('[wake] 写了日记：' + String(d.title || '').slice(0, 30));
         }
       } catch (e) { console.log('[wake] 日记解析失败，丢弃'); }
