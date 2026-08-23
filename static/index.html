@@ -2682,12 +2682,8 @@ function _maybeTimeSep(ts,who){
       // 新的一段刚开始，**他的第一句正是该摆小时间戳的那一句** → 置 false。
       _turnHasTimeSep=false;_lastMsgTime=t;return;
     }
-    // 08-23 晚：改回「每轮一个」。
-    //   中午那版（238b3db）改成一段只摆一个 —— 只在摆大分界线那个分支才复位。
-    //   结果是 _turnHasTimeSep 一旦置 true，除非她隔 20 分钟以上再开口否则永不复位，
-    //   主线里这种情况根本没发生过 → 小时间戳实测 0 个，不是变少是全没了。
-    //   她要的是「每轮第一条有」：她一开口就复位，他回的第一句摆一个。
-    _turnHasTimeSep=false;_lastMsgTime=t;return;
+    // 同一段之内她再开口：不复位。小时间戳跟着大分界线走，不是每轮一个。
+    _lastMsgTime=t;return;
   }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=t;return}   // 这一轮的小时间戳已经摆过了
@@ -2699,7 +2695,16 @@ function _maybeTimeSep(ts,who){
   if(_prev&&(_prev.classList.contains('msg-time-inline')||_prev.classList.contains('time-separator'))){
     _prev.remove();   // 新的更准（时间更近），换掉旧的那个
   }
-  var sep=document.createElement('div');sep.className=big?'time-separator':'msg-time-inline';
+  // 08-23 晚，她定的规矩：**出现 ——time—— 的那一轮，他气泡上再挂一次小的**，
+  //   后面的轮两个都不摆，直到下一条大分界线。所以 big 的时候是【两个都画】，
+  //   不是二选一 —— 中午那版写成 big?A:B，于是大分界线那轮把小的顶掉了，
+  //   而小的又因为 _turnHasTimeSep 永不复位再也没机会出现 → 实测 0 个。
+  if(big){
+    var bigSep=document.createElement('div');bigSep.className='time-separator';
+    bigSep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
+    streamInner.append(bigSep);
+  }
+  var sep=document.createElement('div');sep.className='msg-time-inline';
   sep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
   streamInner.append(sep);_lastMsgTime=t;
 }
@@ -4192,8 +4197,8 @@ function _maybeTimeSepFrag(frag,ts,who){
       _turnHasTimeSep=false;_lastMsgTime=Math.max(_lastMsgTime,t);return;
     }
     // 规矩跟 _maybeTimeSep 一模一样（见那边的注释），别只改一边。
-    // 08-23 晚：跟着改回「每轮一个」—— 她一开口就复位。
-    _turnHasTimeSep=false;_lastMsgTime=Math.max(_lastMsgTime,t);return;
+    // 同一段之内她再开口：不复位。小时间戳跟着大分界线走。
+    _lastMsgTime=Math.max(_lastMsgTime,t);return;
   }
   var big=(_lastMsgTime===0)||(t-_lastMsgTime>=_TIME_SEP_GAP);
   if(!big&&_turnHasTimeSep){_lastMsgTime=Math.max(_lastMsgTime,t);return}
@@ -4203,7 +4208,13 @@ function _maybeTimeSepFrag(frag,ts,who){
   if(_prevF&&(_prevF.classList.contains('msg-time-inline')||_prevF.classList.contains('time-separator'))){
     _prevF.remove();
   }
-  var sep=document.createElement('div');sep.className=big?'time-separator':'msg-time-inline';
+  // 跟 _maybeTimeSep 一模一样：big 那一轮两个都画（见那边的注释）。
+  if(big){
+    var bigSepF=document.createElement('div');bigSepF.className='time-separator';
+    bigSepF.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
+    frag.appendChild(bigSepF);
+  }
+  var sep=document.createElement('div');sep.className='msg-time-inline';
   sep.innerHTML='<span class="dot"></span><span>'+_fmtSepTime(t)+'</span>';
   frag.appendChild(sep);_lastMsgTime=t;
 }
