@@ -48,6 +48,11 @@ function _moodIcon(icon) {
 // ====== State ======
 var _diaryEntries = [];
 var _diaryMonth = 'all';
+// 08-24：时间轴改成「一天一屏」—— 默认只显示今天，历史点日历里的某一天才展开那天。
+// null = 今天（不写死日期，免得跨零点还停在昨天）。搜索时忽略它，搜的是全部。
+var _diaryDate = null;
+function _selectedDate() { return _diaryDate || _dateStr(new Date()); }
+function _isToday(ds) { return ds === _dateStr(new Date()); }
 var _diaryWeekStart = null;  // Date object — start of visible week
 var _diaryView = 'timeline'; // 'timeline' | 'detail'
 var _diaryTab = 'overview';   // 'overview' | 'calendar' | 'year' | 'stats'
@@ -71,6 +76,7 @@ function openDiaryPanel() {
   _diaryView = 'timeline';
   _diaryTab = 'overview';
   _diaryMonth = 'all';
+  _diaryDate = null;        // 每次打开都回到今天
   _diaryDetailId = null;
   _diaryDetailEntry = null;
   _loadDiaryEntries().then(function() {
@@ -142,10 +148,16 @@ function _renderWeekCalendar() {
   if (!week) return;
   var now = new Date();
   var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  // Start from Monday of this week
-  var dayOfWeek = today.getDay();
-  var monday = new Date(today);
-  monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  // 08-24：这一条以前永远停在本周。翻到 8-12 那天时，上面那排还是本周的日期，
+  // 选中的那天根本不在条里 —— 所以改成跟着选中日期走的那一周。
+  var selStr = _selectedDate();
+  var selParts = selStr.split('-');
+  var anchor = new Date(+selParts[0], +selParts[1] - 1, +selParts[2]);
+  if (isNaN(anchor.getTime())) anchor = new Date(today);
+  // Start from Monday of the anchor week
+  var dayOfWeek = anchor.getDay();
+  var monday = new Date(anchor);
+  monday.setDate(anchor.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
 
   var daysWithEntries = {};
   _diaryEntries.forEach(function(e) {
@@ -171,12 +183,13 @@ function _renderWeekCalendar() {
     d.setDate(monday.getDate() + i);
     var ds = _dateStr(d);
     var isToday = ds === _dateStr(today);
+    var isSel = ds === selStr;
     var hasEntry = daysWithEntries[ds];
     var moods = moodsByDay[ds] || [];
 
     html += '<button class="diary-week-day" data-date="' + ds + '" onclick="_jumpToDate(\'' + ds + '\')">';
     html += '<span class="diary-week-label">' + dayNames[i] + '</span>';
-    html += '<span class="diary-week-num' + (isToday ? ' today' : '') + '">' + d.getDate() + '</span>';
+    html += '<span class="diary-week-num' + (isToday ? ' today' : '') + (isSel ? ' sel' : '') + '">' + d.getDate() + '</span>';
     if (moods.length > 0) {
       html += '<span class="diary-week-dots">';
       for (var j = 0; j < Math.min(moods.length, 4); j++) {
@@ -192,20 +205,23 @@ function _renderWeekCalendar() {
   week.innerHTML = html;
 }
 
+// 点日历上的某一天 —— 回时间轴，只摊开那一天。
 function _jumpToDate(ds) {
-  if (_diaryTab !== 'overview') {
-    _diaryTab = 'overview';
-    _renderTimelineShell();
-    _renderWeekCalendar();
-  }
-  _diaryMonth = ds.slice(0, 7);
+  _diaryDate = ds;
+  _diaryMonth = 'all';        // 月份筛选优先级比当天高，选了日期就得让开
+  var si = $('diarySearchInput');
+  if (si) si.value = '';      // 同理，搜索框还留着字的话会盖住这一天
+  _diaryTab = 'overview';
+  _renderTimelineShell();
+  _renderWeekCalendar();
   _renderDiaryMonths();
   _renderTimeline();
-  // Scroll to that date's entry
-  setTimeout(function() {
-    var el = document.querySelector('.diary-date-group[data-date="' + ds + '"]');
-    if (el) el.scrollIntoView({ behavior:'smooth', block:'start' });
-  }, 100);
+  var tl = $('diaryTimeline');
+  if (tl) tl.scrollTop = 0;
+}
+
+function _backToToday() {
+  _jumpToDate(_dateStr(new Date()));
 }
 
 // ====== Timeline Shell (Today header + mood capsule) ======
@@ -213,13 +229,17 @@ function _renderTimelineShell() {
   var timeline = $('diaryTimeline');
   var now = new Date();
   var todayStr = _dateStr(now);
-  var displayDate = _formatDisplayDate(todayStr);
+  // 08-24：这块以前写死看今天。现在时间轴是「一天一屏」，标题、心情胶囊
+  // 都要跟着选中的那一天走，否则翻到 8-12 上面还挂着今天的心情。
+  var selStr = _selectedDate();
+  var onToday = _isToday(selStr);
+  var displayDate = _formatDisplayDate(selStr);
 
-  // Today's moods — collect all unique moods from today's entries
+  // 选中那天的心情 — collect all unique moods
   var todayMoods = [];
   var todayMoodCount = 0;
   _diaryEntries.forEach(function(e) {
-    if (e.date === todayStr && e.mood) { var mArr = e.mood.split(/[,，]/); for (var mi=0;mi<mArr.length;mi++) { var mid = mArr[mi].trim(); if (mid) { todayMoods.push(mid); todayMoodCount++; } } }
+    if (e.date === selStr && e.mood) { var mArr = e.mood.split(/[,，]/); for (var mi=0;mi<mArr.length;mi++) { var mid = mArr[mi].trim(); if (mid) { todayMoods.push(mid); todayMoodCount++; } } }
   });
   // Dedupe
   var uniqueMoods = [];
@@ -256,10 +276,13 @@ function _renderTimelineShell() {
     (_diaryTab === 'overview' ?
     '<div class="diary-today-header">' +
       '<div class="diary-today-left">' +
-        '<h1 class="diary-today-title">TODAY</h1>' +
+        '<h1 class="diary-today-title">' + (onToday ? 'TODAY' : selStr.slice(5).replace('-', '/')) + '</h1>' +
         '<p class="diary-today-date">' + displayDate + '</p>' +
       '</div>' +
-      '<div class="diary-today-right">' + moodCapsule + '</div>' +
+      '<div class="diary-today-right">' +
+        (onToday ? '' : '<button class="diary-back-today" onclick="_backToToday()">回到今天</button>') +
+        moodCapsule +
+      '</div>' +
     '</div>' +
     '<div class="diary-week-calendar" id="diaryWeekCalendar"></div>' +
     '<div class="diary-months" id="diaryMonths"></div>'
@@ -628,11 +651,24 @@ function _renderTimeline() {
   if (!list) return;
   var q = ($('diarySearchInput')?.value || '').trim().toLowerCase();
   var items = _diaryEntries;
-  if (_diaryMonth !== 'all') items = items.filter(function(e) { return e.date && e.date.slice(0,7) === _diaryMonth; });
-  if (q) items = items.filter(function(e) { return (e.content||'').toLowerCase().indexOf(q) !== -1 || (e.title||'').toLowerCase().indexOf(q) !== -1; });
+  // 三种口径，优先级从上到下：搜索 > 月份筛选 > 当天。
+  // 搜索和月份都是她主动点的，只有「什么都没点」才回到只看当天。
+  if (q) {
+    items = items.filter(function(e) { return (e.content||'').toLowerCase().indexOf(q) !== -1 || (e.title||'').toLowerCase().indexOf(q) !== -1; });
+  } else if (_diaryMonth !== 'all') {
+    items = items.filter(function(e) { return e.date && e.date.slice(0,7) === _diaryMonth; });
+  } else {
+    var _sel = _selectedDate();
+    items = items.filter(function(e) { return e.date === _sel; });
+  }
 
   if (!items.length) {
-    list.innerHTML = '<div class="diary-empty">' + (q ? 'No matching entries' : '<div style="font:400 48px/1 var(--font-serif);color:#D0C9BD;margin-bottom:12px">—</div><p style="color:#A0988B">Your shared timeline begins here</p>') + '</div>';
+    var _emptyMsg;
+    if (q) _emptyMsg = 'No matching entries';
+    else if (_diaryMonth !== 'all') _emptyMsg = '<div style="font:400 48px/1 var(--font-serif);color:#D0C9BD;margin-bottom:12px">—</div><p style="color:#A0988B">这个月还没有写下什么</p>';
+    else if (_isToday(_selectedDate())) _emptyMsg = '<div style="font:400 48px/1 var(--font-serif);color:#D0C9BD;margin-bottom:12px">—</div><p style="color:#A0988B">今天还是空白的</p>';
+    else _emptyMsg = '<div style="font:400 48px/1 var(--font-serif);color:#D0C9BD;margin-bottom:12px">—</div><p style="color:#A0988B">这一天没有日记</p>';
+    list.innerHTML = '<div class="diary-empty">' + _emptyMsg + '</div>';
     return;
   }
 
@@ -647,7 +683,9 @@ function _renderTimeline() {
   var html = '';
   groups.forEach(function(g, gi) {
     // Date header
-    html += '<div class="diary-date-header">' + _formatDisplayDate(g.date) + '</div>';
+    // data-date 是 _jumpToDate 滚动定位用的（以前找的是 .diary-date-group，
+    // 那个 class 根本没生成过 —— 点日期从来没滚到位）。
+    html += '<div class="diary-date-header" data-date="' + g.date + '">' + _formatDisplayDate(g.date) + '</div>';
 
     // Time-axis rows
     g.entries.forEach(function(entry, ei) {
@@ -1178,7 +1216,7 @@ function _initDiaryStyles() {
     '.diary-today-left { flex:1; min-width:0; }',
     '.diary-today-title { font:700 38px/1 var(--font-sans); color:var(--d-text); letter-spacing:-.02em; margin:0; }',
     '.diary-today-date { font:400 15px/1.3 var(--font-sans); color:var(--d-muted); margin:8px 0 0; }',
-    '.diary-today-right { flex:none; padding-top:4px; }',
+    '.diary-today-right { flex:none; padding-top:4px; display:flex; align-items:center; gap:0; }',
     '.diary-today-mood { display:inline-flex; align-items:center; gap:5px; padding:8px 14px; border-radius:999px; font:500 13px/1 var(--font-sans); white-space:nowrap; }',
     '.diary-today-mood svg { width:16px; height:16px; }',
 
@@ -1189,6 +1227,10 @@ function _initDiaryStyles() {
     '.diary-week-label { font:500 11px/1 var(--font-sans); color:var(--d-muted); text-transform:uppercase; letter-spacing:.04em; }',
     '.diary-week-num { width:34px; height:34px; display:grid; place-items:center; border-radius:50%; font:500 16px/1 var(--font-sans); color:var(--d-text); transition:all .15s; }',
     '.diary-week-num.today { background:var(--d-accent); color:var(--d-bg); font-weight:600; }',
+    // 今天 = 实心；选中的那天 = 描边（两个可能是同一天，那就实心+描边）
+    '.diary-week-num.sel { box-shadow:0 0 0 2px var(--d-accent); font-weight:600; }',
+    '.diary-back-today { border:1px solid var(--d-line); background:transparent; color:var(--d-muted); font:500 12px/1 var(--font-sans); padding:6px 10px; border-radius:999px; cursor:pointer; margin-right:8px; }',
+    '.diary-back-today:active { background:var(--d-card); }',
     '.diary-week-dots { display:flex; gap:2px; min-height:8px; margin-top:8px; }',
     '.diary-week-dot { width:5px; height:5px; border-radius:50%; flex:none; }',
 

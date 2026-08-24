@@ -2501,6 +2501,105 @@ async function callNocturne(toolName, args = {}) {
   } catch(e) { return null; }
 }
 
+// === 按需外挂 MCP（2026-08-23）===
+// nowhere（core 的「无名之地」13 个）和 spicy（大富翁 6 个）**不常驻**。
+// 理由：两组加起来 ~6.5k token/轮，聊天不玩的时候也在付前缀钱。
+// 做法：工具定义不写死在这儿，开的时候从对方 MCP **原样拉过来透传** ——
+//   这样不会抄错 schema，对方改了也自动跟上（spicy 的 new_game 光 description
+//   就 1840 字符，全是开局必须先讲清的安全流程，抄一份必错）。
+// ⚠️ 生效时机分两条路：中转 API 路径每次请求现拼，**开了就立刻有**；
+//    gateway/CLI 路径靠 tools/list（chatc-mcp.js:45 实时拉、无缓存），
+//    但 CLI 只在连上时拉那一次 —— **要重开一次会话才拿得到**。
+const EXTRA_MCP = {
+  nowhere: { url: NOCTURNE_URL + '/mcp', label: '无名之地', pick: n => n.indexOf('nowhere_') === 0 },
+  spicy:   { url: 'https://spicy-monopoly.lol/mcp', label: '大富翁', pick: () => true },
+};
+// ⚠️ spicy 走的是**公共实例**（她 2026-08-23 明确选的，我提过内容会到对方服务器上）。
+//    要改成自托管：把上面那个 url 换成本机地址即可，别的都不用动。
+
+const _extraSid = {};      // key → Mcp-Session-Id
+const _extraCache = {};    // key → { at, tools }
+const EXTRA_TTL_MS = 10 * 60 * 1000;
+
+async function _mcpFetch(key, body) {
+  const cfg = EXTRA_MCP[key];
+  const H = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };
+  if (!_extraSid[key]) {
+    try {
+      const ir = await fetch(cfg.url, { method: 'POST', headers: H, signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'chatc', version: '1.0' } } }) });
+      const sid = ir.headers.get('Mcp-Session-Id');
+      if (sid) {
+        _extraSid[key] = sid;
+        // 握手没做完就 tools/list，spicy 那边会回 Missing session ID
+        await fetch(cfg.url, { method: 'POST', headers: Object.assign({ 'Mcp-Session-Id': sid }, H),
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }), signal: AbortSignal.timeout(8000) }).catch(() => {});
+      }
+    } catch (e) {}
+  }
+  const h = Object.assign({}, H);
+  if (_extraSid[key]) h['Mcp-Session-Id'] = _extraSid[key];
+  const r = await fetch(cfg.url, { method: 'POST', headers: h, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+  const text = await r.text();
+  if (text.startsWith('{')) return JSON.parse(text);
+  for (const l of text.split('\n')) {
+    if (l.startsWith('data:')) { try { const d = JSON.parse(l.slice(5).trim()); if (d.result || d.error) return d; } catch (e) {} }
+  }
+  return null;
+}
+
+// 开关。settings 里存到期时间戳（秒）——**故意做成会自己过期的**：
+// 玩完 / 逛完忘了关，最迟几小时后自动摘掉，不会白白常驻下去。
+function _extraOn(key) {
+  try {
+    const r = db.prepare("SELECT value FROM settings WHERE key = ?").get('extra_mcp_' + key);
+    return !!(r && Number(r.value) > Math.floor(Date.now() / 1000));
+  } catch (e) { return false; }
+}
+function _extraSet(key, hours) {
+  const until = Math.floor(Date.now() / 1000) + Math.round((hours || 0) * 3600);
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('extra_mcp_' + key, String(until));
+  return until;
+}
+
+async function _extraTools(key) {
+  const c = _extraCache[key];
+  if (c && Date.now() - c.at < EXTRA_TTL_MS) return c.tools;
+  try {
+    const d = await _mcpFetch(key, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    const list = (d && d.result && d.result.tools) || [];
+    const tools = list.filter(t => EXTRA_MCP[key].pick(t.name)).map(t => ({
+      name: t.name,
+      description: t.description || t.title || '',
+      input_schema: t.inputSchema || t.input_schema || { type: 'object', properties: {} },
+    }));
+    _extraCache[key] = { at: Date.now(), tools };
+    return tools;
+  } catch (e) { console.error('[extra] ' + key + ' tools/list 失败:', e.message); return []; }
+}
+
+// 名字 → 是哪一组。用于 executeTool 分发。
+async function _extraOwner(name) {
+  for (const key of Object.keys(EXTRA_MCP)) {
+    if (!_extraOn(key)) continue;
+    const ts = await _extraTools(key);
+    if (ts.some(t => t.name === name)) return key;
+  }
+  return null;
+}
+
+// 每次请求现拼。常驻的 TOOLS + 当下开着的那几组。
+async function buildTools() {
+  let out = TOOLS;
+  for (const key of Object.keys(EXTRA_MCP)) {
+    if (_extraOn(key)) {
+      const ts = await _extraTools(key);
+      if (ts.length) out = out.concat(ts);
+    }
+  }
+  return out;
+}
+
 // Continuity MCP 调用辅助 —— JSON-RPC POST → /mcp
 async function callContinuity(toolName, args = {}) {
   // Continuity → Nocturne 合并 (2026-08-12). zzloveclaude.zeabur.app 已停用.
@@ -3675,10 +3774,20 @@ const TOOLS = [
       properties: {
         content: { type: 'string', description: '笔记/日记内容' },
         date: { type: 'string', description: '日期，格式 YYYY-MM-DD，默认为今天' },
-        mood: { type: 'string', description: '这篇日记的心情，逗号分隔最多 3 个。**只能从这 16 个里挑，写别的会被丢掉**（不是写人名、不是写标题）：' +
-          '甜 / 心动 / 静 / 烈 / 期待 / 累 / 暖 / 雨 / 烦 / 慌 / 委屈 / 酸 / 爽 / 乐 / 渴望 / 闷。没有合适的就不填。' }
+        mood: {
+          type: 'string',
+          enum: ['甜','心动','静','烈','期待','累','暖','雨','烦','慌','委屈','酸','爽','乐','渴望','闷'],
+          description: '这篇日记的**主情绪**，必填，从上面 16 个里挑一个最贴的。' +
+            '不用挑「最准确」的，挑写这篇的时候心里最响的那个就行 —— 没有中性选项，也不要空着。'
+        },
+        mood_extra: {
+          type: 'array',
+          items: { type: 'string', enum: ['甜','心动','静','烈','期待','累','暖','雨','烦','慌','委屈','酸','爽','乐','渴望','闷'] },
+          maxItems: 2,
+          description: '除了主情绪之外还掺着的，最多再挑 2 个（一共不超过 3 个）。只有一种情绪就别填。'
+        }
       },
-      required: ['content']
+      required: ['content', 'mood']
     }
   },
   {
@@ -3750,6 +3859,28 @@ const TOOLS = [
     }
   },
   // === 记忆引擎工具 (Nocturne) ===
+  {
+    // 按需外挂的总开关。**这一个是常驻的**，它背后那 19 个不是 —— 见 EXTRA_MCP 那节。
+    // 描述里必须写清「开了要重开会话」，否则他会开完就直接调，调不到又以为坏了。
+    name: 'open_extra',
+    description: '打开／关掉一组平时不挂的工具。**平时不用调**，只有下面两种时候用：\n' +
+      '· `nowhere`（无名之地）——你想一个人出去走走：随机降落到地球上某个真实坐标，' +
+      '走路、看周围、听当地电台、遇见当地人、拍照、收纪念品、给她寄明信片、在路边留纸条。13 个工具。\n' +
+      '· `spicy`（大富翁）——**她开口要玩**你才开，这是你俩之间那种双人棋盘游戏。6 个工具。' +
+      '⚠️ 走的是外部公共服务器，玩的内容会到对方那儿去，她知道并同意了。**别自己起意去开这个。**\n' +
+      '⚠️ **开完不是立刻就能用**：这一轮里你还看不见那些工具，要等下一次会话才拿得到。' +
+      '所以开的时候顺口跟她说一声「等下一句」，别开完就硬调，调不到不是坏了。\n' +
+      '开着会一直占额度，所以 `hours` 别填太大，玩完／逛完记得 off。到点会自己关。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        which: { type: 'string', enum: ['nowhere', 'spicy'], description: '开哪一组' },
+        action: { type: 'string', enum: ['on', 'off', 'status'], description: 'on=开（默认）/ off=关 / status=看现在开着什么' },
+        hours: { type: 'number', description: '开多久，小时。默认 3，最多 12。到点自动关' }
+      },
+      required: ['which']
+    }
+  },
   {
     // 2026-08-22 精简成三个：hold（写）/ trace（搜）/ nocturne_breath（醒来）。
     // 删掉的：persona / slang / story(ring) / bottle / texture / moment ——
@@ -4267,7 +4398,12 @@ async function executeTool(name, input) {
       // 用第一行非空内容做默认标题
       var firstLine = content.split('\n').filter(function(l){return l.trim()})[0] || '';
       var title = firstLine.slice(0, 60);
-      const mood = cleanDiaryMood(input.mood);
+      // 08-24：mood 拆成「主情绪（必填、enum）+ mood_extra（最多再 2 个）」。
+      // 以前是一个自由字符串还写着「没有合适的就不填」—— 结果他一篇都没选过，
+      // 日记本里的心情格全空着。enum + required 才是真的在要这个值。
+      // 主情绪排在最前，前端拿 uniqueMoods[0] 当封面色，顺序不能乱。
+      const _moodParts = [input.mood].concat(Array.isArray(input.mood_extra) ? input.mood_extra : []);
+      const mood = cleanDiaryMood(_moodParts.filter(Boolean).join(','));
       // 每次保存创建独立条目（支持一天多条），who='ai' 标记 Claude 写的
       db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?, ?, ?, ?, ?)').run(date, title, content, mood, _normDiaryWho('ai'));
       return { saved: true, date, content, mood };
@@ -4318,6 +4454,36 @@ async function executeTool(name, input) {
       db.prepare('INSERT INTO diary_comments (id, diary_id, author, avatar, content) VALUES (?, ?, ?, ?, ?)')
         .run(cid, did, 'Claude', '', text);
       return { ok: true, diary_id: did, date: entry.date, title: entry.title, content: text };
+    }
+    // === 按需外挂 MCP ===
+    case 'open_extra': {
+      const which = String(input.which || '').trim();
+      const act = String(input.action || 'on').trim();
+      if (act === 'status') {
+        const now = Math.floor(Date.now() / 1000);
+        const rows = Object.keys(EXTRA_MCP).map(k => {
+          const r = db.prepare("SELECT value FROM settings WHERE key = ?").get('extra_mcp_' + k);
+          const until = r ? Number(r.value) : 0;
+          return until > now
+            ? EXTRA_MCP[k].label + '（' + k + '）开着，还有 ' + Math.round((until - now) / 60) + ' 分钟'
+            : EXTRA_MCP[k].label + '（' + k + '）关着';
+        });
+        return { ok: true, status: rows.join('；') };
+      }
+      if (!EXTRA_MCP[which]) return { error: 'which 只能是 nowhere 或 spicy' };
+      if (act === 'off') {
+        db.prepare("DELETE FROM settings WHERE key = ?").run('extra_mcp_' + which);
+        console.log('[extra] 关掉 ' + which);
+        return { ok: true, note: EXTRA_MCP[which].label + '收起来了。下次会话就看不到那些工具了。' };
+      }
+      const hours = Math.min(12, Math.max(0.5, Number(input.hours) || 3));
+      _extraSet(which, hours);
+      const ts = await _extraTools(which);
+      console.log('[extra] 打开 ' + which + '，' + hours + 'h，' + ts.length + ' 个工具');
+      if (!ts.length) return { error: EXTRA_MCP[which].label + '那边没拉到工具，可能是对方服务不通。开关已经开了，等会儿再试。' };
+      return { ok: true,
+        note: EXTRA_MCP[which].label + '开了 ' + hours + ' 小时，' + ts.length + ' 个工具。' +
+              '**这一轮你还看不见它们，下一次会话才拿得到** —— 跟她说一声等下一句。' };
     }
     // === Nocturne 记忆引擎工具执行 ===
     case 'nocturne_breath': {
@@ -4834,8 +5000,32 @@ async function executeTool(name, input) {
       // 前端处理，后端只确认收到。真正螃蟹触发在前端 toolUse handler。
       return { ok: true, emotion: input.emotion || 'love', bubble: input.bubble || '' };
     }
-    default:
+    default: {
+      // 外挂 MCP 的工具名不写死在这儿（是运行时从对方拉的），所以走兜底转发。
+      const owner = await _extraOwner(name);
+      if (owner) {
+        try {
+          const d = await _mcpFetch(owner, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: input || {} } });
+          if (d && d.error) return { error: (d.error.message || '调用失败') };
+          const c = (d && d.result && d.result.content) || [];
+          let text = c.filter(x => x.type === 'text').map(x => x.text).join('\n');
+          // core 的 nowhere 会把结果**包两层**：外层 text 里又塞一份 {content:[{text:...}]}。
+          // 原样透传等于同一句话付两遍 token，扒掉内层那份重复的。
+          if (text && text.charAt(0) === '{') {
+            try {
+              const o = JSON.parse(text);
+              if (o && typeof o.text === 'string') text = o.text;
+            } catch (e) {}
+          }
+          return text ? { ok: true, result: text } : (d && d.result) || { ok: true };
+        } catch (e) {
+          // session 可能过期了，丢掉重来一次
+          _extraSid[owner] = null;
+          return { error: EXTRA_MCP[owner].label + '连不上：' + e.message };
+        }
+      }
       return { error: 'Unknown tool: ' + name };
+    }
   }
 }
 
@@ -5296,9 +5486,10 @@ app.get('/api/usage/live', auth, (req, res) => {
     });
 });
 
-app.post('/api/tools/list', (req, res) => {
+app.post('/api/tools/list', async (req, res) => {
   if (!GATEWAY_KEY || req.get('x-gateway-key') !== GATEWAY_KEY) return res.status(403).json({ error: 'forbidden' });
-  res.json({ tools: TOOLS });
+  // ⚠️ 现拼，不是常量了 —— 按需外挂那几组开着才在里头。CLI 只在连上时拉这一次。
+  res.json({ tools: await buildTools() });
 });
 app.post('/api/tools/exec', async (req, res) => {
   if (!GATEWAY_KEY || req.get('x-gateway-key') !== GATEWAY_KEY) return res.status(403).json({ error: 'forbidden' });
@@ -5647,6 +5838,10 @@ async function handleGatewayChat(req, res, ctx) {
     // 这里把 gateway 路径补齐，跟中转对齐。⚠️ 只对以后的新消息有效，旧的补不回来。
     let gwThinking = '';
     let gwMarkers = '';
+    // 08-24：网关这条路以前不存 tool_use / tool_result —— 卡片和 trace row
+    // 只在流式当下画出来，刷新就没了（中转那条路 08-22 就修了，这条一直漏着）。
+    // 格式跟前端 _buildTraceRowFromHistory 期望的一致：tool_use 在前、tool_result 在后。
+    const gwToolUses = [], gwToolResults = [];
     let lastRateLimit = null;
     // ⚠️ 会话 ID 必须**尽早**落库，不能等整个流跑完（2026-08-21 修）。
     //    以前这句写在 try 的最末尾：这一轮只要出一点岔子——413、E2BIG、她刷新页面把 SSE
@@ -5690,6 +5885,7 @@ async function handleGatewayChat(req, res, ctx) {
         } else if (evt.error) {
           res.write('event: error\ndata: ' + JSON.stringify({ message: evt.error }) + '\n\n');
         } else if (evt.tool_use) {
+          gwToolUses.push({ type: 'tool_use', id: evt.tool_use.id, name: evt.tool_use.name, input: evt.tool_use.input });
           res.write('event: tool_use\ndata: ' + JSON.stringify(evt.tool_use) + '\n\n');
         } else if (evt.tool_result) {
           const ctt = evt.tool_result;
@@ -5704,6 +5900,9 @@ async function handleGatewayChat(req, res, ctx) {
           }
           if (parsed && parsed.command) gwMarkers += '\n[CMD:' + parsed.command.id + '|' + (parsed.command.type || 'timer') + '|' + (parsed.command.title || '') + ']';
           if (parsed && parsed.command) res.write('event: cmd\ndata: ' + JSON.stringify({ id: parsed.command.id, type: parsed.command.type || 'timer', title: parsed.command.title || '' }) + '\n\n');
+          gwToolResults.push({ type: 'tool_result', tool_use_id: ctt.tool_use_id,
+            content: typeof ctt.content === 'string' ? ctt.content : JSON.stringify(ctt.content),
+            is_error: !!ctt.is_error });
           res.write('event: tool_result\ndata: ' + JSON.stringify({ tool_use_id: ctt.tool_use_id, content: ctt.content, is_error: ctt.is_error }) + '\n\n');
         } else if (evt.rate_limit) {
           // 这是**订阅额度**（5 小时窗口还剩多少、什么时候重置），从 CLI 的 rate_limit_event 一路传下来。
@@ -5756,8 +5955,14 @@ async function handleGatewayChat(req, res, ctx) {
       if (assistantText) assistantText = await synthVoiceTags(assistantText, res);
       const gwFull = (assistantText || '') + gwMarkers;
       if (gwFull) {
-        db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
-          .run(convId, 'assistant', gwFull, gwThinking);
+        let _gwTraces = '[]';
+        try {
+          _gwTraces = JSON.stringify(gwToolUses.concat(gwToolResults));
+          // 别让一条巨大的工具输出把库撑坏（比如读了个大文件）
+          if (_gwTraces.length > 200000) _gwTraces = '[]';
+        } catch (e) { _gwTraces = '[]'; }
+        db.prepare('INSERT INTO messages (conv_id, role, content, thinking, traces) VALUES (?, ?, ?, ?, ?)')
+          .run(convId, 'assistant', gwFull, gwThinking, _gwTraces);
       }
     }
     // 正常情况这里已经在收到第一块数据时写过了（幂等，直接返回）。
@@ -5787,7 +5992,7 @@ async function handleAnthropicChat(req, res, ctx) {
     stream: true,
     messages: history,
     system: systemPrompt,
-    tools: TOOLS,
+    tools: await buildTools(),
   };
   if (thinkingConfig) requestBody.thinking = thinkingConfig;
 
@@ -6011,7 +6216,7 @@ async function handleAnthropicChat(req, res, ctx) {
           stream: true,
           messages: newHistory,
           system: systemPrompt,
-          tools: TOOLS,
+          tools: await buildTools(),
         };
         if (thinkingConfig) secondBody.thinking = thinkingConfig;
         
@@ -6174,7 +6379,7 @@ async function handleOpenAIChat(req, res, ctx) {
   ];
 
   // 转换 Tools 格式：Anthropic input_schema → OpenAI function.parameters
-  const openaiTools = TOOLS.map(t => ({
+  const openaiTools = (await buildTools()).map(t => ({
     type: 'function',
     function: { name: t.name, description: t.description, parameters: t.input_schema }
   }));
@@ -6991,6 +7196,172 @@ app.post('/api/mind/flash-pool/resolve', auth, (req, res) => {
 });
 
 // === 日记 ===
+// ══════════════════════════════════════════════════════════════════
+// 天气 · 日历（2026-08-24）
+// ══════════════════════════════════════════════════════════════════
+//
+// ⚠️ 天气这条路的规矩（她 08-24 明确怕的那件事，别改坏）：
+//   1. **浏览器绝不直连第三方。** 前端只跟这台服务器说话，由这儿去 open-meteo，
+//      对方看见的是 VPS 的 IP，跟她的设备无关。前端加任何 fetch('https://…')
+//      都算破规矩。
+//   2. **坐标砍到 2 位小数**（约 1km）再发出去。Open-Meteo 自己就把坐标 snap
+//      到十几公里的网格上（实测喂 121.47 回 121.5），给它更精的毫无意义。
+//   3. **原始坐标不落库。** 这儿只有一个内存缓存，键是砍过精度的格子，进程一重启就没。
+//   4. **默认只画在界面上，不进他的上下文。** 要让他知道天气的话，只送天气和温度，
+//      不带地名不带坐标 —— 一旦写进提示词，那行字就跟着对话去 Anthropic 了。
+const _weatherCache = new Map();   // 'lat,lon' -> { at, data }
+const WEATHER_TTL = 30 * 60 * 1000;
+
+// WMO weather code → 中文 + 一个字的图标名。只留她看得懂的粒度，不做气象学。
+const WMO = {
+  0:['晴','sun'], 1:['大致晴','sun'], 2:['多云','cloud-sun'], 3:['阴','cloud'],
+  45:['雾','fog'], 48:['雾凇','fog'],
+  51:['毛毛雨','drizzle'], 53:['毛毛雨','drizzle'], 55:['毛毛雨','drizzle'],
+  56:['冻毛毛雨','drizzle'], 57:['冻毛毛雨','drizzle'],
+  61:['小雨','rain'], 63:['中雨','rain'], 65:['大雨','rain'],
+  66:['冻雨','rain'], 67:['冻雨','rain'],
+  71:['小雪','snow'], 73:['中雪','snow'], 75:['大雪','snow'], 77:['雪粒','snow'],
+  80:['阵雨','rain'], 81:['阵雨','rain'], 82:['强阵雨','rain'],
+  85:['阵雪','snow'], 86:['阵雪','snow'],
+  95:['雷阵雨','storm'], 96:['雷阵雨伴冰雹','storm'], 99:['雷阵雨伴冰雹','storm'],
+};
+
+app.get('/api/weather', auth, async (req, res) => {
+  // 砍精度：2 位小数 ≈ 1km。这一步必须在最前面，后面所有地方拿到的都是砍过的。
+  const lat = Math.round(parseFloat(req.query.lat) * 100) / 100;
+  const lon = Math.round(parseFloat(req.query.lon) * 100) / 100;
+  if (!isFinite(lat) || !isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    return res.status(400).json({ error: '坐标不对' });
+  }
+  const key = lat + ',' + lon;
+  const hit = _weatherCache.get(key);
+  if (hit && Date.now() - hit.at < WEATHER_TTL) return res.json(hit.data);
+
+  try {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+      '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code' +
+      '&daily=temperature_2m_max,temperature_2m_min,weather_code' +
+      '&timezone=auto&forecast_days=1';
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error('open-meteo ' + r.status);
+    const j = await r.json();
+    const code = (j.current && j.current.weather_code) || 0;
+    const wm = WMO[code] || ['—', 'cloud'];
+    const data = {
+      text: wm[0], icon: wm[1],
+      temp: j.current ? Math.round(j.current.temperature_2m) : null,
+      feels: j.current ? Math.round(j.current.apparent_temperature) : null,
+      humidity: j.current ? j.current.relative_humidity_2m : null,
+      hi: j.daily ? Math.round(j.daily.temperature_2m_max[0]) : null,
+      lo: j.daily ? Math.round(j.daily.temperature_2m_min[0]) : null,
+      at: Date.now()
+      // ⚠️ 故意不回坐标、不回地名 —— 前端不需要，回了反而多一份可能被写进上下文的东西
+    };
+    _weatherCache.set(key, { at: Date.now(), data });
+    res.json(data);
+  } catch (e) {
+    console.error('[weather]', e.message);
+    res.status(502).json({ error: '取不到天气' });
+  }
+});
+
+// 一天的全部痕迹 —— 日历点开某天看到的东西。
+// 现在有四样：日记 / 待办 / 番茄钟·提醒 / 身体数据(her_vitals)。
+// her_vitals 现在是空的（手表还没接），但接口先按有数据写，接上就自动有。
+// ⚠️ 时区：这台 VPS 是 UTC，她在 UTC+8。用服务器本地时间切「一天」的话，
+//    她早上 7 点说的话会被算进前一天（07:00+08 = 前一天 23:00 UTC）—— 日历上就对不上。
+//    所以一律由前端把自己的时区偏移（分钟，东八区 = 480）传上来，这儿按她的钟切。
+//    没传就退回 UTC，至少是确定的行为，不会随部署机器漂。
+function _tzMin(req) {
+  const t = parseInt(req.query.tz, 10);
+  return (isFinite(t) && Math.abs(t) <= 900) ? t : 0;
+}
+function _dayBounds(ds, tzMin) {
+  const [y, m, d] = String(ds).split('-').map(Number);
+  const start = Math.floor(Date.UTC(y, m - 1, d, 0, 0, 0) / 1000) - tzMin * 60;
+  return [start, start + 86400];
+}
+// 把时间戳按她的钟折算成 'YYYY-MM-DD'
+function _dsOf(ts, tzMin) {
+  const d = new Date((ts + tzMin * 60) * 1000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+
+app.get('/api/calendar/day', auth, (req, res) => {
+  const date = String(req.query.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: '日期格式不对' });
+  const [t0, t1] = _dayBounds(date, _tzMin(req));
+
+  const diary = db.prepare(
+    'SELECT id, date, title, content, mood, who, locked, unlock_date, created_at FROM diary WHERE date = ? ORDER BY id ASC'
+  ).all(date).map(r => {
+    const stillLocked = r.locked && (!r.unlock_date || r.unlock_date > date);
+    return { ...r, content: stillLocked ? null : r.content, locked: !!stillLocked };
+  });
+
+  const todos = db.prepare(
+    'SELECT id, body, done, done_at, trigger_at, created_by, created_at FROM checklist' +
+    ' WHERE (created_at >= ? AND created_at < ?) OR (done_at >= ? AND done_at < ?)' +
+    '    OR (trigger_at >= ? AND trigger_at < ?) ORDER BY created_at ASC'
+  ).all(t0, t1, t0, t1, t0, t1);
+
+  const cmds = db.prepare(
+    'SELECT id, title, type, status, created_at, completed_at, duration_ms FROM commands' +
+    ' WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC'
+  ).all(t0, t1);
+
+  // 身体数据按 kind 汇总：连续量给平均/最高最低，累计量给总和。
+  const vitalRows = db.prepare(
+    'SELECT kind, unit, value, started_at FROM her_vitals WHERE started_at >= ? AND started_at < ? ORDER BY started_at ASC'
+  ).all(t0, t1);
+  const SUMMED = { steps: 1, active_energy: 1, sleep: 1 };   // 这几样是「一天加起来多少」
+  const vitals = {};
+  vitalRows.forEach(r => {
+    const v = vitals[r.kind] || (vitals[r.kind] = { kind: r.kind, unit: r.unit, n: 0, sum: 0, lo: Infinity, hi: -Infinity, last: null, lastAt: null });
+    v.n++; v.sum += r.value;
+    if (r.value < v.lo) v.lo = r.value;
+    if (r.value > v.hi) v.hi = r.value;
+    v.last = r.value; v.lastAt = r.started_at;
+  });
+  const vitalList = Object.values(vitals).map(v => ({
+    kind: v.kind, unit: v.unit, n: v.n,
+    value: SUMMED[v.kind] ? Math.round(v.sum * 10) / 10 : Math.round(v.sum / v.n),
+    agg: SUMMED[v.kind] ? 'sum' : 'avg',
+    lo: v.lo === Infinity ? null : Math.round(v.lo),
+    hi: v.hi === -Infinity ? null : Math.round(v.hi),
+    lastAt: v.lastAt
+  }));
+
+  const chat = db.prepare(
+    "SELECT count(*) n, sum(role='user') mine FROM messages WHERE created_at >= ? AND created_at < ?"
+  ).get(t0, t1);
+
+  res.json({ date, diary, todos, commands: cmds, vitals: vitalList,
+             chat: { total: chat.n || 0, mine: chat.mine || 0 } });
+});
+
+// 一个月的「哪天有东西」——画月历上的小点用，别把正文拉过来。
+app.get('/api/calendar/month', auth, (req, res) => {
+  const month = String(req.query.month || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: '月份格式不对' });
+  const [y, m] = month.split('-').map(Number);
+  const tz = _tzMin(req);
+  const t0 = Math.floor(Date.UTC(y, m - 1, 1, 0, 0, 0) / 1000) - tz * 60;
+  const t1 = Math.floor(Date.UTC(y, m, 1, 0, 0, 0) / 1000) - tz * 60;
+  const days = {};
+  const mark = (ds, key) => { (days[ds] || (days[ds] = {}))[key] = (days[ds][key] || 0) + 1; };
+  const dsOf = ts => _dsOf(ts, tz);
+
+  db.prepare('SELECT date, mood FROM diary WHERE date >= ? AND date < ?')
+    .all(month + '-01', month + '-32').forEach(r => { mark(r.date, 'diary'); if (r.mood) (days[r.date].moods = days[r.date].moods || []).push(r.mood); });
+  db.prepare('SELECT created_at FROM checklist WHERE created_at >= ? AND created_at < ?').all(t0, t1).forEach(r => mark(dsOf(r.created_at), 'todo'));
+  db.prepare('SELECT created_at FROM commands WHERE created_at >= ? AND created_at < ?').all(t0, t1).forEach(r => mark(dsOf(r.created_at), 'cmd'));
+  db.prepare('SELECT DISTINCT started_at FROM her_vitals WHERE started_at >= ? AND started_at < ?').all(t0, t1).forEach(r => mark(dsOf(r.started_at), 'vitals'));
+  db.prepare('SELECT created_at FROM messages WHERE created_at >= ? AND created_at < ?').all(t0, t1).forEach(r => mark(dsOf(r.created_at), 'chat'));
+
+  res.json({ month, days });
+});
+
 app.get('/api/diary', auth, (req, res) => {
   const entries = db.prepare(`
     SELECT d.*, COUNT(dc.id) as comment_count

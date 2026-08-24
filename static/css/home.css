@@ -1488,3 +1488,142 @@ html.as-non .msg-claude.streaming .claude-trail-logo{align-self:flex-end;margin:
 }
 .bubble-menu button:hover,.bubble-menu button:focus-visible{background:var(--bg-secondary,rgba(128,128,128,.12))}
 .bubble-menu button.danger{color:var(--danger,#c0392b)}
+
+/* ── 顶栏按钮：跟输入框同一种质感 ────────────────────────────────
+   2026-08-24 她说：usage / 作品集那两颗「想跟输入框一个质感，悬浮而非有边框」。
+   之前它们是 1px 实线描边 + 一道很紧的投影（0 1px 3px）——所以读起来是「贴在栏上的
+   带框按钮」，而输入框 .composer-box 是「浮在内容上的一块玻璃」。
+   差别不在颜色，在两件事：
+     ① 边 —— composer 的边其实是 inset 的一圈高光（0 0 0 1px inset），不是实线 border；
+     ② 影 —— composer 有一层散开的环境光（0 8px 32px），按钮之前只有紧贴的 1px。
+   所以这里把 border 去掉、换成同款 inset 高光环，投影按 40px 的尺寸等比收一档。
+   ⚠️ 改 .composer-box 的质感时这里要跟着改，否则两边又会各走各的。 */
+.topbar .icon-button,
+.topbar .capsule-group{
+  border:0;
+  background:rgba(242,239,237,.25);
+  backdrop-filter:blur(28px) saturate(1.1);
+  -webkit-backdrop-filter:blur(28px) saturate(1.1);
+  box-shadow:
+    0 6px 20px rgba(0,0,0,.07),
+    0 2px 6px rgba(0,0,0,.04),
+    0 0 0 1px rgba(255,255,255,.30) inset;
+}
+/* 按下去时轻轻沉一点点 —— 悬浮的东西被按住该贴近一层，不是变色 */
+.topbar .icon-button:active{
+  box-shadow:
+    0 2px 8px rgba(0,0,0,.06),
+    0 0 0 1px rgba(255,255,255,.30) inset;
+}
+@media(prefers-color-scheme:dark){
+  .topbar .icon-button,
+  .topbar .capsule-group{
+    border:0;
+    background:rgba(35,32,29,.55);
+    box-shadow:
+      0 6px 20px rgba(0,0,0,.28),
+      0 2px 6px rgba(0,0,0,.18),
+      0 0 0 1px rgba(255,255,255,.10) inset;
+  }
+}
+html[data-theme="dark"] .topbar .icon-button,
+html[data-theme="dark"] .topbar .capsule-group{
+  border:0;
+  background:rgba(35,32,29,.55);
+  box-shadow:
+    0 6px 20px rgba(0,0,0,.28),
+    0 2px 6px rgba(0,0,0,.18),
+    0 0 0 1px rgba(255,255,255,.10) inset;
+}
+html[data-theme="light"] .topbar .icon-button,
+html[data-theme="light"] .topbar .capsule-group{
+  background:rgba(242,239,237,.25);
+  box-shadow:
+    0 6px 20px rgba(0,0,0,.07),
+    0 2px 6px rgba(0,0,0,.04),
+    0 0 0 1px rgba(255,255,255,.30) inset;
+}
+/* 胶囊里那条分隔线跟着淡下来，实线太硬会把「一整块玻璃」切成两半 */
+.topbar .capsule-divider{background:rgba(0,0,0,.06)}
+@media(prefers-color-scheme:dark){.topbar .capsule-divider{background:rgba(255,255,255,.10)}}
+html[data-theme="dark"] .topbar .capsule-divider{background:rgba(255,255,255,.10)}
+
+/* ── 面板顶栏：把那根「和页面同色的横线」去掉 ──────────────────────
+   2026-08-24 她在 playwright 截图里指出来的：usage / 作品集打开后顶上还有一根栏。
+   查下来那不是什么栏，是 header 的 border-bottom —— 面板背景 var(--bg-primary)
+   跟页面完全同色，所以整个 header 里唯一看得见的东西就是那 1px 线。
+   她要的是「悬浮而非有边框」：线去掉，标题和圆钮直接浮在页面上。 */
+.panel-head-floating{border-bottom:0}
+#artifactsSheet .sheet-head{border-bottom:none}
+
+/* 跟输入框 .composer-box 同一套玻璃 —— 面板里的圆钮用这个类。
+   ⚠️ 跟 .topbar .icon-button 是同一套配方，改一处要三处一起改
+   （.composer-box / .topbar .icon-button / .glass-btn）。 */
+.glass-btn{
+  border:0;
+  background:rgba(242,239,237,.25);
+  backdrop-filter:blur(28px) saturate(1.1);
+  -webkit-backdrop-filter:blur(28px) saturate(1.1);
+  box-shadow:
+    0 6px 20px rgba(0,0,0,.07),
+    0 2px 6px rgba(0,0,0,.04),
+    0 0 0 1px rgba(255,255,255,.30) inset;
+}
+.glass-btn:active{
+  box-shadow:
+    0 2px 8px rgba(0,0,0,.06),
+    0 0 0 1px rgba(255,255,255,.30) inset;
+}
+@media(prefers-color-scheme:dark){
+  .glass-btn{
+    background:rgba(35,32,29,.55);
+    box-shadow:
+      0 6px 20px rgba(0,0,0,.28),
+      0 2px 6px rgba(0,0,0,.18),
+      0 0 0 1px rgba(255,255,255,.10) inset;
+  }
+}
+html[data-theme="dark"] .glass-btn{
+  background:rgba(35,32,29,.55);
+  box-shadow:
+    0 6px 20px rgba(0,0,0,.28),
+    0 2px 6px rgba(0,0,0,.18),
+    0 0 0 1px rgba(255,255,255,.10) inset;
+}
+html[data-theme="light"] .glass-btn{
+  background:rgba(242,239,237,.25);
+  box-shadow:
+    0 6px 20px rgba(0,0,0,.07),
+    0 2px 6px rgba(0,0,0,.04),
+    0 0 0 1px rgba(255,255,255,.30) inset;
+}
+
+/* ── 顶栏不再是「一条栏目」，改成浮在消息流上 ────────────────────
+   2026-08-24 她说：「我想的是主页顶上的按钮像输入框一样悬浮的，
+   但是他们现在在一条栏目里。」
+   查下来问题不在按钮的样式（那一层上一轮已经跟输入框对齐了），在**布局**：
+   #chat 是 flex column，.topbar 是 flex:none —— 它占着自己那一行，
+   把消息流整个往下推。所以按钮再怎么做成玻璃，读起来还是「嵌在一条预留的栏里」。
+   输入框为什么是悬浮的？看 .composer-wrap：margin-top:-70px + z-index:5,
+   它**盖在**消息流上面，消息从它底下过。顶栏照抄这件事：
+     - 脱离文档流(absolute)、盖在上面(z-index)
+     - #stream 补回等高的 padding-top，静止时第一条消息不会被挡
+     - 栏本身不吃点击(pointer-events:none)，只有按钮吃 —— 否则中间那片空白
+       会把消息流的滑动和长按全挡掉，那才是真的「有一条看不见的栏」
+   ⚠️ 高度改了要三处一起改：.topbar 的 height、#stream 的 padding-top。*/
+.topbar{
+  position:absolute;top:0;left:0;right:0;z-index:6;
+  pointer-events:none;
+}
+.topbar>*{pointer-events:auto}
+#stream{padding-top:calc(env(safe-area-inset-top) + 44px + var(--space-5))}
+
+/* ── 抽屉：日期 · 星期几 旁边的天气（2026-08-24）────────────────
+   .home-date 原来自己带 margin-top:12px，现在它被塞进一行里了 ——
+   margin 挪到外层，不然天气那半边会跟日期错开一截。 */
+.home-date-row{display:flex;align-items:center;gap:8px;margin-top:12px}
+.home-date-row .home-date{margin-top:0}
+.home-weather{display:inline-flex;align-items:center;gap:4px;font:400 13px/1 var(--font-sans);color:var(--text-time)}
+.home-weather svg{flex:none;opacity:.85}
+@media(prefers-color-scheme:dark){.home-weather{color:rgba(255,255,255,.6)}}
+html[data-theme="dark"] .home-weather{color:rgba(255,255,255,.6)}

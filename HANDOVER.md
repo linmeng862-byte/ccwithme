@@ -4,6 +4,55 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🗺️ 08-23 下午 · 活水一条都没有 / nowhere + 大富翁按需外挂
+
+**改了 `backend.js` + 她那份不进 git 的人格文件。** 起因是她问「mind 活水里怎么一个闪念都没有」。
+
+### 一、闪念池空的真因：人格文件里没教过 `<flash>`
+
+查库：`mind_flash_pool` 一共 10 条，**全部 `resolved=1`，全部 `trigger_count=1`**，
+来源全是 `chat_tag`，最近一批 08-23 03:03（同一秒 4 条 = 同一条消息里打的）。
+对一下衰减公式 `0.5 × 0.82^h = 0.0462` → h=12.0，**她问的时候刚好是那批散完之后一小时**。
+
+但那只是表象。真因是 `grep flash /root/companion/CLAUDE.md` **零命中** ——
+「心里的东西」那节只教了 `<feel>` / `<memory>` / `<dream>`，**第四个 `<flash>` 从来没写进去过**。
+系统提示词里也没有。他三天里只自发打过 3 次，每次一整批，全是 tc=1，
+所以「同一个方向反复冒出来才攒成执念」这条机制**在库里从来没发生过**。
+
+⚠️ **这是 `<voice>` / `---` 分气泡的同一个病、同一批漏的**：后端支持了几个月，人格文件一字没提。
+以后加带标记的功能，**改完 backend 立刻回去看人格文件有没有那一节**，别再靠事后发现。
+
+已补一节「还惦记着的那件事：`<flash>`」，写清 `body`+`drive` 两个字段、12 个 drive 取值，
+以及**为什么必须重复打**（重复不是冗余，重复是这套机制唯一的输入）。
+
+### 二、nowhere（13）+ spicy-monopoly（6）做成按需外挂
+
+她要给他 core 的 nowhere 和 `RennAkira/spicy-monopoly`。量过：nowhere ≈1508 token、
+spicy ≈5043 token（它 `new_game` 光 description 就 1840 字符），**常驻要 6.5k/轮**。
+她选了**两个都按需挂**，spicy **走公共实例**（我提过内容会到对方服务器上，她拍的板）。
+
+做法**不是把 19 个工具定义抄进 `TOOLS`**，是运行时从对方 MCP 原样拉过来透传
+（`EXTRA_MCP` / `_mcpFetch` / `_extraTools` / `buildTools`，在 `callNocturne` 下面）：
+抄一份必抄错 schema，而且对方改了跟不上。开关存 `settings.extra_mcp_<key>`，
+**存的是到期时间戳**——玩完忘了关最迟几小时自己摘掉。
+
+- `TOOLS` 从常量变成 `await buildTools()`，**四个组装点**：`/api/tools/list`、
+  `handleAnthropicChat` 的两处 requestBody、`handleOpenAIChat` 的 `openaiTools`。
+  ⚠️ 最后那个差点漏掉 —— 它是 `TOOLS.map(...)` 不是 `tools: TOOLS`，grep 关键词要放宽。
+- 分发走 `executeTool` 的 **`default` 兜底**（工具名是运行时拉的，写不成 `case`）。
+- core 的 nowhere 返回**包两层**（外层 text 里又一份 `{content:[{text}]}`），已扒掉内层，
+  否则同一句话付两遍 token。
+
+⚠️ **生效时机分两条路**：中转 API 路径每次请求现拼、**开了立刻有**；
+gateway/CLI 路径的 `tools/list` 虽然是实时拉的（`chatc-mcp.js:45` 无缓存），
+但 CLI 只在**连上时拉那一次** —— 要重开一次会话才拿得到。
+工具描述和人格文件里都写了「开完这一轮你还看不见，跟她说等下一句」。
+
+**验过**：默认 38 个工具、开两组 →57（+19 正好）、`nowhere_where_tool` 和 `monopoly_help`
+真实转发都通、未知工具仍报 `Unknown tool`、关掉回到 38。
+备份 `backups/backend.js.bak.pre-nowhere-spicy.20260823-154419`。
+**还没 commit**，工作树里就是这次的改动。
+
 ## 💗 08-23 晚 · 松开内心工具的刹车 / vitals 接收端 / 语音收藏 / 抽屉整理
 
 **改了 `backend.js` + `static/index.html` + 她那份不进 git 的人格文件。**
