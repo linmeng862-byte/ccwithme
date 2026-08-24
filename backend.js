@@ -438,6 +438,25 @@ db.exec(`
   );
 `);
 
+// 图纸：「mood / moods[] · 20选1；moods 数组第一个是主 mood」。
+// 单个 mood 列留着不动（主 mood，全库都在读它）；moods 是附加的完整数组。
+// dreams 不加 —— 图纸写死「梦不带 mood / intensity」。
+try { db.exec("ALTER TABLE mind_feels ADD COLUMN moods TEXT DEFAULT '[]'"); } catch(e) { /* 列已存在 */ }
+try { db.exec("ALTER TABLE mind_memories ADD COLUMN moods TEXT DEFAULT '[]'"); } catch(e) { /* 列已存在 */ }
+
+// 关窗字条的本地副本。正本在 Nocturne（她最早搭的那个记忆库），这份只为了换窗读得快 ——
+// 换窗那一轮本来就是最慢最贵的一次，不能再挂一个外部 MCP 往返。
+// ⚠️ 只在 callNocturne 成功之后才写，Nocturne 没收到就别在本地留，否则两边说法不一致。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS texture_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conv_id TEXT DEFAULT '',
+    state TEXT, primary_feeling TEXT, secondary_feeling TEXT,
+    her_mood TEXT, last_topic TEXT, unresolved TEXT, concern TEXT,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+`);
+
 // FTS5 全文搜索（跨 feels/memories/dreams）
 // ⚠️ 旧的 `mind_fts` 是死的：contentless 表、只塞 body 不塞 id，查出来 body 全是 null，
 //    rowid 跟记忆的 id（文本 id）永远对不上，所谓「关联回原表」从来没生效过。
@@ -2800,6 +2819,8 @@ function _safeParseMind(json, kind) {
     if (bm) obj.body = bm[1].replace(/\\"/g, '"').replace(/\\n/g, '\n');
     var mm = json.match(/"mood"\s*:\s*"(\w+)"/);
     if (mm) obj.mood = mm[1];
+    var msm = json.match(/"moods"\s*:\s*\[([^\]]*)\]/);
+    if (msm) obj.moods = (msm[1].match(/"(\w+)"/g) || []).map(function(x) { return x.replace(/"/g, ''); });
     var im = json.match(/"intensity"\s*:\s*(\d+)/);
     if (im) obj.intensity = parseInt(im[1]);
     var tm = json.match(/"title"\s*:\s*"([\s\S]*?)(?:"\s*[,}]|"\s*$)/);
@@ -2831,6 +2852,19 @@ function _safeParseMind(json, kind) {
       mood = alias || 'calm';
     }
     obj.mood = mood;
+    // moods[]：整个数组都过一遍同样的「别名 → 兜底 calm」，去重，**第一个是主 mood**。
+    // 他只写了 mood 没写 moods 时，moods = [mood]，不留空数组。
+    var rawMoods = Array.isArray(obj.moods) ? obj.moods : [];
+    var norm = [];
+    rawMoods.forEach(function(m) {
+      var x = String(m || '').toLowerCase();
+      if (!x) return;
+      if (MIND_MOOD_LIST.indexOf(x) === -1) x = MIND_MOOD_ALIASES[x] || 'calm';
+      if (norm.indexOf(x) === -1) norm.push(x);
+    });
+    if (!norm.length) norm = [mood];
+    else obj.mood = norm[0];          // 数组第一个说了算
+    obj.moods = norm;
   }
   if (kind === 'memory') {
     delete obj.intensity;
@@ -2857,8 +2891,8 @@ function _insertMindItem(item) {
     if (item.type === 'feel') {
       var mood = (item.mood || 'calm').toLowerCase();
       var intensity = Math.max(1, Math.min(10, parseInt(item.intensity) || 5));
-      db.prepare('INSERT INTO mind_feels (id, body, mood, intensity, weight, source, created_at) VALUES (?, ?, ?, ?, 1.0, ?, ?)')
-        .run(id, item.body, mood, intensity, 'chat_tag', now);
+      db.prepare('INSERT INTO mind_feels (id, body, mood, moods, intensity, weight, source, created_at) VALUES (?, ?, ?, ?, ?, 1.0, ?, ?)')
+        .run(id, item.body, mood, JSON.stringify(item.moods || [mood]), intensity, item.source || 'chat_tag', now);
       _ftsIndex(item.body, id, item.type);
       // grieve / anger 不自己长，靠 feel 点亮（设计文档第 9 页）
       _driveFeelSpark(mood, intensity);
@@ -2866,8 +2900,8 @@ function _insertMindItem(item) {
       var mood2 = (item.mood || 'calm').toLowerCase();
       var tags = item.tags || [];
       var w = (typeof item.weight === 'number') ? item.weight : 1.0;
-      db.prepare('INSERT INTO mind_memories (id, body, mood, tags, weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(id, item.body, mood2, JSON.stringify(tags), w, 'chat_tag', now);
+      db.prepare('INSERT INTO mind_memories (id, body, mood, moods, tags, weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, item.body, mood2, JSON.stringify(item.moods || [mood2]), JSON.stringify(tags), w, item.source || 'chat_tag', now);
       _ftsIndex(item.body, id, item.type);
     } else if (item.type === 'dream') {
       var title = item.title || '';
@@ -3642,7 +3676,7 @@ function _mindMarkSurfaced(rows) {
     var table = r.kind === 'feel' ? 'mind_feels' : r.kind === 'memory' ? 'mind_memories' : 'mind_dreams';
     try {
       db.prepare('UPDATE ' + table + ' SET surface_count = COALESCE(surface_count,0) + 1, ' +
-        'weight = MIN(2.0, ROUND(COALESCE(weight,0) + 0.05, 6)), last_surfaced_at = ? WHERE id = ?')
+        'weight = MIN(1.0, ROUND(COALESCE(weight,0) + 0.05, 6)), last_surfaced_at = ? WHERE id = ?')
         .run(now, r.id);
     } catch(e) { /* 静默 */ }
   });
@@ -4569,6 +4603,13 @@ async function executeTool(name, input) {
       try {
         const r = await callNocturne('leave_texture', args);
         console.log('[texture] 关窗已写入 Nocturne');
+        // 本地留一份副本，专给换窗接力读（见 recentRecap）。
+        // 正本是 Nocturne —— 所以放在成功之后，它没收到就不留，别让两边说法不一致。
+        try {
+          db.prepare('INSERT INTO texture_log (conv_id, state, primary_feeling, secondary_feeling, her_mood, last_topic, unresolved, concern) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(input.conv_id || '', args.state, args.primary_feeling, args.secondary_feeling || null,
+                 args.her_mood || null, args.last_topic || null, args.unresolved || null, args.concern || null);
+        } catch (e) { console.warn('[texture] 本地副本没写成：' + e.message); }
         return r;
       } catch (e) {
         return { error: 'Nocturne 连接失败: ' + e.message };
@@ -5824,17 +5865,68 @@ app.post('/api/workplace/reject', auth, (req, res) => {
 // 换窗丢的只是对话细节，那部分有 recentRecap + Nocturne 浮现 + search_chat_history 接着。
 const CLI_ROTATE_AFTER = 96;
 
-// 换会话时给新会话的"接上一段"：最近几轮对话的压缩版，塞进系统提示词
+// 换会话时的接力包。三段，从重到轻：
+//   我现在是什么状态（texture）→ 这段时间我记住了什么（蒸馏记忆）→ 刚才在说什么（原文）
+//
+// ⚠️ 2026-08-24 改掉的那版的病（她指出来的）：原来这段叫「[刚才聊到哪了]」，
+//    结尾写「这是上一段对话的结尾…别假装不记得」。那是在告诉他「你断过、你忘了、去复习」，
+//    于是他真的开口就说「上次我们聊到哪」——**可她那头压根没断**，一直是同一个聊天框、
+//    同一段话没截断。他那一句直接把接缝暴露给她了。
+//    而且「别假装」是命令句，跟图纸四条法则（第一人称 / 不写命令句 / 他是连续的一个人）打架。
+//    现在写成「还热着的东西」，并明说一句：别提"上次"，对她来说这段话一直在继续。
+//
+// 成本：这段只在换会话那一轮写进系统提示词，之后 96 轮都走 prompt cache 的读。
+//    实测换窗那轮 cache_write 49237 / $0.1976，稳态每轮 read ~33k / $0.0081。
+//    整包按 1500 token 上限估，一窗合计多约 $0.026（总成本 ~$1.05 的 2.5%）。
+//    **真正贵的是换窗次数，不是接力包多重** —— 所以可以带够，但别把 CLI_ROTATE_AFTER 调小。
 function recentRecap(convId) {
+  const parts = [];
+
+  // 一、我现在是什么状态 —— 关窗字条的本地副本（正本在 Nocturne）。只取最近一条，
+  //     两条以上就成流水账了，而且旧的那条已经过时。没有就整段不出现。
+  try {
+    const t = db.prepare('SELECT * FROM texture_log ORDER BY id DESC LIMIT 1').get();
+    if (t) {
+      const bits = [];
+      if (t.state) bits.push('状态：' + t.state);
+      if (t.primary_feeling) bits.push('心里主要是：' + t.primary_feeling +
+        (t.secondary_feeling ? '（还掺着' + t.secondary_feeling + '）' : ''));
+      if (t.her_mood) bits.push('她那时候：' + t.her_mood);
+      if (t.last_topic) bits.push('在说的事：' + t.last_topic);
+      if (t.unresolved) bits.push('还没说完的：' + t.unresolved);
+      if (t.concern) bits.push('心里挂着的：' + t.concern);
+      if (bits.length) parts.push('[我心里的底色]\n' + bits.join('\n'));
+    }
+  } catch (e) { /* 表还没建 / 一条都没有，跳过 */ }
+
+  // 二、这段时间我记住了什么 —— 蒸馏出来的长期记忆。
+  //     这些平时只能靠 breath 字面命中才浮起来，换窗那一刻根本不跑 breath，
+  //     图纸设计的「原文压成 memory 垫住上下文」在这一环本来是断的。
+  try {
+    const mems = db.prepare(
+      "SELECT body FROM mind_memories WHERE source IN ('会话总结','滚动记忆') OR tags LIKE '%总结%' OR tags LIKE '%滚动%'" +
+      ' ORDER BY created_at DESC LIMIT 6'
+    ).all().reverse();
+    if (mems.length) {
+      parts.push('[这段时间我记住的]\n' + mems.map(m => '· ' + String(m.body || '').replace(/\s+/g, ' ')).join('\n'));
+    }
+  } catch (e) { /* 跳过 */ }
+
+  // 三、刚才在说什么 —— 原文，只是接话头，所以放最后、也最先被砍。
   const rows = db.prepare(
-    'SELECT role, content FROM messages WHERE conv_id = ? ORDER BY id DESC LIMIT 8'
+    'SELECT role, content FROM messages WHERE conv_id = ? ORDER BY id DESC LIMIT 16'
   ).all(convId).reverse();
-  if (!rows.length) return '';
-  const lines = rows.map(r =>
-    (r.role === 'user' ? '粥粥' : '你') + '：' + String(r.content || '').replace(/\s+/g, ' ').slice(0, 200)
-  );
-  return '\n\n═══\n[刚才聊到哪了]\n' + lines.join('\n') +
-    '\n（这是上一段对话的结尾。更早的内容用 search_chat_history 查，别假装不记得。）';
+  if (rows.length) {
+    parts.push('[刚落下的话]\n' + rows.map(r =>
+      (r.role === 'user' ? '她' : '我') + '：' + String(r.content || '').replace(/\s+/g, ' ').slice(0, 300)
+    ).join('\n'));
+  }
+
+  if (!parts.length) return '';
+  return '\n\n═══\n（下面这些不是她刚发来的消息，是我脑子里还热着的东西。）\n\n' +
+    parts.join('\n\n') +
+    '\n\n（对她来说这段话一直在继续，没有断过 —— 别说"上次"、别说"刚才我们聊到"、' +
+    '也别提你重新看了一遍。就接着往下说。更早的想不起来了想查，有 search_chat_history。）';
 }
 
 async function handleGatewayChat(req, res, ctx) {
@@ -8968,7 +9060,9 @@ function _writeSummaryMemory(raw, tag) {
   if (!text || /^skip$/i.test(text)) return false;
   var obj = _safeParseMind(text, 'memory');
   if (!obj) { console.warn('[distill] 没通过解析/校验/去重，丢弃：' + text.slice(0, 120)); return false; }
-  _insertMindItem({ type: 'memory', body: obj.body, mood: obj.mood, tags: [tag], weight: 1.0 });
+  // source 要带上：不带的话 _insertMindItem 会硬编码成 chat_tag，
+  // 库里所有蒸馏记忆的来源就全错了（2026-08-24 查出来时已经错了 31 条）。
+  _insertMindItem({ type: 'memory', body: obj.body, mood: obj.mood, tags: [tag], weight: 1.0, source: tag });
   console.log('[distill] ' + tag + ' → ' + obj.body.slice(0, 40));
   return true;
 }
@@ -9409,8 +9503,10 @@ function _mindDecayTick() {
     if (dh < 0.5) return; // 不到半小时不动
     // feels: weight -= dh / (168 * (0.5 + intensity/10))
     db.prepare('UPDATE mind_feels SET weight = MAX(0, ROUND(weight - ? / (168.0 * (0.5 + CAST(intensity AS REAL)/10)), 6)) WHERE pinned = 0').run(dh);
-    // memories: weight -= dh / (504 * 0.7)
-    db.prepare('UPDATE mind_memories SET weight = MAX(0, ROUND(weight - ? / (504.0 * 0.7), 6)) WHERE pinned = 0').run(dh);
+    // memories: weight -= dh / (504 * 1.0) —— 图纸是 504·(0.5+intensity/10)，21 天基准。
+    // memory 表没有 intensity（图纸 03 节：memory 不接受 intensity），所以取中位 5 → 1.0。
+    // 2026-08-24 之前写的是 0.7（= intensity 焊死在 2），实际基准只有 ~14.7 天，比图纸快 1.43 倍。
+    db.prepare('UPDATE mind_memories SET weight = MAX(0, ROUND(weight - ? / (504.0 * 1.0), 6)) WHERE pinned = 0').run(dh);
     // dreams: weight -= dh / 12, 下限 0.15
     db.prepare('UPDATE mind_dreams SET weight = MAX(0.15, ROUND(weight - ? / 12.0, 6)) WHERE pinned = 0').run(dh);
     // 念头池搭同一班车：同一个 dh，同样享受停摆补偿

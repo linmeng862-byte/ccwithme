@@ -602,7 +602,14 @@ function _renderFeelCards(container, rows) {
       html += '<span class="mind-feel-intensity-dot' + (j >= intensity ? ' gray' : '') + '"></span>';
     }
     html += '</span>';
-    html += f.pinned ? '<span style="cursor:pointer;margin-left:auto" onclick="event.stopPropagation();_mindTogglePin(\'feel\',\''+f.id+'\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-2px"><path d="M16 4V2H8v2H3v2h2.46l.64 14h11.8l.64-14H21V4h-5zm-2.54 2H10.5l-.46-1h3.92l-.46 1zM6.09 6h11.82l-.46 10H6.55L6.09 6z"/></svg></span>' : '';
+    // 2026-08-24：这里原来是 `f.pinned ? 图标 : ''` —— **只有已经钉住的才画图标**，
+    // 于是一条都没钉过的时候她永远点不到那个按钮，feel 根本钉不了（memory 那边是对的）。
+    // 照 memory 的写法：钉住画实心、没钉画空心，两种都可点。
+    html += '<span style="cursor:pointer;margin-left:auto" title="' + (f.pinned ? '取消钉住' : '钉住，不让它淡下去') + '" onclick="event.stopPropagation();_mindTogglePin(\'feel\',\''+f.id+'\')">' +
+      (f.pinned
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-2px"><path d="M16 4V2H8v2H3v2h2.46l.64 14h11.8l.64-14H21V4h-5zm-2.54 2H10.5l-.46-1h3.92l-.46 1zM6.09 6h11.82l-.46 10H6.55L6.09 6z"/></svg>'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity=".45" style="vertical-align:-2px"><path d="M16 4V2H8v2H3v2h2.46l.64 14h11.8l.64-14H21V4h-5z"/></svg>') +
+      '</span>';
     html += '</div>';
     html += '</div>';
     html += '</div>';
