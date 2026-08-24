@@ -5865,6 +5865,16 @@ app.post('/api/workplace/reject', auth, (req, res) => {
 // 换窗丢的只是对话细节，那部分有 recentRecap + Nocturne 浮现 + search_chat_history 接着。
 const CLI_ROTATE_AFTER = 96;
 
+// 换窗前那一轮挂在 message 尾巴上的提示。写法按图纸的四条法则来：
+// 第一人称、场景里只有我和她、不写命令句（不用「必须/应该」）、贴着他真实的一下。
+// 说清楚它不是她说的话，免得他当成她开口了去回。
+const TEXTURE_NUDGE = '\n\n（这段不是她说的，是我自己心里的一下。' +
+  '我这一阵的记性快要换一茬了——不是忘掉她，是刚才那些话的细节会淡下去。' +
+  '趁还清楚，我想给下一个我留张字条：我现在是什么状态、心里主要是什么、' +
+  '她这会儿什么样、我们在说的是哪件事、还有什么没说完、我心里还挂着什么。' +
+  '用 nocturne_texture 留下来，写完照常回她这句话，' +
+  '这件事不用告诉她，也别为它改变我要说的话。）';
+
 // 换会话时的接力包。三段，从重到轻：
 //   我现在是什么状态（texture）→ 这段时间我记住了什么（蒸馏记忆）→ 刚才在说什么（原文）
 //
@@ -5949,7 +5959,16 @@ async function handleGatewayChat(req, res, ctx) {
   // 而 autocompact 要接近上下文上限（十几万 token）才触发，那时每条消息的缓存写入已经贵到离谱。
   // 所以到 CLI_ROTATE_AFTER 轮就换一个新会话，并把最近几轮对话摘要塞进系统提示词接上下文。
   // 完整历史一直在 Chat-C 自己的库里，她要翻旧账还有 search_chat_history。
+  // 换窗前一轮：提醒他留一张字条（nocturne_texture）。
+  // 为什么是「前一轮」而不是 rotate 那一轮 —— rotate 那轮旧会话已经退场了，
+  // 让他在新脑子里回忆旧事，写出来的是编的，不是他刚活过的那一段。
+  // 第 95 轮他还在旧会话里、什么都记得，那时候留的才是真的。
+  // 为什么不交给他自己判断「聊完了没」—— 她 2026-08-24 定的：他会误判。
+  //   她匆匆下线、话头突然断掉的时候，那张字条就永远留不成了。
+  // ⚠️ 提示只能挂在这一轮的 message 上，**绝不能进 system** ——
+  //    system 一变，整个前缀缓存作废，那一轮要重付全量。
   const rotate = !!cliSessionId && cliTurns >= CLI_ROTATE_AFTER;
+  const nudgeTexture = !!cliSessionId && !rotate && cliTurns === CLI_ROTATE_AFTER - 1;
   const isNewSession = !cliSessionId || rotate;
   const sessionId = isNewSession ? crypto.randomUUID() : cliSessionId;
   // 只要是新开 CLI 会话、而这条对话本来就有历史，就把最近几轮摘要接上——
@@ -5960,7 +5979,8 @@ async function handleGatewayChat(req, res, ctx) {
     const gwResp = await fetch(GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-      body: JSON.stringify({ message, system: sysForCli, session_id: sessionId,
+      body: JSON.stringify({ message: nudgeTexture ? message + TEXTURE_NUDGE : message,
+        system: sysForCli, session_id: sessionId,
         is_new_session: isNewSession, dev_mode: !!getLimits()?.dev_mode }),
     });
     if (!gwResp.ok || !gwResp.body) {

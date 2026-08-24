@@ -1654,16 +1654,41 @@ function _voiceCardEl(id,dur,body){
   durSpan.style.cssText='font:400 11px/1 var(--font-sans);color:var(--text-time);flex:none';
   durSpan.textContent=pending?'··':dur;
   if(pending)wrap.style.opacity='.5';   // 灰着，等音频回来才点亮
+  // 转文字那只框：跟她平时发的语音条**长一模一样**（2026-08-24 统一）。
+  // 以前这儿是自己一套样式——没有灰底、没有圆角、贴着卡片内壁，
+  // 她一眼就看出「通话的跟发的不是一个东西」。原文本来就在标记后面躺着，
+  // 所以只借外观，不调识别接口，一分钱不花。
   var txt=document.createElement('div');
-  txt.style.cssText='display:none;font:400 13px/1.5 var(--font-sans);color:var(--text-primary);padding:2px 4px 4px';
+  txt.style.cssText='display:none;margin-top:6px;padding:8px 12px;background:var(--bg-sunken);border-radius:10px;font:400 13px/1.5 var(--font-sans);color:var(--text-primary);white-space:pre-wrap;word-break:break-word';
   txt.textContent=body||'';
   var tBtn=document.createElement('button');tBtn.className='voice-tx-btn';
   tBtn.style.cssText='border:0;background:transparent;color:var(--text-time);cursor:pointer;padding:0;width:13px;height:13px;display:grid;place-items:center;flex:none;opacity:.6';
-  tBtn.title='转文字';
-  tBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="11" height="11"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>';
+  // 箭头也走同一个状态机 _txBtnState：朝下=收着，翻 180°=展开。
+  // 这边没有 loading —— 原文现成的，不用等识别。
+  _txBtnState(tBtn,'idle');
   tBtn.addEventListener('click',function(e){e.stopPropagation();
-    txt.style.display=txt.style.display==='none'?'block':'none'});
-  wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);
+    var open=txt.style.display==='none';
+    txt.style.display=open?'block':'none';
+    _txBtnState(tBtn,open?'open':'idle');});
+  // 没有原文就别给一颗按了没反应的键（通话里偶尔有只出声没转写的）
+  if(!(body||'').trim())tBtn.style.display='none';
+  // 收藏：跟她平时发的语音条同一颗心、同一个接口（2026-08-24）。
+  // 以前这儿没有 —— 通话里说的话她一条都收藏不了，而那些恰恰是他亲口说的。
+  // ⚠️ 这块是 DOM 直接 appendChild 的，不经过 outerHTML 序列化，
+  //    所以能用 addEventListener（上面 [VOICE:] 那条路必须写 onclick 属性，别照抄）。
+  var fBtn=document.createElement('button');fBtn.className='voice-fav-btn';
+  fBtn.style.cssText='border:0;background:transparent;color:var(--text-time);cursor:pointer;padding:0;width:13px;height:13px;display:grid;place-items:center;flex:none;opacity:.6';
+  if(!pending){
+    fBtn.setAttribute('data-fid',id);
+    fBtn.title='收藏这条';
+    fBtn.innerHTML=_VOICE_HEART_SVG(_voiceFavIds.has(id));
+    if(_voiceFavIds.has(id)){fBtn.classList.add('is-fav');fBtn.style.color='var(--accent)';fBtn.style.opacity='1'}
+    fBtn.addEventListener('click',function(e){e.stopPropagation();_toggleVoiceFav(this)});
+  } else {
+    // 还没上传完就没有 file_id，收藏无从谈起 —— 占位时藏起来，别给一颗点不动的心
+    fBtn.style.display='none';
+  }
+  wrap.appendChild(playBtn);wrap.appendChild(barsWrap);wrap.appendChild(durSpan);wrap.appendChild(tBtn);wrap.appendChild(fBtn);
   box.appendChild(wrap);box.appendChild(txt);
   return box;
 }
