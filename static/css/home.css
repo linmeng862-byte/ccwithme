@@ -141,7 +141,7 @@ button{font:inherit;border:0;background:none;color:inherit;cursor:pointer}textar
 .msg-user{display:flex;gap:10px;align-items:center;justify-content:flex-end;padding:0 0 2px}
 .msg-user .msg-avatar{width:60px;height:60px;border-radius:50%;flex:none;background:linear-gradient(135deg,#E8A8B8,#DA7756);display:grid;place-items:center;font-size:26px;color:#fff;order:2}
 .msg-user .bubble{font-family:var(--font-serif);font-size:15px;line-height:1.15;max-width:72%;padding:1px 10px;background:#FFF0F5;border-radius:18px;white-space:pre-wrap;word-break:break-word;color:var(--text-primary);order:1}
-.msg-claude{display:flex;gap:8px;align-items:flex-start;padding:1px 0;--ts-line:26.8px;--ts-gap:8px}
+.msg-claude{display:flex;gap:8px;align-items:flex-start;padding:1px 0;--ts-line:26.8px;--ts-gap:8px;--tr-line:31.6px;--tr-gap:10px}
 /* 08-23：有思考摘要时气泡被推下去，头像跟摘要那一行齐了，看着错位。
    头像是 .msg-claude 的直接子元素，align-items:flex-start 对齐的是 .msg-body 整体，
    而 .msg-body 是 column：[thinking-summary][bubble] —— 摘要占了第一格。
@@ -151,6 +151,15 @@ button{font:inherit;border:0;background:none;color:inherit;cursor:pointer}textar
    :has() 不支持的老 WebView 会跳过这条 —— 退回现在的样子，不会更糟。 */
 .msg-claude:has(> .msg-body > .thinking-summary.show) > .msg-avatar{
   margin-top:calc(var(--ts-line) + var(--ts-gap));
+}
+/* 08-24：上面这条只补了「摘要按钮」(.thinking-summary.show) 的情况。
+   但历史消息里工具调用没配到摘要文字时（比如分享音乐没生成思考摘要），
+   渲的是没折叠的完整 .trace-row，不是 .thinking-summary —— 选择器没覆盖到，
+   头像就留在 trace-row 顶上，没跟着降到气泡旁边（她发现的：头像跑去跟思考链齐平）。
+   折叠掉的 trace-row（旁边有 .thinking-summary 接管）打了 .tr-collapsed，这里要排除，
+   不然摘要那条的补偿会被这条再叠一次。playwright 实测 trace-row 单行 31.6 + margin-bottom 10。*/
+.msg-claude:has(> .msg-body > .trace-row:not(.tr-collapsed)) > .msg-avatar{
+  margin-top:calc(var(--tr-line) + var(--tr-gap));
 }
 .msg-claude .msg-avatar{width:60px;height:60px;border-radius:50%;flex:none;background:var(--accent);display:grid;place-items:center;font-size:26px;color:#fff}
 .msg-claude .msg-body{flex:1;min-width:0;display:flex;flex-direction:column}

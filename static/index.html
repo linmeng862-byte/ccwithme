@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787548400">
+<link rel="stylesheet" href="/css/home.css?v=1787548401">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -2671,7 +2671,7 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
     _tapAt=now;_tapX=ev.clientX;_tapY=ev.clientY;
   });
   if(files.length){const fc=document.createElement('div');fc.className='message-attachments';files.forEach(item=>fc.append(attachmentCard(item)));b.append(fc)}
-  if(text){const content=document.createElement('div');renderMessage(content,text);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(text);toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}
+  if(text){const content=document.createElement('div');renderMessage(content,text,true);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(text);toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}
   if(text||files.length)col.append(b);
   if(imgs.length)row.append(col);
   return row}
@@ -2687,7 +2687,7 @@ function _buildClaudeRow(text,userText='',thinking='',timestamp='',userAttachmen
   // 再往上 openSession 的 catch 会把**整段对话**换成「暂时无法读取」。
   try{
   if(traces&&traces.length){var sumEntry=traces.find(function(t){return t.type==='summary'});var toolTraces=traces.filter(function(t){return t.type!=='summary'});
-    if(sumEntry&&!thinking&&toolTraces.length){var tr=_buildTraceRowFromHistory(toolTraces,'');if(tr){tr.style.display='none';body.append(tr);var btn=document.createElement('button');btn.className='thinking-summary show';btn.innerHTML=thoughtSummaryHtml('');btn.querySelector('.thinking-summary-text').textContent=sumEntry.text;btn.onclick=function(){return openTraceSheet(tr)};body.append(btn)}}
+    if(sumEntry&&!thinking&&toolTraces.length){var tr=_buildTraceRowFromHistory(toolTraces,'');if(tr){tr.style.display='none';tr.classList.add('tr-collapsed');body.append(tr);var btn=document.createElement('button');btn.className='thinking-summary show';btn.innerHTML=thoughtSummaryHtml('');btn.querySelector('.thinking-summary-text').textContent=sumEntry.text;btn.onclick=function(){return openTraceSheet(tr)};body.append(btn)}}
     else if(toolTraces.length){var tr2=_buildTraceRowFromHistory(toolTraces,thinking);if(tr2)body.append(tr2)}
     else if(thinking){body.append(thoughtSummary(thinking))}
   }else if(thinking){body.append(thoughtSummary(thinking))}
@@ -2882,7 +2882,7 @@ document.addEventListener('click',function(e){
   if(openInAppBrowser(href)){ e.preventDefault(); e.stopPropagation() }
 },true);
 
-function renderMessage(md,text){var src=_stripUrlsFromRaw(String(text||''));if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
+function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripUrlsFromRaw(String(text||''));if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
   var imgRe=/\[IMAGE:([^\]]+)\]/g;var imgsHtml='',imgMatch;imgRe.lastIndex=0;
   while((imgMatch=imgRe.exec(src))!==null){imgsHtml+='<img src=\"'+assetUrl(imgMatch[1])+'\" style=\"max-width:320px;max-height:400px;border-radius:26px;display:block;margin:6px 0;cursor:pointer;object-fit:scale-down;box-shadow:0 4px 24px rgba(0,0,0,.06)\" onclick=\"var ex=document.createElement(\'div\');ex.className=\'image-expand\';var fi=document.createElement(\'img\');fi.src=this.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)\" />'}
   if(imgsHtml){src=src.replace(imgRe,'');md.innerHTML=imgsHtml+(src.trim()?'':'');_fixImgSrcs(md);if(!src.trim())return}var cmdRe=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var cmdHtml='',cmdMatch;cmdRe.lastIndex=0;while((cmdMatch=cmdRe.exec(src))!==null){var cid=cmdMatch[1],ctype=cmdMatch[2],ctitle=cmdMatch[3];var cmdIcon=ctype==='quiz'?'\u{1F4DD}':ctype==='task'?'\u{1F4CB}':'\u23F1\uFE0F';cmdHtml+='<div class="cmd-capsule" data-cmd-id="'+cid+'" data-cmd-type="'+ctype+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer" onclick="openCmdCapsule(\''+cid+'\')"><span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span></div>'}if(cmdHtml){src=src.replace(cmdRe,'')}if(window.marked){try{var markedResult=marked.parse(src,{breaks:true,gfm:true});md.innerHTML=(imgsHtml||'')+(cmdHtml||'')+markedResult.trimEnd();md.querySelectorAll('a[href]').forEach(function(a){var h=a.getAttribute('href');if(h&&/^https?:\/\//.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});
@@ -3819,7 +3819,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
         toolBtn.innerHTML=thoughtSummaryHtml('');
         toolBtn.querySelector('.thinking-summary-text').textContent=label;
         toolBtn.onclick=function(){openTraceSheet(currentTraceRow)};
-        currentTraceRow.style.display='none';
+        currentTraceRow.style.display='none';currentTraceRow.classList.add('tr-collapsed');
         if(currentTraceRow.parentNode)currentTraceRow.parentNode.insertBefore(toolBtn,currentTraceRow);
       }
       _renderSources(row,_sources);
@@ -5016,7 +5016,12 @@ renderMessage=function(md,text){
       clearTimeout(_clawdGrooveTimer);_clawdGrooveTimer=setTimeout(function(){if(playing&&typeof setClawdMood==='function')setClawdMood('groove')},300)
     };
     progWrap.onclick=function(e){e.stopPropagation();if(audio&&duration){var rect=progWrap.getBoundingClientRect();var pct=(e.clientX-rect.left)/rect.width;audio.currentTime=pct*duration}};
-    md.innerHTML='';md.append(card);return;
+    // 08-24：以前这里是 md.innerHTML='';md.append(card) —— 整个气泡清空只剩卡片，
+    // 他分享歌时顺带写的话（"这首超好听"之类）会被一起冲掉。改成只挖掉标记本身，
+    // 剩下的文字照常渲染，卡片跟在后面。
+    var _restText=text.replace(musicMatch[0],'').trim();
+    if(_restText)_origRenderMessage2(md,_restText);else md.innerHTML='';
+    md.append(card);return;
   }
   // [memory:标题|内容] — 收藏记忆卡
   var memMatch=src.match(/\[memory:([^|\]]+)\|([^\]]+)\]/);

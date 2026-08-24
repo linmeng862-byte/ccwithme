@@ -4918,10 +4918,10 @@ async function executeTool(name, input) {
       }
       console.log('[music] final:', {title:mTitle, artist:mArtist, cover:mCover.slice(0,50), audio:!!mAudio});
       const songId = songs.length ? String(songs[0].id) : '';
-      const markup = '[music:' + mTitle + '|' + mArtist + '|' + mCover + '|' + mAudio + ']';
+      // 08-24：以前这里还塞过 markup:'[music:...]' 混进回复正文，跟 music 对象两条路各渲一张卡，
+      // 气泡里外各一张。卡片只该走 music 对象这一条路（index.html 的 _renderMusicCard），别再加 markup。
       return {
         music: { title: mTitle, artist: mArtist, cover_url: mCover, audio_url: mAudio, song_id: songId },
-        markup: markup,
         message: '🎵 ' + mTitle + ' - ' + mArtist
       };
     }
