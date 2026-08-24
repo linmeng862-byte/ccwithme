@@ -4,6 +4,38 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🔒 08-24 晚 · /api/auth 加了站点密码锁
+
+**改了 `backend.js` + `static/index.html` + 新增 `scripts/set-site-password.js`。**
+起因：她问「我修的那个 /api/settings 洞会不会泄漏我的 token」。
+
+答案是不会——那个洞只能写不能读，`AUTH_TOKEN` 存在 `data/.auth_token` 文件里，
+不在 `settings` 表，那条路由碰不到它。但查的时候发现一件更大的事：
+**`/api/auth`（登录本身）从来没有任何门槛**——谁 POST 谁就拿到 `AUTH_TOKEN`，
+域名一旦被任何渠道看到（分享链接、浏览器历史同步、DNS 扫描）就等于给了完整访问权限。
+这不是这次改坏的，是从第一天就这样。问过她要不要加锁，她说加。
+
+### 做法
+
+- `settings.site_auth_hash` / `site_auth_salt`（scrypt，不存明文）。**没设置就完全不锁**
+  ——不能一上线就把她自己锁在外面；设了之后 `/api/auth` 才会要求 `site_password` 字段对上。
+- 密码只能她自己在真终端跑 `node scripts/set-site-password.js` 设（隐藏输入、不进 shell
+  历史因为不是命令行参数、直接写库不经过我）。**这条密码没有、也不会出现在跟她的对话里**
+  ——铁律第一条不只管 API key，这种能开完整访问权限的密码是同一类东西。
+  `--off` 参数可以关掉锁回到原样。
+- 前端加了 `siteLogin()` 统一入口，boot 自启动登录 / `api()` 的 401 重试 / relay 配置保存
+  三处以前各写各的 `fetch('/api/auth')`，现在都走它。密码存 `localStorage.site_password`，
+  同一台设备只问一次；`askDialog` 加了 `password` 参数（输入框会真的遮起来，不再明文显示）。
+
+### 验过（playwright，三个场景全过）
+
+1. 全新浏览器/无缓存 → 弹密码框
+2. 输对 → 拿到 token，密码缓存进 localStorage
+3. 同一浏览器刷新 → 不再弹，直接进（缓存的密码带在 boot 请求里）
+
+**未竟**：她需要自己去真 SSH 终端跑一次 `node scripts/set-site-password.js`，
+这条我做不了、也不该替她做。跑之前 `/api/auth` 还是原来的样子，没有回归。
+
 ## 📅 08-24 · Calendar 页 + 天气 / 日记 mood 必填 / 历史渲染防崩 / 顶栏玻璃质感 / 会客厅 key 没地方填
 
 **改了 `backend.js` + `static/index.html` + `static/js/diary.js` + 新增 `static/js/calendar.js`。**

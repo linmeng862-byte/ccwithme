@@ -2498,7 +2498,34 @@ function _feedPCMChunk(hex,sampleRate){
 }
 function showChat(){document.body.classList.add('chat-ready');var g=document.getElementById('gate');if(g)g.classList.add('hidden');var c=document.getElementById('chat');if(c)c.classList.remove('hidden')}
 function showGate(){toast('请先在侧边栏配置中转站 API')}
-async function api(path,options={}){var isFormData=options.body instanceof FormData;const headers=isFormData?{...(options.headers||{})}:{'Content-Type':'application/json',...(options.headers||{})};if(state.token)headers.Authorization=`Bearer ${state.token}`;const res=await fetch(path,{...options,headers});if(res.status===401){state.token=null;localStorage.removeItem('chat_token');if(!options._retried){try{var saved=JSON.parse(localStorage.getItem('chat_api_config')||'{}');var rr=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved.base_url&&saved.api_key?saved:{})});var dd=await rr.json();if(dd.token){state.token=dd.token;localStorage.setItem('chat_token',dd.token);return api(path,{...options,_retried:true})}}catch(e){}}toast('请先在侧边栏配置中转站 API');throw Error('unauthorized')}return res}
+// 08-24：/api/auth 加了站点密码锁（她自己在真终端跑 scripts/set-site-password.js 设的，
+// 密码不经过这里、也不经过我们的对话）。这个函数是所有登录路径的唯一入口——
+// auto boot、api() 的 401 重试、relay 配置保存，都改成走它，别再各写各的 fetch('/api/auth')。
+// 密码存本地 localStorage.site_password，同一台设备/浏览器只用问一次。
+async function siteLogin(extra){
+  var saved={};try{saved=JSON.parse(localStorage.getItem('chat_api_config')||'{}')}catch(e){}
+  var body=Object.assign({},(saved.base_url&&saved.api_key)?saved:{},extra||{});
+  var sp=localStorage.getItem('site_password');
+  if(sp && body.site_password===undefined) body.site_password=sp;
+  var r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.status===401){
+    var j={};try{j=await r.json()}catch(e){}
+    if(j.error==='password_required'){
+      var pw=await askDialog({title:'需要密码',message:'这台设备还没登录过，输入站点密码。',input:true,confirm:'进入',password:true});
+      if(!pw)throw Error('unauthorized');
+      var r2=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({},body,{site_password:pw}))});
+      if(!r2.ok){toast('密码不对');throw Error('unauthorized')}
+      var d2=await r2.json();
+      if(d2.token){localStorage.setItem('site_password',pw);state.token=d2.token;localStorage.setItem('chat_token',d2.token)}
+      return d2;
+    }
+    throw Error('unauthorized');
+  }
+  var d=await r.json();
+  if(d.token){state.token=d.token;localStorage.setItem('chat_token',d.token)}
+  return d;
+}
+async function api(path,options={}){var isFormData=options.body instanceof FormData;const headers=isFormData?{...(options.headers||{})}:{'Content-Type':'application/json',...(options.headers||{})};if(state.token)headers.Authorization=`Bearer ${state.token}`;const res=await fetch(path,{...options,headers});if(res.status===401){state.token=null;localStorage.removeItem('chat_token');if(!options._retried){try{var dd=await siteLogin();if(dd.token)return api(path,{...options,_retried:true})}catch(e){}}toast('请先在侧边栏配置中转站 API');throw Error('unauthorized')}return res}
 function saveSettings(){localStorage.setItem('chat_model_settings',JSON.stringify(state.settings))}
 function currentModel(){return state.models.find(x=>x.id===state.model)||state.models[0]}
 function modelSetting(model=currentModel()){const s=state.settings[model?.id];if(model?.thinking==='adaptive'||model?.thinking==='extended')return{effort:s?.effort||'medium',extended:s?.extended!==false};return{}}
@@ -4341,7 +4368,7 @@ async function openSession(s){closeDrawer();clearPendingFiles();_lastMsgTime=0;_
 document.addEventListener('click',e=>{if(!$('sessionMenu').contains(e.target))closeSessionMenu()});
 async function patchSession(id,path,body){if(!id)return false;const r=await api(`/api/sessions/${encodeURIComponent(id)}/${path}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return r.ok}
 $('starSession').onclick=async()=>{const target=state.menuSession;if(!target)return;if(await patchSession(target.conv_id,'star',{starred:!target.starred})){target.starred=!target.starred;if(target.conv_id===state.convId)state.starred=target.starred;closeSessionMenu();loadSessions()}};
-function askDialog({title,message='',value='',input=true,confirm='确认'}){return new Promise(resolve=>{const overlay=$('dialogOverlay'),field=$('dialogInput');$('dialogTitle').textContent=title;$('dialogMessage').textContent=message;field.classList.toggle('hidden',!input);field.value=value;$('dialogConfirm').textContent=confirm;overlay.classList.remove('hidden');if(input)field.focus();const done=v=>{overlay.classList.add('hidden');$('dialogCancel').onclick=null;$('dialogConfirm').onclick=null;resolve(v)};$('dialogCancel').onclick=()=>done(null);$('dialogConfirm').onclick=()=>done(input?field.value.trim():true)})}
+function askDialog({title,message='',value='',input=true,confirm='确认',password=false}){return new Promise(resolve=>{const overlay=$('dialogOverlay'),field=$('dialogInput');$('dialogTitle').textContent=title;$('dialogMessage').textContent=message;field.classList.toggle('hidden',!input);field.type=password?'password':'text';field.value=value;$('dialogConfirm').textContent=confirm;overlay.classList.remove('hidden');if(input)field.focus();const done=v=>{overlay.classList.add('hidden');field.type='text';$('dialogCancel').onclick=null;$('dialogConfirm').onclick=null;resolve(v)};$('dialogCancel').onclick=()=>done(null);$('dialogConfirm').onclick=()=>done(input?field.value.trim():true)})}
 $('renameSession').onclick=async()=>{const target=state.menuSession;if(!target)return;closeSessionMenu();const title=await askDialog({title:'Rename conversation',value:target.title});if(title&&await patchSession(target.conv_id,'title',{title})){if(target.conv_id===state.convId){state.currentTitle=title;updateSessionHeader()}loadSessions()}};
 $('deleteSession').onclick=async()=>{const target=state.menuSession;if(!target)return;closeSessionMenu();const ok=await askDialog({title:'Delete conversation?',message:'此操作无法撤销。',input:false,confirm:'删除'});if(ok){const r=await api(`/api/sessions/${encodeURIComponent(target.conv_id)}`,{method:'DELETE'});if(r.ok){if(target.conv_id===state.convId)newChat();else loadSessions()}}};
 
@@ -5565,7 +5592,7 @@ document.addEventListener('click',function(e){
   document.body.append(expand);
 });
 
-function saveApiConfig(){var baseURL=document.getElementById('drawerBaseURL').value.trim().replace(/\/+$/,'');var apiKey=document.getElementById('drawerApiKey').value.trim();var apiFormat=document.querySelector('input[name=api_format]:checked')?.value||'openai';var modelInput=document.getElementById('drawerModel').value.trim();if(!baseURL||!apiKey){var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='请填写完整';st.style.color='#e54d2e';return}var btn=document.getElementById('drawerApiSave');btn.textContent='验证中...';btn.disabled=true;fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput})}).then(function(r){if(!r.ok)throw Error('fail');return r.json()}).then(function(d){state.token=d.token;localStorage.setItem('chat_token',d.token);localStorage.setItem('chat_api_config',JSON.stringify({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput}));var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='\u2705 已连接';st.style.color='#16a34a';btn.textContent='保存配置';btn.disabled=false}).catch(function(){var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='\u274c 连接失败';st.style.color='#e54d2e';btn.textContent='保存配置';btn.disabled=false})}
+async function saveApiConfig(){var baseURL=document.getElementById('drawerBaseURL').value.trim().replace(/\/+$/,'');var apiKey=document.getElementById('drawerApiKey').value.trim();var apiFormat=document.querySelector('input[name=api_format]:checked')?.value||'openai';var modelInput=document.getElementById('drawerModel').value.trim();if(!baseURL||!apiKey){var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='请填写完整';st.style.color='#e54d2e';return}var btn=document.getElementById('drawerApiSave');btn.textContent='验证中...';btn.disabled=true;try{var d=await siteLogin({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput});if(!d.token)throw Error('fail');localStorage.setItem('chat_api_config',JSON.stringify({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput}));var st2=document.getElementById('drawerApiStatus');st2.style.display='block';st2.textContent='\u2705 已连接';st2.style.color='#16a34a'}catch(e){var st3=document.getElementById('drawerApiStatus');st3.style.display='block';st3.textContent='\u274c 连接失败';st3.style.color='#e54d2e'}finally{btn.textContent='保存配置';btn.disabled=false}}
 (function(){fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})}).then(function(r){return r.json()}).then(function(d){if(d.token){state.token=d.token;localStorage.setItem('chat_token',d.token)}
   // 开机进哪段对话（08-22 修）：
   // ⚠️ 以前只写了「没有 convId 就进主线」，**有 convId 的那条路一个字都没写** ——

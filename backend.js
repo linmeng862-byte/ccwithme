@@ -1393,6 +1393,32 @@ app.get('/api/auth/image-gen', (req, res) => {
   res.json(getImageGenConfig());
 });
 
+// === 站点密码（2026-08-24）===
+// ⚠️ 铁律：这个密码本身**绝不会出现在跟她的对话里**——设置它得由她自己在真终端
+//    跑 scripts/set-site-password.js（隐藏输入、直接写库，不经过我）。
+//
+// 为什么要加这个：/api/auth 以前是「谁 POST 谁就拿 AUTH_TOKEN」，没有任何门槛。
+// AUTH_TOKEN 保护着日记、聊天记录、设置写入这些真正的东西，但拿到 AUTH_TOKEN
+// 的那一步本身没锁——域名一旦被任何渠道看到（分享链接、浏览器历史同步、DNS
+// 记录扫描），任何人都能直接换到完整访问权限。这道密码锁把「谁能拿到 AUTH_TOKEN」
+// 也保护起来，而不是只保护拿到之后能干什么。
+//
+// 没设置密码时（她还没跑那个脚本）/api/auth 保持原样不锁 —— 不能一上线就
+// 把她自己锁在外面。设了之后才生效。
+function _siteAuthConfigured() {
+  return !!db.prepare("SELECT value FROM settings WHERE key = 'site_auth_hash'").get()?.value;
+}
+function _verifySitePassword(pw) {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'site_auth_hash'").get();
+  const saltRow = db.prepare("SELECT value FROM settings WHERE key = 'site_auth_salt'").get();
+  if (!row || !saltRow || !pw) return false;
+  try {
+    const salt = Buffer.from(saltRow.value, 'hex');
+    const hash = require('crypto').scryptSync(String(pw), salt, 64);
+    return require('crypto').timingSafeEqual(hash, Buffer.from(row.value, 'hex'));
+  } catch (e) { return false; }
+}
+
 // === 认证 ===
 const AUTH_TOKEN = process.env.AUTH_TOKEN || (function() {
   try {
@@ -1409,6 +1435,9 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN || (function() {
 app.post('/api/auth', (req, res) => {
   // 不打印 body —— 里面有 api_key，会明文落进 pm2 日志
   console.log('[auth] login from', req.ip, 'fields:', Object.keys(req.body || {}).join(','));
+  if (_siteAuthConfigured() && !_verifySitePassword(req.body && req.body.site_password)) {
+    return res.status(401).json({ error: 'password_required' });
+  }
   const { base_url, api_key, api_format, model } = req.body;
   if (base_url && api_key) {
     const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
