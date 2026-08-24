@@ -1421,11 +1421,30 @@ app.post('/api/auth', (req, res) => {
 });
 
 // 通用设置保存
-app.post('/api/settings', (req, res) => {
+// ⚠️ 2026-08-24 补的 auth —— 这条路由能覆盖任意 settings key（包括 api_key、
+//    atrio_api_key），公网可达却一直没校验 AUTH_TOKEN，破了她自己那条铁律 6。
+//    查过：现在前端一处都不调这条裸路由了（都走 /api/settings/xxx 那些专用的），
+//    留着不加 auth 纯粹是个没人用但谁都能写的后门，补上不影响任何现有功能。
+app.post('/api/settings', auth, (req, res) => {
   const { key, value } = req.body || {};
   if (!key) return res.status(400).json({ error: 'key required' });
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value || '');
   res.json({ ok: true });
+});
+
+// 会客厅（Atrio）的 API key —— 独立密钥，跟主线订阅、跟 base_url/api_key 中转配置都无关。
+// 密码框输入、只回「配没配过」不回内容，跟 bark/minimax 那几个同一套规矩。
+app.post('/api/settings/atrio', auth, (req, res) => {
+  const { atrio_api_key, atrio_base_url, atrio_model } = req.body || {};
+  const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+  if (atrio_api_key !== undefined) upsert.run('atrio_api_key', String(atrio_api_key).trim());
+  if (atrio_base_url !== undefined) upsert.run('atrio_base_url', String(atrio_base_url).trim());
+  if (atrio_model !== undefined) upsert.run('atrio_model', String(atrio_model).trim());
+  res.json({ ok: true });
+});
+app.get('/api/settings/atrio', auth, (req, res) => {
+  const v = db.prepare("SELECT value FROM settings WHERE key = 'atrio_api_key'").get()?.value;
+  res.json({ configured: !!v });
 });
 
 // MiniMax TTS 配置保存

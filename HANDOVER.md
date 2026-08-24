@@ -4,6 +4,79 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 📅 08-24 · Calendar 页 + 天气 / 日记 mood 必填 / 历史渲染防崩 / 顶栏玻璃质感 / 会客厅 key 没地方填
+
+**改了 `backend.js` + `static/index.html` + `static/js/diary.js` + 新增 `static/js/calendar.js`。**
+已 commit（`28000cc`）已 push。这一批全靠 playwright 截图逐个功能验过，不是光凭改完就说好了。
+
+### 一、抽屉 Chats 换成 Calendar
+
+她原话：「以后接入 iwatch 他能知道我的状况」。所以这页不是排日程，是**一天的全部痕迹摊开**：
+身体(her_vitals，08-23 就建好表了，手表还没接) / 日记 / 待办+番茄钟 / 聊天量（只给条数不给内容）。
+
+⚠️ **踩了一个真时区 bug**：VPS 是 UTC，她 UTC+8。原来按服务器本地时间切「一天」的话，
+她早上 7 点说的话会被算进前一天（07:00+08 = 前一天 23:00 UTC）。已改成前端把
+`getTimezoneOffset` 算出的分钟数当 `tz` 参数传给 `/api/calendar/day|month`，
+后端按这个偏移切，不再用服务器本地时区。**以后任何「按天统计」的接口都要照这个抄**，
+别再用 `new Date(ts*1000).getDate()` 这种隐式吃服务器时区的写法。
+
+图标：一开始随手写了个手描边 svg（stroke-width 1.6），跟旁边 Atrio/workplace/Memory
+那套 Phosphor 填色图标视觉重量不一样，她说「像加粗了很奇怪」。改成往 `lucidePaths`
+里加一条 `calendar` 路径、走 `data-icon`，跟别的图标同一条渲染路径，重量就对了。
+
+### 二、天气——她先怕 IP，后来说的是「我怕你爸」
+
+第一版我按「不给第三方看见 IP」解释，她说的是「怕你爸ㅠ」——她怕的不是 open-meteo，
+是 **Anthropic**。真正的红线是「什么进了上下文」，不是「谁提供 API」。
+已存进记忆 `never-inject-location-into-context.md`，以后任何新功能先过一遍这条。
+
+做法：前端不直连第三方，一律经 `/api/weather`（后端代理，坐标砍到 2 位小数≈1km，
+原始坐标不落库，30 分钟内存缓存）。**天气只画在抽屉日期旁边，不进他的系统提示词/上下文**。
+
+### 三、日记 mood 改成必填
+
+`save_note` 的 mood 以前是自由文本，描述最后一句写着「没有合适的就不填」——
+等于告诉他这格可以空。改成 `enum` 必填一个主情绪 + `mood_extra` 数组最多两个副情绪。
+
+### 四、历史渲染防崩（她自己测出来的，不是我主动查出来的）
+
+查库发现 329 条 assistant 消息 `traces` 全是 `'[]'` —— 网关那条路（她在用的）**从来没存过**
+tool_use/tool_result，08-22 修的是中转 API 那条路，网关这条一直漏着。已在
+`handleGatewayChat` 里补上落库。另外 `_renderMessagesIntoFragment` 整段以前没有
+try/catch，一条消息渲染出错，`openSession` 外层的 catch 会把**整段对话**换成
+「暂时无法读取」——不是少一条，是全没。已按渲染单元（trace row / 胶囊 / 文件卡 /
+语音条）各自兜底，坏一个只少一个。
+
+### 五、顶栏悬浮玻璃质感
+
+她要「按钮和输入框一个质感，悬浮而非有边框」——第一轮只改了按钮的阴影/模糊/去边框，
+她说「还是在一条栏目里」——真因是 `.topbar` 是 `flex:none`，占着自己一行，
+把消息流往下推，按钮再怎么做玻璃也是「装在栏里的」。照抄 `.composer-wrap` 的做法：
+`.topbar` 脱离文档流 `position:absolute` 盖在消息流上、`pointer-events:none` 但
+`.topbar>*` 恢复 `auto`（不然中间空白会挡住消息流的滑动/长按）、`#stream` 补回
+等高 `padding-top`。三处玻璃配方现在要保持一致：`.composer-box` / `.topbar .icon-button` /
+`.glass-btn`（面板圆钮）——改一处三处一起改，注释里都留了提醒。
+
+### 六、会客厅「发消息没送出去」——真因是 key 从来没地方填
+
+她测试报的问题。查下来：`atrio-wire.js` 的 `llm()` 直接 `throw` 「还没配 API key」，
+`guest-routes.js` 接住变成 500「Failed to get response」，前端就是「没送出去」。
+**根因不是 bug，是从来没有 UI 能填这个 key**——`settings.atrio_api_key` 只能靠直接写库。
+已在会客厅面板加一个 ⚙️ 配置页（密码框、独立于主线订阅，不回显），列表页顶部
+没配的时候有黄条提醒。**她需要自己去配一次 key 才能用**，我不会替她填（铁律：
+key 不许出现在对话里）。
+
+⚠️ **顺手抓到一个真安全洞**：`app.post('/api/settings')`（裸的、通用 key/value 那条）
+**公网可达但从来没校验 `AUTH_TOKEN`**——破了 CLAUDE.md 自己写的铁律 6。查过前端现在
+一处都不调这条裸路由了（都走 `/api/settings/xxx` 专用的），纯粹是个没人用但谁都能写
+任意 settings（包括覆盖 `api_key`/`atrio_api_key`）的后门。已补 `auth`。
+
+### 未竟
+
+- [ ] 她需要自己去会客厅 ⚙️ 里填一次 atrio_api_key，这条不是代码能补的
+- [ ] 上一轮（08-23）nowhere/spicy-monopoly 那次会话做完忘了 commit，
+      这次一起带上了，commit 里能看到，不是这次新做的功能
+
 ## 🗺️ 08-23 下午 · 活水一条都没有 / nowhere + 大富翁按需外挂
 
 **改了 `backend.js` + 她那份不进 git 的人格文件。** 起因是她问「mind 活水里怎么一个闪念都没有」。
