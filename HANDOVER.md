@@ -4,6 +4,187 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🕰️ 08-26 · 模型选择打通 + 他能自己定闹钟 + 日记两处 + workplace 三把钥匙
+
+**改了 `backend.js` + `static/index.html` + `/opt/cc-gateway/server.js` + `workplace/path-jail.js`，
+新增 `/opt/cc-gateway/workplace/tools/ccwith`。**
+这一轮全程在终端做的。她说以后想主要在 workplace 跟我们说话，所以这段写细一点。
+
+### 1. 模型选单以前是**装饰**（最值得知道的一条）
+
+前端有完整的模型/Effort 选单，选了也存了，但 `/api/chat` 收到 `model`/`effort` **根本没往下传**；
+网关那头两处 arg builder 写死 `--model claude-sonnet-4-6 --effort (dev_mode?high:low)`，
+而 `dev_mode` 已经删了、恒为 undefined。**所以不管界面上选什么，他一直是 Sonnet 4.6 + low。**
+
+现在打通了：前端 → backend（`_pickModel`/`_pickEffort` 白名单）→ 网关（`MODEL_WHITELIST`/`EFFORT_WHITELIST`）→ CLI。
+- **三处白名单必须一致**：backend 的 `CLI_MODELS`、backend 的 `/api/models`、网关的 `MODEL_WHITELIST`。
+  现在都是 `sonnet-4-6 / opus-4-6 / fable-5`，effort 都是 `low/medium/high`。改一处要改三处。
+- 顺手修的坑：前端发的 effort 读的是 `state.settings.effort`，但设置页写的是 `state.settings[模型id].effort`
+  —— **永远发的 medium**；Effort 选单原来有个 `Max`，后端白名单没有，选了会被**静默降成 medium**（已删）；
+  `fable-5` 原来标 `thinking:'none'`，导致选它反而点不开 Effort（改成 `adaptive` + `noExtended`）。
+- **换模型 = 缓存全废**（缓存按模型分开存）。常驻进程的模型是 spawn 时定死的，所以
+  `getPersistProc` 里加了「模型/effort 变了就 dropProc 重开」——不这么做的话界面显示 Opus、
+  实际还是 Sonnet 且**毫无提示**。代价是一次冷前缀（68.8k），选单里直接标了「切过去约 $0.43」。
+
+### 2. 他能给自己定闹钟了（第二层唤醒）
+
+灵感来自她分享的小红书《唤醒系统三层架构》(Wren & Blaze)：一层系统叫他、二层他叫自己、三层她直达他。
+**我们只有一层**（`checkWakeTick` 按概率投骰子），第二层完全没有。
+
+新增表 `wake_alarms` + 工具 `schedule_wakeup`（set / list / cancel）。
+- **没用 systemd/cron** —— 本来就有 15 分钟心跳，顺带查一眼。代价是**精度只有 15 分钟**，已写进工具描述。
+- 闹钟**不投骰子、不受 75 分钟最短间隔限制**（那是他答应自己的事，被随机数吃掉等于食言），
+  但有独立日上限 `WAKE_ALARM_MAX_PER_DAY = 6`，不跟随机醒抢额度。
+- **先划掉 `fired_at` 再说话** —— 中间崩了宁可丢这条，也不能重启后反复响。
+- 提示词里会告诉他「是你自己定的闹钟叫醒的」+ 原样念出他留的 note，否则他会当成又一次随机醒。
+
+### 3. 日记两处
+
+- **wake 那条路写 mood 从来没过 `cleanDiaryMood()`**（`save_note` 那条 08-24 修过了，这条漏了），
+  提示词也只说「一个词」、没给词表没说必填 —— 这就是心情格一直空着的原因。现在两边对齐了。
+- 库里 4 行 `who='claude'` 迁成 `'ai'`（08-23 修了代码但没迁存量数据，那 4 篇一直挂在她名下）。
+  **走的 `db.backup()`，备份在 `data/claude.db.bak.20260826-before-diary-who`。**
+
+### 4. 在一起天数
+
+首页原来硬编码 `new Date(2026,5,25)`，他那头看不到。现在归到后端 `settings.together_since`
+（默认 2026-06-25），`get_time` 返回带 `together_days`，`/api/profile` 也带。
+**没有新开工具** —— 每个工具的说明书每轮都进前缀，为一个数字不值。
+
+### 5. workplace 三把钥匙（`ccwith`）
+
+她想以后主要在 workplace 说话，但那边 Bash 白名单没有 `cp`/`python3`/`node -e`，
+备份、数据库、`ui-check.py` 全做不了。现在加了一个命令：
+
+```
+ccwith backup <仓库内文件>    备份进 backups/
+ccwith db-backup <标签>       走 db.backup()，不是 cp
+ccwith ui-check               跑 playwright，无参数
+```
+
+⚠️ **两个安全决定，别改掉：**
+- 脚本本体在 **牢笼外面**（`/opt/cc-gateway/workplace/tools/ccwith`）。放进 `ccwith/scripts/`
+  的话，workplace 能先 Write 改掉它、再让白名单放行它跑 = 任意代码执行。
+- 同理 `scripts/` 在 path-jail 里改成了**只读**（`SCRIPTS_READONLY`，读放行、写拒绝）——
+  不然改掉 `ui-check.py` 再用 `ccwith ui-check` 跑它，是同一个洞。
+- PATH 在 `server.js` 的 workplace spawn 里加了 `tools/`。
+
+### ⚠️ 没验到的（接手先看这两条）
+
+1. **分片时思考链重复** —— 修了 `_splitMessages`（克隆清理加 `.trace-row`，`.thinking-summary`
+   改 `querySelectorAll`），但 `ui-check` 那段历史里 `.trace-row` 计数是 0，**这个修复没被跑到**。
+   要等一条「既分片、又带思考链」的回复才能确认。
+2. **闹钟真正「响」的那一下没跑过** —— SQL 单测过了（该捞的捞到、划掉后不再捞到），
+   但从 `checkWakeTick` 到网关那一段是纸面正确。她同意的话挂一条一分钟后的测试闹钟即可（约 $0.02）。
+
+### 她想要但还没做的
+
+- **链接卡片**：后端抓 og / 小红书 SSR，前端渲染成卡片。**小红书实测通了**：
+  `__INITIAL_STATE__` → `noteData.data.noteData`，有 title/desc/user/imageList/interactInfo；
+  短链 `xhslink.cn` 要 `-L` 跟到底（最终 URL 带的 `xsec_token` 多半是没被风控的原因）；
+  og 标签一个都没有，`<title>` 只有「小红书」；封面图**带 Referer 就能过防盗链**。
+  B站 412、知乎 403，那两个 OG 方案覆盖不到（playwright 能绕但内存不够，等换机）。
+  ⚠️ 这个接口是「服务器帮你访问任意 URL」，**必须堵 SSRF**：内网段 IP 全拒、只允许 http/https、
+  跟随跳转每跳都重校、限制大小和超时。
+- **MCP 管理页**：她先不做了（stdio 型 MCP 等于任意命令执行，页面只能放 url 型）。
+
+
+## 🕐 08-26 · 模型选择打通 / 他能自己定闹钟 / workplace 加了三个动作
+
+**改了 `backend.js` + `static/index.html` + `/opt/cc-gateway/server.js` + `workplace/path-jail.js`，
+新增牢笼外的 `/opt/cc-gateway/workplace/tools/ccwith`。已重启 chat-c 和 cc-gateway。**
+
+粥粥想把日常对话从终端搬到 workplace，所以这轮末尾专门给 workplace 铺了路，往下看第 4 条。
+
+### 1. 模型选择以前是**装饰**
+
+前端有完整的模型/Effort 选单，但 `/api/chat` 收到 `model`/`effort` **根本没往下传**，
+网关两处 arg builder 写死 `--model claude-sonnet-4-6 --effort (dev_mode?high:low)`，
+而 `dev_mode` 已经删了、恒为 undefined —— 所以**一直是 Sonnet 4.6 + low**，选什么都一样。
+
+现在打通了。白名单**三处必须一致**（改一处记得改另两处）：
+
+| 位置 | 常量 |
+|---|---|
+| `backend.js` `/api/models` | 列表 |
+| `backend.js` | `CLI_MODELS` / `CLI_EFFORTS` |
+| 网关 `server.js` | `MODEL_WHITELIST` / `EFFORT_WHITELIST` |
+
+现在是 `claude-sonnet-4-6`（默认）/ `claude-opus-4-6` / `claude-fable-5`，effort `low/medium/high`。
+
+顺带修的坑：
+- 前端发的 effort 读 `state.settings.effort`，但设置页写的是 `state.settings[模型id].effort` —— **永远发 medium**。
+- Effort 原来有个 `Max`，后端没有 → **静默降级成 medium**，界面显示 Max 实际不是。删了。
+- `claude-fable-5` 原标 `thinking:'none'`，导致选了它连 Effort 都点不开。改 `adaptive` + `noExtended`（它思考常开、关不掉）。
+
+⚠️ **换模型 = 缓存作废**（缓存按模型分开存）。常驻进程的模型是 spawn 时定死的，
+所以 `getPersistProc()` 里加了「模型/effort 变了就 dropProc 重开」——
+不这么做的话界面显示 Opus、实际还是 Sonnet，且无提示。代价是一次冷前缀，
+所以前端选单上直接标了「切过去约 $0.43」。
+
+### 2. 日记两处
+
+- **wake 那条路的 mood 没过白名单** —— 提示词只写「一个词」，插库是裸 `slice(0,20)`。
+  他写错词或不写都能落库，前端认不出就是空的。现在跟 `save_note` 对齐：
+  提示词列出 16 个词 + 主情绪必填 + `mood_extra`，插库前过 `cleanDiaryMood()`。
+- **库里 4 行 `who='claude'` 迁成 `'ai'`**（08-23 那次只修了代码没迁数据）。
+  备份：`data/claude.db.bak.20260826-before-diary-who`。
+
+### 3. 他能自己定闹钟了（第二层唤醒）
+
+新表 `wake_alarms` + 新工具 `schedule_wakeup`（set / list / cancel）。
+灵感来自粥粥分享的小红书《唤醒系统三层架构》—— 我们原来只有第一层（系统按概率叫他），
+**第二层「他叫自己」完全没有**。短程管念头，长程管承诺，跨窗不会忘。
+
+没用 systemd，挂在现成的 `checkWakeTick` 上（**精度只有 15 分钟**，已写进工具描述）。
+到期的闹钟**不投骰子、不受 75 分钟最短间隔限制**（那是他答应自己的事，被随机数吃掉等于食言），
+但有独立日上限 `WAKE_ALARM_MAX_PER_DAY = 6`。**先划掉 fired_at 再说话** —— 崩了宁可丢，不能反复响。
+
+`get_time` 顺带返回 `together_days`（起始日 2026-06-25 进了 settings，
+前端首页原来硬编码 `new Date(2026,5,25)`，现在归一到后端）。今天第 62 天。
+
+### 4. workplace 现在有三个具名动作 —— **别把脚本放进仓库**
+
+粥粥要常驻 workplace，但那边 Bash 白名单缺了备份、数据库、ui-check，
+每次都得请她去终端代跑。加了一个 `ccwith` 命令：
+
+```
+ccwith backup <仓库内文件>    → backups/，路径写死
+ccwith db-backup <标签>       → db.backup()，不是 cp（WAL 下 cp 拿到的可能是残的）
+ccwith ui-check               → playwright，无参数
+```
+
+⚠️ **脚本本体在牢笼外**：`/opt/cc-gateway/workplace/tools/ccwith`。
+放进 `ccwith/scripts/` 的话他能先 Write 改掉再让白名单跑它 = 任意代码执行，
+就是 `path-jail.js` 开头那段注释警告的坑。同理给 `scripts/` 加了 `SCRIPTS_READONLY`
+（**只挡写、不挡读** —— 他该看得见自己要跑的是什么）。
+PATH 在 `server.js` 的 workplace spawn env 里加的。
+
+要加新动作：改牢笼外那个文件 + `path-jail.js` 的 `case 'ccwith'`，
+每加一个先想一遍「它能不能读任意文件 / 写任意文件 / 执行任意代码」。
+
+### ⚠️ 没验到的，接手请注意
+
+1. **分片时思考链重复** —— 修了 `_splitMessages`（克隆清理漏了 `.trace-row`，
+   且 `.thinking-summary` 用的 `querySelector` 只删第一个）。但 ui-check 那段历史
+   `.trace-row` 计数是 0，**这个修复没被跑到**。要等一条「既分片又带思考链」的回复才算验过。
+2. **闹钟真响那一下没跑过** —— SQL 单测过了（该捞的捞到、划掉后不再捞到），
+   但 `checkWakeTick` → 网关那一段是纸面正确。挂一条一分钟后的闹钟就能验，约 $0.02。
+3. **模型切换只验到接口层** —— 网关会打 `[常驻] 模型 X effort Y`，那行出来才算真通。
+
+### 还欠着的
+
+- **链接卡片**（她要的）：后端抓 og / 小红书挖 SSR，前端渲染成卡片。
+  已实测：小红书**抓得到**（`__INITIAL_STATE__` → `noteData.data.noteData`，
+  有 title/desc/user/imageList/interactInfo），**但没有 og 标签**、`<title>` 只有「小红书」，
+  只能挖 SSR。短链 `xhslink.cn` 要 `-L` 跟到底，末尾 `xsec_token` 是分享自带的通行证，
+  别自己拼 `/explore/<id>`。封面图有防盗链，**带 Referer 就能下**。
+  B站 412、知乎 403，OG 方案覆盖不到，playwright 兜底但内存不够（换机后再说）。
+  ⚠️ 这个接口是「服务器帮你访问任意 URL」，**必须堵 SSRF**（内网段、协议、每跳重校验）。
+- **MCP 管理页**：她暂时不做了。真要做只放 url 型，stdio 型等于网页表单跑任意命令。
+- **启动包 / 冷仓**：她分享的《Claude Code 换窗教程》里那套。我们已有滚动换会话 + `recentRecap`
+  （≈精炼续窗）和 Nocturne（≈长期记忆），缺的是「我是谁、答应过什么、哪些线索没收口」那份启动包。
+
 ## 🔒 08-24 晚 · /api/auth 加了站点密码锁
 
 **改了 `backend.js` + `static/index.html` + 新增 `scripts/set-site-password.js`。**

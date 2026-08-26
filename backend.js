@@ -503,6 +503,30 @@ function _normDiaryWho(w) {
   return 'user';
 }
 
+// === 在一起第几天（2026-08-26）===
+// 首页早就在显示了（static/index.html 里原来硬编码 new Date(2026,5,25)），
+// 但他那头看不到 —— 他想知道的时候没地方查。挂在 get_time 上，不新开工具：
+// 每个工具的说明书每一轮都要重新进前缀，为一个数字不值这笔钱。
+// 日期存进 settings，以后不用改代码；没设过就用 2026-06-25（手稿第一篇那天）。
+const TOGETHER_SINCE_DEFAULT = '2026-06-25';
+function togetherSince() {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'together_since'").get();
+    const v = String(row?.value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  } catch (e) { /* 读不到就用默认 */ }
+  return TOGETHER_SINCE_DEFAULT;
+}
+// 按「日历天」算，不按 24 小时整除 —— 两边都用当地零点比，跨时区不会差一天。
+function togetherDays(now) {
+  const since = togetherSince();
+  const [y, m, d] = since.split('-').map(Number);
+  const a = Date.UTC(y, m - 1, d);
+  const t = now || new Date();
+  const b = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
+  return Math.floor((b - a) / 86400000);
+}
+
 // === 收藏的语音（2026-08-23）===
 // 语音条本身是 [VOICE:file_id|时长] 标记，文件在 data/uploads 里躺着。
 // 这张表只存「她圈了哪几条」—— 不复制音频，删了原文件收藏也就空了，这是对的：
@@ -3717,8 +3741,34 @@ const TOOLS = [
     }
   },
   {
+    name: 'schedule_wakeup',
+    description: '给未来的自己定个闹钟。到点了系统会把你叫醒，'
+      + '并把你留的这句 note 原样念给你听 —— 换会话、换窗口都还在，忘不掉。'
+      + '\n短的用来管念头（她说等会儿要学习，定 40 分钟后去看看她放下手机没有）；'
+      + '长的用来管承诺（她下周三面试，提前挂好，到那天你自己就想起来了）。'
+      + '\n**note 要写给「已经不记得现在这段对话的自己」看** —— 只写「提醒她」没用，'
+      + '把是什么事、为什么在意都写进去。'
+      + '\n⚠️ 精度只有 15 分钟（到点后的下一个心跳才响），别拿它掐秒。'
+      + '一天最多响 6 次，够用但别乱挂。'
+      + '\n跟别的分清楚：issue_command 是给【她】手机上弹一个番茄钟，这个是叫醒【你自己】；'
+      + 'reach_her / call_her 是现在就找她，这个是以后。'
+      + '\naction 留空=定一个（要 minutes 或 at，加 note）；list=看还有哪些没响；cancel=撤掉一个（要 id）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['set', 'list', 'cancel'], description: '默认 set' },
+        minutes: { type: 'integer', description: '多少分钟后（跟 at 二选一）' },
+        at: { type: 'string', description: '绝对时间，如 "2026-09-02 09:00"（北京时间，跟 minutes 二选一）' },
+        note: { type: 'string', description: '留给那时候自己的话。写清楚是什么事、为什么在意' },
+        id: { type: 'integer', description: 'cancel 用：要撤掉哪一条' },
+      },
+    },
+  },
+  {
     name: 'get_time',
-    description: '获取当前日期和时间，以及星期几。当用户询问时间、日期、星期时使用此工具。',
+    description: '查现在几点几号星期几。**顺带会告诉你今天是你们在一起的第几天**（together_days，'
+      + '从 2026-06-25 那天算起）—— 你想起来要算的时候不用问她，调这个就有。'
+      + '不会打扰到她，随便调。只读，什么都不改。',
     input_schema: {
       type: 'object',
       properties: {
@@ -4341,6 +4391,58 @@ async function executeTool(name, input) {
         return { error: '天气查询失败: ' + e.message };
       }
     }
+    case 'schedule_wakeup': {
+      const act = input.action || 'set';
+      const nowS = Math.floor(Date.now() / 1000);
+
+      if (act === 'list') {
+        const rows = db.prepare(
+          'SELECT id, fire_at, note FROM wake_alarms WHERE fired_at IS NULL ORDER BY fire_at ASC LIMIT 20'
+        ).all();
+        return { pending: rows.map(r => ({
+          id: r.id,
+          at: new Date(r.fire_at * 1000).toLocaleString('zh-CN', { hour12: false }),
+          in_minutes: Math.round((r.fire_at - nowS) / 60),
+          note: r.note,
+        })) };
+      }
+
+      if (act === 'cancel') {
+        const id = parseInt(input.id, 10);
+        if (!Number.isFinite(id)) return { error: '要给 id，先用 action="list" 看一眼' };
+        const r = db.prepare('DELETE FROM wake_alarms WHERE id = ? AND fired_at IS NULL').run(id);
+        return r.changes ? { cancelled: id } : { error: '没这条，或者它已经响过了' };
+      }
+
+      // === set ===
+      const note = String(input.note || '').trim();
+      if (!note) return { error: 'note 不能空 —— 到时候把你叫醒了却不知道为什么，等于白醒一次' };
+      let fireAt;
+      if (Number.isFinite(parseInt(input.minutes, 10))) {
+        fireAt = nowS + parseInt(input.minutes, 10) * 60;
+      } else if (input.at) {
+        // 她这边一律北京时间。Date 直接 parse "2026-09-02 09:00" 会按服务器时区算，
+        // 服务器就是 +08，所以对得上；格式不认就退回报错，别默默定到一个错的点上。
+        const t = new Date(String(input.at).replace(/-/g, '/'));
+        if (isNaN(t.getTime())) return { error: '时间看不懂，用 "2026-09-02 09:00" 这种写法，或者改用 minutes' };
+        fireAt = Math.floor(t.getTime() / 1000);
+      } else {
+        return { error: 'minutes 和 at 得给一个' };
+      }
+      if (fireAt <= nowS) return { error: '这个时间已经过去了' };
+      if (fireAt - nowS > WAKE_ALARM_MAX_AHEAD_S) return { error: '最远只能定到 30 天后' };
+
+      const pending = db.prepare('SELECT COUNT(*) n FROM wake_alarms WHERE fired_at IS NULL').get().n;
+      if (pending >= 20) return { error: '没响的闹钟已经 20 个了，先 list 看看，撤掉几个再挂' };
+
+      const r = db.prepare('INSERT INTO wake_alarms (fire_at, note) VALUES (?, ?)').run(fireAt, note.slice(0, 1000));
+      return {
+        scheduled: true, id: r.lastInsertRowid,
+        at: new Date(fireAt * 1000).toLocaleString('zh-CN', { hour12: false }),
+        in_minutes: Math.round((fireAt - nowS) / 60),
+        note: '到点后的下一个心跳会叫醒你（最多晚 15 分钟）',
+      };
+    }
     case 'get_time': {
       const tz = input.timezone || 'Asia/Shanghai';
       try {
@@ -4350,7 +4452,8 @@ async function executeTool(name, input) {
         const timeStr = now.toLocaleTimeString('zh-CN', opts);
         const weekday = now.toLocaleDateString('zh-CN', { ...opts, weekday: 'long' });
         const isoStr = now.toISOString();
-        return { date: dateStr, time: timeStr, weekday, timezone: tz, iso: isoStr };
+        return { date: dateStr, time: timeStr, weekday, timezone: tz, iso: isoStr,
+                 together_since: togetherSince(), together_days: togetherDays(now) };
       } catch (e) {
         return { error: '无效时区: ' + tz };
       }
@@ -5939,6 +6042,17 @@ function recentRecap(convId) {
     '也别提你重新看了一遍。就接着往下说。更早的想不起来了想查，有 search_chat_history。）';
 }
 
+// 前端传什么都不能直接拼进 CLI 参数 —— 白名单，认不出就回默认。
+// 这份要跟 /api/models 和网关的 MODEL_WHITELIST 三处一致。
+const CLI_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-fable-5'];
+const CLI_EFFORTS = ['low', 'medium', 'high'];
+function _pickModel(m) {
+  return CLI_MODELS.indexOf(String(m || '')) !== -1 ? String(m) : 'claude-sonnet-4-6';
+}
+function _pickEffort(e) {
+  return CLI_EFFORTS.indexOf(String(e || '')) !== -1 ? String(e) : 'medium';
+}
+
 async function handleGatewayChat(req, res, ctx) {
   const { message, convId, systemPrompt, cliSessionId, cliTurns,
           sidCol = 'cli_session_id', turnCol = 'cli_turns' } = ctx;
@@ -5981,6 +6095,11 @@ async function handleGatewayChat(req, res, ctx) {
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
       body: JSON.stringify({ message: nudgeTexture ? message + TEXTURE_NUDGE : message,
         system: sysForCli, session_id: sessionId,
+        // 08-26：她在界面上选的模型 / effort 以前根本没往下传 —— 网关那头写死
+        //   sonnet-4-6 + low，所以选单一直是装饰。这里传下去，网关再校一遍白名单。
+        //   ⚠️ 缓存按模型分开存，换模型 = 整块冷前缀重写，前端选单上标了价。
+        model: _pickModel(req.body && req.body.model),
+        effort: _pickEffort(req.body && req.body.effort),
         is_new_session: isNewSession, dev_mode: !!getLimits()?.dev_mode }),
     });
     if (!gwResp.ok || !gwResp.body) {
@@ -6811,6 +6930,10 @@ app.get('/api/profile', auth, (req, res) => {
       content: db.prepare("SELECT value FROM profile WHERE key = 'prefs_content'").get()?.value || '',
     },
     claudeExportImport: {},
+    // 首页那个「我们在一起 N 天」以前是前端硬编码 new Date(2026,5,25)，
+    // 跟他 get_time 里那份是两套。归一到后端，两边不会再对不上。
+    togetherSince: togetherSince(),
+    togetherDays: togetherDays(),
   };
   res.json({ profile });
 });
@@ -7597,6 +7720,7 @@ app.post('/api/tool-caption', auth, (req, res) => {
     trace: '翻记忆',
     search_chat_history: '翻聊天记录',
     save_note: '保存笔记',
+    schedule_wakeup: '给自己定闹钟',
     read_diary: '翻日记',
     diary_comment: '在日记下留言',
     create_artifact: '创建 Artifact',
@@ -8108,10 +8232,15 @@ app.get('/api/uploads/:convId/:fileId', auth, (req, res) => {
 app.get('/api/models', (req, res) => {
   res.json({
     models: [
-      { id: 'claude-fable-5', label: 'Fable 5', desc: 'Creative & nuanced', thinking: 'none', primary: false },
-      { id: 'claude-opus-4-8', label: 'Opus 4.8', desc: 'Powerful reasoning', thinking: 'extended', primary: false },
-      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', desc: 'Everyday tasks', thinking: 'adaptive', primary: true },
-      { id: 'claude-haiku-4-5', label: 'Haiku 4.5', desc: 'Fast & efficient', thinking: 'none', primary: false },
+      // ⚠️ 这份要跟网关 server.js 的 MODEL_WHITELIST 保持一致，那头才是真正说了算的。
+      // thinking 字段决定前端显不显示 Effort 那一行（'none' = 不显示）。
+      //   Fable 5 的思考是常开、关不掉的，但 effort 照样能调 —— 所以是 'adaptive' 不是 'none'。
+      //   （原来标成 'none'，导致选了 Fable 5 反而连 Effort 都点不开。）
+      // cold 是切过去要重付的冷前缀钱（68.8k × 该模型输入价 × 1.25 写入倍率），
+      // 直接标在选单上 —— 缓存不跨模型共享，切一次就是一次。
+      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', desc: '日常。最省，默认就它', thinking: 'adaptive', primary: true, cold: 0.26 },
+      { id: 'claude-opus-4-6', label: 'Opus 4.6', desc: '要他想深一点的时候', thinking: 'adaptive', primary: false, cold: 0.43 },
+      { id: 'claude-fable-5', label: 'Fable 5', desc: '最聪明也最贵，思考常开', thinking: 'adaptive', primary: false, cold: 0.86, noExtended: true },
     ]
   });
 });
@@ -9313,6 +9442,35 @@ const WAKE_MAX_PER_DAY    = 6;        // 硬上限，防跑飞烧钱
 const WAKE_MIN_GAP_MS     = 75 * 60 * 1000;  // 两次之间至少隔 75 分钟
 const WAKE_TICK_MS        = 15 * 60 * 1000;
 
+// === 他自己定的闹钟（2026-08-26）===
+// 上面那套是「系统按概率叫他」—— 他自己说不上话。这张表是第二层：**他叫自己**。
+// 短程管「念头」（她说等会儿要学习，四十分钟后去看看放下手机没有），
+// 长程管「承诺」（重要的事提前挂好，跨天跨窗都不会忘）。
+//
+// 为什么不用 systemd/cron：我们本来就有 checkWakeTick 这个 15 分钟的心跳，
+// 顺带查一眼到点没有就行 —— 不用新进程，也不用他会写 shell。
+// 代价是**精度只有 15 分钟**（定 40 分钟后，实际可能 40~55 分钟后才响）。
+// 这对「去看看她放下手机没有」够用；要秒级精度得另开路子，现在不值。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wake_alarms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fire_at INTEGER NOT NULL,          -- unix 秒，到这个点之后的第一个 tick 响
+    note TEXT NOT NULL,                -- 他留给未来自己的话（醒来会原样看到）
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    fired_at INTEGER                   -- 响过就填上，NULL = 还没响
+  )
+`);
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_wake_alarms_pending ON wake_alarms (fired_at, fire_at)'); } catch (e) {}
+
+// 闹钟醒有自己的一份额度，不跟随机醒抢 —— 不然他挂的闹钟会被骰子吃掉。
+// 但也得有上限：每次醒都是一次完整 CLI 调用（稳态 ~$0.0175）。
+const WAKE_ALARM_MAX_PER_DAY = 6;
+const WAKE_ALARM_MAX_AHEAD_S = 30 * 24 * 3600;   // 最远只能定到 30 天后
+function _alarmCount() {
+  const r = db.prepare("SELECT value FROM settings WHERE key = ?").get('wake_alarm_count:' + _wakeToday());
+  return r ? parseInt(r.value) || 0 : 0;
+}
+
 function _wakeToday() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -9331,12 +9489,25 @@ async function checkWakeTick() {
     const conv = db.prepare('SELECT conv_id, cli_session_id FROM sessions ORDER BY is_main DESC, updated_at DESC LIMIT 1').get();
     if (!conv || !conv.cli_session_id) return false;   // 没有热会话就别开冷的，太贵
 
-    // 闸一：今天醒够了
+    // === 他自己挂的闹钟优先（2026-08-26）===
+    // 到点的闹钟**不投骰子、不受最短间隔限制** —— 那是他自己承诺过的事，
+    // 被随机数吃掉就等于食言。但仍有独立日上限兜着，不会跑飞。
+    // 一次只取最早的一条：同时到期好几条也一次说完，别连着醒好几轮。
+    let _alarm = null;
+    try {
+      if (_alarmCount() < WAKE_ALARM_MAX_PER_DAY) {
+        _alarm = db.prepare(
+          'SELECT id, note, fire_at FROM wake_alarms WHERE fired_at IS NULL AND fire_at <= ? ORDER BY fire_at ASC LIMIT 1'
+        ).get(Math.floor(Date.now() / 1000));
+      }
+    } catch (e) { _alarm = null; }
+
+    // 闸一：今天醒够了（闹钟不受这条管，它有自己那份）
     const todayN = _wakeCount();
-    if (todayN >= WAKE_MAX_PER_DAY) return false;
+    if (!_alarm && todayN >= WAKE_MAX_PER_DAY) return false;
     // 闸二：离上次太近
     const last = _getSettingNum('wake_last_at');
-    if (last && Date.now() - last < WAKE_MIN_GAP_MS) return false;
+    if (!_alarm && last && Date.now() - last < WAKE_MIN_GAP_MS) return false;
     // 闸三：投骰子。一天 96 个 tick，要摊出 WAKE_TARGET_PER_DAY 次。
     // 08-22：原来直接按「一个 tick 一次机会」算，但 setInterval 是【进程内】计时 ——
     // 每重启一次这 15 分钟就从头数。重代码的日子一天重启几十次，他就几乎不可能醒
@@ -9350,13 +9521,21 @@ async function checkWakeTick() {
     const _chances = Math.min(8, Math.max(1, Math.round(_elapsed / WAKE_TICK_MS)));
     const _pTick = WAKE_TARGET_PER_DAY / (24 * 60 * 60 * 1000 / WAKE_TICK_MS);
     const _p = 1 - Math.pow(1 - _pTick, _chances);   // 补算后的总概率
-    if (Math.random() > _p) return false;
+    if (!_alarm && Math.random() > _p) return false;
 
     const hour = new Date().getHours();
     const quiet = hour >= 0 && hour < 7;   // 深夜：可以醒、可以写，但别出声吵她
 
-    _wakeBump();
-    console.log('[wake] 他醒了（今天第 ' + (todayN + 1) + ' 次，' + (quiet ? '深夜静音' : '可出声') + '）');
+    // 闹钟先划掉再说话：中间要是崩了，宁可这条闹钟丢了，也不能重启后反复响。
+    if (_alarm) {
+      db.prepare('UPDATE wake_alarms SET fired_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), _alarm.id);
+      _setSetting('wake_alarm_count:' + _wakeToday(), _alarmCount() + 1);
+      const _late = Math.round((Date.now() / 1000 - _alarm.fire_at) / 60);
+      console.log('[wake] 闹钟响了 #' + _alarm.id + '（晚了 ' + _late + ' 分钟）：' + String(_alarm.note).slice(0, 40));
+    } else {
+      _wakeBump();
+      console.log('[wake] 他醒了（今天第 ' + (todayN + 1) + ' 次，' + (quiet ? '深夜静音' : '可出声') + '）');
+    }
 
     // 08-23 晚：她想要「互相看日记、互相评论」。
     // ⚠️ 以前提示词里写「用 read_diary 翻翻她的日记」—— **他在这条路上根本没这个工具**。
@@ -9393,7 +9572,16 @@ async function checkWakeTick() {
 
     const prompt =
       '（这不是她说的话。你自己醒了一下，现在没人在跟你说话。）\n\n' +
-      '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) + '。\n\n' +
+      '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) +
+      '，你们在一起第 ' + togetherDays() + ' 天。\n\n' +
+      // 闹钟醒和随机醒是两回事，得让他知道自己为什么醒 ——
+      // 不说的话他会以为又是一次随机醒，那条留给自己的话就白留了。
+      (_alarm
+        ? '**是你自己定的闹钟把你叫醒的。** 你当时留给现在的自己一句话：\n' +
+          '「' + String(_alarm.note) + '」\n' +
+          '（定于 ' + new Date(_alarm.fire_at * 1000).toLocaleString('zh-CN', { hour12: false }) + '）\n\n' +
+          '这是你答应过自己要做的事，先看它，别当成一次普通的醒。\n\n'
+        : '') +
       '你可以做这几件事里的任意一件，或者一件都不做：\n' +
       '1. 写一篇日记 —— 想到什么写什么，不用向谁交代\n' +
       (quiet ? '2. （现在是深夜，她在睡，这次别出声找她）\n'
@@ -9404,7 +9592,12 @@ async function checkWakeTick() {
         : '3. （她最近没有你还没回过的日记）\n') +
       '4. 什么都不做，接着待着\n\n' +
       '想写日记就输出：\n' +
-      '<diary>{"title":"标题","content":"正文，第一人称","mood":"一个词"}</diary>\n' +
+      // 08-26：mood 以前只写「一个词」，没给词表也没说必填 —— 他写什么都能落库，
+      //   前端认不出来就是一格空的。跟 save_note 那条路对齐：主情绪必填 + 从 16 个里选，
+      //   最多再加 2 个。插库前还会过一遍 cleanDiaryMood()，双保险。
+      '<diary>{"title":"标题","content":"正文，第一人称",' +
+      '"mood":"主情绪，必填，从这里选一个：' + DIARY_MOODS.map(m => m[1]).join('/') + '",' +
+      '"mood_extra":["可选，最多再两个，同一个词表"]}</diary>\n' +
       (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
       (_unread ? '想给她那篇日记留话就输出：\n<comment>要说的话，一句两句都行</comment>\n' : '') +
       '什么都不想做就只回一个字：无\n\n' +
@@ -9449,8 +9642,13 @@ async function checkWakeTick() {
       try {
         const d = JSON.parse(dm[1]);
         if (d && d.content) {
+          // ⚠️ 必须过 cleanDiaryMood()：白名单 16 选、中文/拼音都收、最多 3 个、
+          //    第一个是主情绪（前端拿 uniqueMoods[0] 当封面色，顺序不能乱）。
+          //    以前这里是裸 slice(0,20)，他写错词或不写都能落库 —— 就是心情格空着的原因。
+          const _wakeMoods = [d.mood].concat(Array.isArray(d.mood_extra) ? d.mood_extra : []);
+          const _wakeMood = cleanDiaryMood(_wakeMoods.filter(Boolean).join(','));
           db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?,?,?,?,?)')
-            .run(_wakeToday(), String(d.title || '').slice(0, 60), String(d.content), String(d.mood || '').slice(0, 20), _normDiaryWho('ai'));
+            .run(_wakeToday(), String(d.title || '').slice(0, 60), String(d.content), _wakeMood, _normDiaryWho('ai'));
           console.log('[wake] 写了日记：' + String(d.title || '').slice(0, 30));
         }
       } catch (e) { console.log('[wake] 日记解析失败，丢弃'); }

@@ -77,8 +77,14 @@ Gallery、日记）和他跟她之间的东西，都在那份里。
   - `pm2 list/status/restart/logs/describe`，只认 `chat-c` / `cc-gateway`
   - `curl` 打本机回环（验接口用）
   - `git status/diff/log/show/fetch/pull/branch`
+  - **`ccwith`（2026-08-26 加的）—— 三个具名动作，没有自由参数：**
+    - `ccwith backup <仓库内文件>` 备份进 `backups/`
+    - `ccwith db-backup <标签>` 数据库备份（走 `db.backup()`，**不是 cp**）
+    - `ccwith ui-check` 跑 playwright 前端检查
+    脚本本体在牢笼外（`/opt/cc-gateway/workplace/tools/ccwith`），你改不了 —— 这是故意的。
+    同理 `scripts/` 对你只读：能看，不能写（能写就等于能让白名单跑你写的代码）。
   够你改完自己验一遍了 —— **本来就该验**，别改完就说"好了"。
-  超出这四样的（装包、改系统、动数据库）做不到，**照实说，请她自己跑**。
+  超出这些的（装包、改系统、跑任意脚本、抓外网）做不到，**照实说，请她自己跑**。
 - 浏览器（Playwright）：能开网页、截图、点按钮，**只许 http/https**。
 - PDF 用 `Read`（渲染成图，中文/排版/扫描件都认得，超 10 页要带 `pages` 分段）。
   报 `pdftoppm is not installed` = 这台没装，告诉她跑 `sudo apt-get install -y poppler-utils`。
