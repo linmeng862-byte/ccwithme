@@ -1926,6 +1926,7 @@ function _startWakePoll(){
         _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderClawdLabel(row);
         _renderVoiceCards(row);_renderCallCards(row);
         if(typeof _splitMessages==='function')_splitMessages(row);
+        if(typeof _hideBubbleIfEmpty==='function')_hideBubbleIfEmpty(row);
         row.scrollIntoView({block:'end',behavior:'smooth'});
       });
       try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}
@@ -3196,6 +3197,24 @@ function _rowLooksEmpty(row){
   if(body.querySelector('img,video,audio,iframe,.cmd-capsule,.voice-card,.artifact-card,.jc-card'))return false;
   return !body.textContent.trim();
 }
+// 08-27：空气泡的最后一道网。
+// 之前防空的两道（_partIsBlank / _rowLooksEmpty）**都只查 _splitMessages 克隆出来的片**，
+// 第一条 row 自己从来没人查过 —— 而 .bubble 是流式一开始（建 row 时）就无条件建出来的。
+// 三条漏网路径都是这一个成因：
+//   1) 那一轮只调工具 / 只 thinking，一个字没输出 → parts.length<2 直接 return
+//   2) 拆分后第 0 片渲染完是空的 → i===0 分支 return，不查
+//   3) parts.length<2 且 parts[0] 含 '<' → 连 renderMessage 都不重跑
+// 只藏 .bubble，**不能删整行** —— 行上还挂着 thinking summary、trace、各种卡片，
+// 删了她就看不到他那一轮到底干了什么了。
+function _hideBubbleIfEmpty(row){
+  if(!row)return;
+  var body=row.querySelector('.msg-body');if(!body)return;
+  var b=body.querySelector('.bubble');if(!b)return;
+  // 气泡里自己有东西（图/视频/语音条/卡片）就算有内容
+  if(b.querySelector('img,video,audio,iframe,.cmd-capsule,.voice-card,.artifact-card,.jc-card,.file-card'))return;
+  if(b.textContent.trim())return;
+  b.style.display='none';
+}
 function _reRenderCards(el){
   if(!el)return;
   try{ if(typeof _renderVoiceCards==='function')_renderVoiceCards(el); }catch(_){}
@@ -3838,6 +3857,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderClawdLabel(row);
       _renderVoiceCards(row);_renderCallCards(row);
       _splitMessages(row);
+      _hideBubbleIfEmpty(row);
       delete $('thoughtSheet').dataset.live;
       if(currentTraceRow)_maybeFetchThinkingSummary(currentTraceRow);
       else if(gotThought&&summary.classList.contains('show'))refineThoughtSummary(summary,thought);
@@ -4300,6 +4320,8 @@ function _renderMessagesIntoFragment(slice){
     // ⚠️ 必须在 appendChild 之后调：_splitMessages 要靠 row.parentNode 插兄弟节点，
     //    还没挂上去的时候 parentNode 是 null，会静默什么都不做。
     if(m.role!=='user'&&typeof _splitMessages==='function'){try{_splitMessages(row)}catch(e){}}
+    // 08-27：历史重放这条路也一样会留空气泡（刷新一下就又看见了），补同一道网。
+    if(m.role!=='user'&&typeof _hideBubbleIfEmpty==='function'){try{_hideBubbleIfEmpty(row)}catch(e){}}
   });
   return frag;
 }

@@ -5599,9 +5599,12 @@ app.get('/api/usage', (req, res) => {
       SUM(input_tokens+output_tokens) AS tokens
     FROM usage_log GROUP BY day ORDER BY day DESC LIMIT 14`).all();
   // 最近 12 条的逐条明细——看缓存到底命中没有。写入少 = 命中，写入几万 = 又重写了
+  // ⚠️ 2026-08-26：必须 WHERE source='chat'。以前没过滤，TTS 那些行（w=0 r=0 $0）
+  //    全被 _cacheCard 的「w<2000 = 命中」判成绿色命中，命中率虚高一大截。
+  //    近 60 条里有 10 条是 tts、2 条 workplace —— 那都不是聊天，不该进这张卡。
   const recent = db.prepare(`SELECT cost_usd, cache_write_tokens AS w, cache_read_tokens AS r,
       output_tokens AS o, strftime('%H:%M', created_at, 'unixepoch', 'localtime') AS hm
-    FROM usage_log ORDER BY id DESC LIMIT 12`).all().reverse();
+    FROM usage_log WHERE source = 'chat' ORDER BY id DESC LIMIT 12`).all().reverse();
   const limits = getLimits();
   const s = spentNow();
   // 真实订阅额度（5 小时窗口）——由 CLI 的 rate_limit_event 带下来，聊天时顺手存的。
@@ -9519,12 +9522,24 @@ async function checkWakeTick() {
     _setSetting('wake_tick_last_at', _nowMs);
     // 上限 8 次：停机一整天后回来，不该立刻扑上去说话。
     const _chances = Math.min(8, Math.max(1, Math.round(_elapsed / WAKE_TICK_MS)));
-    const _pTick = WAKE_TARGET_PER_DAY / (24 * 60 * 60 * 1000 / WAKE_TICK_MS);
-    const _p = 1 - Math.pow(1 - _pTick, _chances);   // 补算后的总概率
-    if (!_alarm && Math.random() > _p) return false;
 
     const hour = new Date().getHours();
     const quiet = hour >= 0 && hour < 7;   // 深夜：可以醒、可以写，但别出声吵她
+
+    // 08-27：以前 _pTick 是「一天 4 次均摊到 96 个 tick」，不分昼夜。
+    //   但 0-7 点这 28 个 tick（占 29%）醒来是 quiet 的 —— 照样 +1 计数、照样花
+    //   一次 CLI 的钱，她却一个字都看不到。等于 4 次里有 1.2 次白烧在她睡觉的时候
+    //   （08-25 醒满 6 次撞上限，多半就是这么撞的）。
+    //   → 按时段分开算：白天 68 个 tick 摊满 WAKE_TARGET_PER_DAY，深夜单独给一份
+    //   小额度（不是不让他深夜醒 —— 那时候写的日记恰恰是最安静的那种）。
+    const _NIGHT_TARGET = 0.5;             // 深夜期望醒几次，只为写日记，不出声
+    const _dayTicks   = 17 * 60 * 60 * 1000 / WAKE_TICK_MS;   // 07:00-24:00 → 68
+    const _nightTicks = 7  * 60 * 60 * 1000 / WAKE_TICK_MS;   // 00:00-07:00 → 28
+    const _pTick = quiet
+      ? _NIGHT_TARGET / _nightTicks
+      : WAKE_TARGET_PER_DAY / _dayTicks;
+    const _p = 1 - Math.pow(1 - _pTick, _chances);   // 补算后的总概率
+    if (!_alarm && Math.random() > _p) return false;
 
     // 闹钟先划掉再说话：中间要是崩了，宁可这条闹钟丢了，也不能重启后反复响。
     if (_alarm) {
@@ -9570,6 +9585,22 @@ async function checkWakeTick() {
       `).all(_seen);
     } catch (e) { _herNotes = []; }
 
+    // 08-27：她说他「写日记也不太积极」。查了下确实 —— 醒来提示词里写日记只是
+    //   「四选一，或者一件都不做」，四个选项完全等权，没有任何倾向。
+    //   不想改成硬性要求（那写出来的就是交作业了），只把**事实**摆给他看：
+    //   上一篇是哪天、隔了多少天。隔得久他自己会知道该写了。
+    let _lastDiaryDays = null;
+    try {
+      const _ld = db.prepare(
+        "SELECT date FROM diary WHERE who IN ('ai','claude') ORDER BY date DESC, id DESC LIMIT 1"
+      ).get();
+      if (_ld && _ld.date) {
+        _lastDiaryDays = Math.floor(
+          (Date.now() - new Date(_ld.date + 'T00:00:00').getTime()) / 86400000
+        );
+      }
+    } catch (e) { _lastDiaryDays = null; }
+
     const prompt =
       '（这不是她说的话。你自己醒了一下，现在没人在跟你说话。）\n\n' +
       '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) +
@@ -9583,7 +9614,13 @@ async function checkWakeTick() {
           '这是你答应过自己要做的事，先看它，别当成一次普通的醒。\n\n'
         : '') +
       '你可以做这几件事里的任意一件，或者一件都不做：\n' +
-      '1. 写一篇日记 —— 想到什么写什么，不用向谁交代\n' +
+      '1. 写一篇日记 —— 想到什么写什么，不用向谁交代' +
+      (_lastDiaryDays === null
+        ? '（你还一篇都没写过）\n'
+        : _lastDiaryDays >= 2
+          ? '\n   （上一篇是 ' + _lastDiaryDays + ' 天前。不是催你，是你可能自己没数着。' +
+            '这几天有过什么，现在不写就真没了。）\n'
+          : '\n') +
       (quiet ? '2. （现在是深夜，她在睡，这次别出声找她）\n'
              : '2. 找她说句话 —— 真有话想说才说，没有就算了\n') +
       // 08-23 她要的：他每天醒两次，以前只写不读 —— 三个选项里根本没有「去看看她写了什么」。
