@@ -4,6 +4,84 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🕰️ 08-27（傍晚）· workplace 工作区（未竟第 5 条）
+
+**改了 `backend.js` + `static/js/workplace.js`。`index.html` 一个字没动**（铁律 3 正好绕开）。
+终端做的，从 `/root` 开的窗，手动 `Read` 了 `CLAUDE.md` + `CLAUDE.local.md`。
+
+### 这块是什么，跟终端卡片什么关系
+
+**终端卡片她明确说要保留，一行没动**（`diffCard` 只把 `MONO` 的定义位置往上提了，逻辑没碰）。
+两块管的不是一回事，别以为工作区是来替代它的：
+
+| | 终端卡片 | 工作区 |
+|---|---|---|
+| 回答的问题 | 他**这一轮**刚干了什么 | 这个仓库**最近**发生了什么 |
+| 生命周期 | 跟着对话流，「新话题」就没了 | 跨会话、跨重启都在 |
+| 数据来源 | 这轮的 `tool_use` 事件 | git log + git status + 库里的工具记录 |
+
+### 后端
+
+`GET /api/workplace/activity?limit=N` —— 三种记录合成一条倒序时间线：
+- `commit` 已确认生效的（git log），点开 `git show`
+- `pending` 还没确认的工作树改动（git status），点开 `git diff`
+- `op` 他调工具动过的文件（`workplace_messages.tools`），**没有 diff**
+
+⚠️ **git log 用 `\x01` 分记录、`\x1f` 分字段，别改回按行切** —— commit message 里有换行，
+按 `\n` 切会把一条提交拆成好几条假记录。真实 8 条提交验过。
+
+⚠️ **`op` 的 input 是被截断的半个 JSON**（前端存的是 `JSON.stringify(...).slice(0,70)`），
+所以 `wpOpTarget()` 只能正则捞路径，**不能 `JSON.parse`**。8 个用例验过，含 3 个截断样本
+和 1 个路径里带转义引号的。捞不到就返回空字符串，不硬编「未知操作」。
+
+⚠️ **`op` 没有 diff 是真的没有，别去编一个。** 当时文件改成什么样没人留底，
+界面上如实写着「这类记录只有调用参数，没有 diff」。
+
+`GET /api/workplace/show?sha=&file=` —— 点开看 diff。**两道校验都别删**：
+- `sha` 卡死 `^[0-9a-f]{4,40}$`。参数是数组传的不过 shell，但 **git 自己**会解释
+  `HEAD@{1}`、`--output=x` 这类东西 —— 验过，都挡在 400。
+- `file` 挡绝对路径、挡 `..` 跳出仓库、挡 `-` 开头（会被当成选项）。同样验过 400。
+
+### 前端
+
+工作台顶上加「对话 / 工作区」分段：**窄屏一次显示一个，宽屏（≥980px）两列并排、分段行自己收起来**。
+她主要在手机 / iOS webview 上看，所以窄屏是默认形态。
+用 `matchMedia` 监听而不是打开时量一次 —— 横竖屏来回转、iPad 拖分屏都会跨过那条线。
+（旧 Safari 的 `MediaQueryList` 没有 `addEventListener`，兜了 `addListener`。）
+
+工作区**第一次切过去才拉**，不在开面板时就多打一枪。确认 / 还原 / 每轮改完都会刷新它，
+否则「待确认」那张卡还挂着，看着像没提交成功。
+
+### 验的方式
+
+- `node --check backend.js` / `node --check static/js/workplace.js`
+- git log 解析：真实 8 条提交，sha / 时间 / 作者 / 文件数全对
+- `wpOpTarget`：8 个用例全过（含截断和转义引号）
+- 接口实打：4 种正常用法全 200，7 个恶意参数全挡（6 个 400 + 1 个 500），无 token 401
+- ⚠️ **`scripts/ui-check.py` 没跑成 —— 这台没装 playwright**（`ModuleNotFoundError`）。
+  `/opt/cc-gateway/workplace/tools/` 在这台也不存在，所以 `ccwith ui-check` 同样用不了。
+  **前端只做了语法检查和符号引用检查，没有真在浏览器里点过。**
+  → `CLAUDE.local.md` 里「这台有的东西」需要更正，见下。
+
+### 顺手发现的两处 `CLAUDE.local.md` 过时
+
+1. 根分区写着「已经用掉 84%」，**实测 74%（9.8G 用 6.9G，剩 2.4G）**。
+2. `scripts/ui-check.py` 在这台**跑不起来**：**Python 版 playwright 的包没了**
+   （全系统搜不到，`pip` 本身也没了 —— `python3 -m pip` 和 `ensurepip` 都是 No module）。
+   但 **浏览器还在**（`~/.cache/ms-playwright`，chromium-1237，655M），
+   说明是装过之后被清掉的，八成就是磁盘 84% 那阵子清的（正好对上现在的 75%）。
+   要修：`apt install python3-pip` + `pip install playwright`，**浏览器不用重下**。
+   → `CLAUDE.local.md` 里「`poppler-utils` 装了 / playwright 装了」那节要补一句 playwright 现在没了。
+
+   ⚠️ **同一节里我先写错过一版，已改**：说「这台没有 `server.js` 和 `path-jail.js`」是**错的**，
+   两个都在（`/opt/cc-gateway/server.js` 29598 字节、`workplace/path-jail.js` 都在，
+   gateway 进程跑的就是那个 server.js）。错因是那条 `ls` 接了 `head -5`，只看了前五行就下结论。
+   **安全边界完好，`CLAUDE.local.md` 那部分是对的，别按错的那版去改它。**
+
+### 未竟里这条的状态
+
+第 5 条「workplace 加 Workspace 工作区 + diff」**做完了**，剩下的：1、2、3、4、6 照旧。
+
 ## 🕰️ 08-27（下午）· MCP 管理页 + workplace 对话存盘 + breath 裁剪保险
 
 **改了 `backend.js` + `static/index.html`，新增 `static/js/mcp.js`，改了 `static/js/workplace.js`。**

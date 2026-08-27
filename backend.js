@@ -5974,6 +5974,127 @@ app.get('/api/workplace/diff', auth, (req, res) => {
   });
 });
 
+// === 工作区（2026-08-27）=====================================================
+// 她要的是「最近 N 条记录 + 点开看 diff」——那张运维控制台图里右边那一列。
+// ⚠️ 终端卡片是另一回事，她明确说要保留，这块不替代它：
+//   终端卡片 = 「他这一轮刚干了什么」，跟着对话流走，会话清空就没了；
+//   工作区   = 「这个仓库最近发生了什么」，跨会话、跨重启都在。
+//
+// 三种记录合成一条时间线（倒序）：
+//   commit  已经确认生效的（git log）        → 点开看 git show
+//   pending 还没确认的工作树改动（git status）→ 点开看 git diff -- <file>
+//   op      他调工具动过的文件（workplace_messages.tools）→ 没有 diff，点开看调用参数
+// op 这类的时间戳只能精确到「那条消息」——一轮里几个工具共用一个 created_at，
+// 数据库里本来就没存每个工具各自的时间，别在前端假装有。
+function gitP(args) {
+  return new Promise((resolve) => {
+    git(args, (e, out) => resolve(e ? null : String(out || '')));
+  });
+}
+
+// 工具名 → 她看得懂的话。认不出的原样显示工具名，别硬编成「未知操作」。
+const WP_OP_VERB = {
+  Edit: '改了', Write: '写入', NotebookEdit: '改了', Read: '读了',
+  Glob: '找文件', Grep: '搜了', Bash: '跑了', WebFetch: '抓了网页',
+};
+// 从工具的 input 摘要里把文件路径抠出来。前端存的是 JSON.stringify(...).slice(0,70)，
+// **可能是被截断的半个 JSON**，所以只能正则捞，不能 JSON.parse。
+function wpOpTarget(input) {
+  const s = String(input || '');
+  const m = s.match(/"(?:file_path|path|notebook_path|pattern|url|command)"\s*:\s*"((?:[^"\\]|\\.)*)"?/);
+  if (!m) return '';
+  let v = m[1].replace(/\\(.)/g, '$1');
+  if (v.startsWith(REPO + '/')) v = v.slice(REPO.length + 1);
+  return v;
+}
+
+app.get('/api/workplace/activity', auth, async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+  try {
+    // —— 1. commit：一次 git log 同时拿元信息和文件名。
+    // \x01 分记录、\x1f 分字段：commit message 里可能有换行，按行切会散架。
+    const raw = await gitP(['log', '-n', String(limit), '--no-merges',
+      '--pretty=format:\x01%H\x1f%h\x1f%ct\x1f%an\x1f%s', '--name-only']);
+    const commits = [];
+    for (const chunk of String(raw || '').split('\x01')) {
+      if (!chunk.trim()) continue;
+      const nl = chunk.indexOf('\n');
+      const head = nl === -1 ? chunk : chunk.slice(0, nl);
+      const [full, short, ct, an, ...rest] = head.split('\x1f');
+      if (!full) continue;
+      const files = (nl === -1 ? '' : chunk.slice(nl + 1)).split('\n').map(s => s.trim()).filter(Boolean);
+      commits.push({
+        kind: 'commit', id: full, sha: short, ts: Number(ct) || 0,
+        title: rest.join('\x1f'), who: an, files,
+      });
+    }
+
+    // —— 2. pending：还没确认的改动。没有 commit 时间，用「现在」排在最上面，
+    // 因为它本来就是最新的那一笔（她还没点确认生效）。
+    const st = await gitP(['status', '--porcelain']);
+    const pending = String(st || '').split('\n').filter(Boolean).map(l => ({
+      status: l.slice(0, 2).trim(), file: l.slice(3),
+    }));
+    const now = Math.floor(Date.now() / 1000);
+    const pendingRec = pending.length ? [{
+      kind: 'pending', id: 'pending', ts: now,
+      title: pending.length + ' 个文件待确认',
+      files: pending.map(x => x.file), changed: pending,
+    }] : [];
+
+    // —— 3. op：他调工具动过什么。只取当前会话往前的最近若干条消息。
+    const rows = db.prepare(
+      'SELECT id, created_at, tools FROM workplace_messages WHERE who = ? AND tools != ? ORDER BY id DESC LIMIT ?'
+    ).all('him', '[]', limit);
+    const ops = [];
+    for (const r of rows) {
+      let ts = [];
+      try { ts = JSON.parse(r.tools || '[]'); } catch (e) { continue; }
+      if (!Array.isArray(ts) || !ts.length) continue;
+      ops.push({
+        kind: 'op', id: 'op-' + r.id, ts: r.created_at || 0,
+        title: ts.length + ' 个操作',
+        items: ts.map(t => ({
+          name: t.name || '?',
+          verb: WP_OP_VERB[t.name] || t.name || '?',
+          target: wpOpTarget(t.input),
+          input: String(t.input || ''),
+        })),
+      });
+    }
+
+    const records = [...pendingRec, ...commits, ...ops]
+      .sort((a, b) => b.ts - a.ts).slice(0, limit);
+    res.json({ records });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message) });
+  }
+});
+
+// 点开某条记录看 diff。
+//   ?sha=<commit>            整个提交的 diff
+//   ?sha=<commit>&file=<路径> 该提交里单个文件
+//   ?file=<路径>             还没提交的工作树改动
+// ⚠️ sha 必须卡死成十六进制：git 的 revision 语法认 `HEAD@{...}`、`--output=` 这类东西，
+//    参数虽然是数组传的（不过 shell），但仍可能被 git 自己解释成别的意思。
+app.get('/api/workplace/show', auth, async (req, res) => {
+  const sha = String(req.query.sha || '').trim();
+  const file = String(req.query.file || '').trim();
+  if (sha && !/^[0-9a-f]{4,40}$/.test(sha)) return res.status(400).json({ error: 'sha 不合法' });
+  // 路径同理：不许绝对路径、不许 .. 跳出仓库、不许以 - 开头（会被当成选项）
+  if (file && (file.startsWith('-') || file.startsWith('/') ||
+      path.relative(REPO, path.resolve(REPO, file)).startsWith('..'))) {
+    return res.status(400).json({ error: '路径不合法' });
+  }
+  const tail = file ? ['--', file] : [];
+  const args = sha
+    ? ['show', '--format=%H%n%an%n%ct%n%s%n', sha, ...tail]
+    : ['diff', ...tail];
+  const out = await gitP(args);
+  if (out === null) return res.status(500).json({ error: '读不到这条记录（可能已经被还原或改写了）' });
+  res.json({ diff: out, empty: !out.trim() });
+});
+
 // 她点确认：提交 + 重启。重启要等响应发完再做，否则请求半路断在她脸上。
 app.post('/api/workplace/apply', auth, (req, res) => {
   const msg = String((req.body || {}).message || '').trim() || 'workplace: 粥粥确认的改动';

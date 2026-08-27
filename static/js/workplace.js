@@ -68,9 +68,203 @@
     var meter = h('div', 'flex:none;padding:8px 14px;font:12px var(--font-sans);color:var(--text-faint);border-bottom:1px solid var(--bg-sunken)', '额度加载中…');
     c.append(meter);
 
-    // ── 中：对话流 ──
-    var flow = h('div', 'flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px');
-    c.append(flow);
+    // ── 中：左边对话流，右边工作区 ──
+    // 窄屏（手机 / iOS webview）一次只显示一个，靠上面那排分段切；
+    // 宽屏两列并排，分段行自己收起来。她主要在手机上看，所以窄屏是默认形态。
+    var MONO = 'ui-monospace,SFMono-Regular,Menlo,monospace';
+    var tabRowTop = h('div', 'flex:none;display:flex;gap:6px;padding:8px 14px 0');
+    var tabChat = h('button', '', '对话');
+    var tabWs = h('button', '', '工作区');
+    function tabCss(on) {
+      return 'flex:1;padding:7px;border-radius:11px;cursor:pointer;font:600 13px var(--font-sans);border:1px solid ' +
+        (on ? 'var(--accent)' : 'var(--border)') + ';background:' +
+        (on ? 'var(--accent)' : 'var(--bg-surface)') + ';color:' +
+        (on ? 'var(--accent-fg)' : 'var(--text-secondary)');
+    }
+    tabRowTop.append(tabChat, tabWs);
+    c.append(tabRowTop);
+
+    var main = h('div', 'flex:1;display:flex;min-height:0;overflow:hidden');
+    c.append(main);
+
+    var flow = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px');
+    var wsPane = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:14px;display:none;flex-direction:column;gap:10px');
+    main.append(flow, wsPane);
+
+    // 宽屏并排 / 窄屏切换。matchMedia 而不是只在打开时量一次 ——
+    // 手机横竖屏来回转、iPad 分屏拖宽窄，都会跨过这条线。
+    var wide = window.matchMedia('(min-width: 980px)');
+    var wsTab = false;          // 窄屏时当前停在哪一边
+    function syncPanes() {
+      if (wide.matches) {
+        tabRowTop.style.display = 'none';
+        flow.style.display = 'flex';
+        wsPane.style.display = 'flex';
+        wsPane.style.borderLeft = '1px solid var(--bg-sunken)';
+      } else {
+        tabRowTop.style.display = 'flex';
+        wsPane.style.borderLeft = '';
+        flow.style.display = wsTab ? 'none' : 'flex';
+        wsPane.style.display = wsTab ? 'flex' : 'none';
+      }
+      tabChat.style.cssText = tabCss(!wsTab);
+      tabWs.style.cssText = tabCss(wsTab);
+    }
+    // addEventListener 在旧 Safari 的 MediaQueryList 上没有，兜一下 addListener
+    if (wide.addEventListener) wide.addEventListener('change', syncPanes);
+    else if (wide.addListener) wide.addListener(syncPanes);
+    tabChat.onclick = function () { wsTab = false; syncPanes(); };
+    tabWs.onclick = function () {
+      wsTab = true; syncPanes();
+      if (!wsLoaded) loadActivity();      // 第一次切过去才拉，别开面板就多打一枪
+    };
+
+    // ══ 工作区 ══════════════════════════════════════════════════════════
+    // 「这个仓库最近发生了什么」。跟对话流里那张终端卡片**不是一回事**，
+    // 终端卡片是「他这一轮刚干了什么」，她说要保留，那张一行没动。
+    var wsLoaded = false;
+
+    function ago(ts) {
+      if (!ts) return '';
+      var s = Math.floor(Date.now() / 1000) - ts;
+      if (s < 60) return '刚刚';
+      if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
+      if (s < 86400) return Math.floor(s / 3600) + ' 小时前';
+      var d = new Date(ts * 1000);
+      function pad(n) { return (n < 10 ? '0' : '') + n; }
+      return (d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    // 一条记录一张卡：头一直在，diff 折在下面，点头才拉。
+    function wsCard(r) {
+      var isPending = r.kind === 'pending';
+      var isOp = r.kind === 'op';
+      var card = h('div', 'border:1px solid ' + (isPending ? 'var(--accent)' : 'var(--border)') +
+        ';border-radius:14px;background:var(--bg-surface);overflow:hidden;flex:none');
+
+      var hdr = h('div', 'display:flex;align-items:flex-start;gap:10px;padding:11px 12px;cursor:pointer;user-select:none');
+      var dotColor = isPending ? 'var(--accent)' : (isOp ? 'var(--text-faint)' : '#6BAF7B');
+      hdr.append(h('span', 'width:8px;height:8px;border-radius:50%;flex:none;margin-top:6px;background:' + dotColor));
+
+      var mid = h('div', 'flex:1;min-width:0');
+      var line1 = h('div', 'display:flex;align-items:baseline;gap:7px');
+      if (r.kind === 'commit') {
+        line1.append(h('span', 'font:600 12px ' + MONO + ';color:var(--accent);flex:none', r.sha));
+      } else {
+        line1.append(h('span', 'font:600 12px var(--font-sans);color:' + dotColor + ';flex:none',
+          isPending ? '待确认' : '操作'));
+      }
+      line1.append(h('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 13px var(--font-sans);color:var(--text-primary)', r.title || ''));
+      mid.append(line1);
+
+      var line2 = h('div', 'margin-top:3px;font:11px var(--font-sans);color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+      if (isOp) {
+        line2.textContent = (r.items || []).map(function (it) {
+          return it.verb + (it.target ? ' ' + it.target : '');
+        }).join(' · ') + ' · ' + ago(r.ts);
+      } else {
+        var fs = r.files || [];
+        line2.textContent = (fs.length ? fs.slice(0, 3).join(' · ') + (fs.length > 3 ? ' 等 ' + fs.length + ' 个' : '') : '') +
+          (r.ts ? ' · ' + ago(r.ts) : '');
+      }
+      mid.append(line2);
+      hdr.append(mid);
+      var chev = h('span', 'flex:none;color:var(--text-faint);font:12px var(--font-sans);transition:transform .15s;margin-top:2px', '⌄');
+      hdr.append(chev);
+      card.append(hdr);
+
+      var fold = h('div', 'display:none;border-top:1px solid var(--bg-sunken)');
+      card.append(fold);
+
+      var opened = false, fetched = false;
+      hdr.onclick = function () {
+        opened = !opened;
+        fold.style.display = opened ? 'block' : 'none';
+        chev.style.transform = opened ? 'rotate(180deg)' : '';
+        if (!opened || fetched) return;
+        fetched = true;
+
+        // op 没有 diff —— 那只是他调过的工具，文件当时改成什么样没人留底。
+        // 与其编一个假的 diff，不如老实把调用参数摆出来。
+        if (isOp) {
+          var box = h('div', 'padding:10px 12px;display:flex;flex-direction:column;gap:6px');
+          (r.items || []).forEach(function (it) {
+            var row = h('div', 'font:11px/1.5 ' + MONO + ';color:var(--text-secondary);word-break:break-all');
+            row.append(h('span', 'color:var(--text-primary);font-weight:600', it.name + ' '), h('span', '', it.input || ''));
+            box.append(row);
+          });
+          box.append(h('div', 'font:11px var(--font-sans);color:var(--text-faint);padding-top:4px',
+            '这类记录只有调用参数，没有 diff（当时的文件内容没留底）。'));
+          fold.append(box);
+          return;
+        }
+
+        var loading = h('div', 'padding:12px;font:12px var(--font-sans);color:var(--text-faint)', '读取中…');
+        fold.append(loading);
+        var url = '/api/workplace/show?' + (isPending ? '' : 'sha=' + encodeURIComponent(r.id));
+        fetch(url, { headers: authHeaders() })
+          .then(function (x) { return x.json(); })
+          .then(function (d) {
+            loading.remove();
+            if (d.error) {
+              fold.append(h('div', 'padding:12px;font:12px var(--font-sans);color:#cf222e', d.error));
+              return;
+            }
+            if (d.empty) {
+              fold.append(h('div', 'padding:12px;font:12px var(--font-sans);color:var(--text-faint)',
+                '这条没有文本 diff（可能是新文件、二进制或只改了权限）。'));
+              return;
+            }
+            var pre = h('div', 'font:11px/1.55 ' + MONO + ';max-height:46vh;overflow:auto;padding:4px 0');
+            pre.innerHTML = renderDiff(d.diff);
+            fold.append(pre);
+          })
+          .catch(function (e) {
+            loading.remove();
+            fold.append(h('div', 'padding:12px;font:12px var(--font-sans);color:#cf222e', esc(e.message)));
+          });
+      };
+      return card;
+    }
+
+    function loadActivity() {
+      wsLoaded = true;
+      wsPane.innerHTML = '';
+      var head = h('div', 'flex:none;display:flex;align-items:center;gap:8px;padding-bottom:2px');
+      head.append(h('span', 'font:600 13px var(--font-sans);color:var(--text-primary)', '最近的记录'));
+      var refresh = h('button', 'margin-left:auto;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--bg-surface);color:var(--text-secondary);font:12px var(--font-sans);cursor:pointer', '刷新');
+      refresh.onclick = function () { loadActivity(); };
+      head.append(refresh);
+      wsPane.append(head);
+
+      var tip = h('div', 'font:11px var(--font-sans);color:var(--text-faint)', '读取中…');
+      wsPane.append(tip);
+
+      fetch('/api/workplace/activity?limit=20', { headers: authHeaders() })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          tip.remove();
+          var list = (d && d.records) || [];
+          if (d && d.error) {
+            wsPane.append(h('div', 'font:12px var(--font-sans);color:#cf222e', d.error));
+            return;
+          }
+          if (!list.length) {
+            wsPane.append(h('div', 'font:13px var(--font-sans);color:var(--text-faint);padding:14px 0', '还没有记录。'));
+            return;
+          }
+          list.forEach(function (r) { wsPane.append(wsCard(r)); });
+        })
+        .catch(function (e) {
+          tip.textContent = '';
+          wsPane.append(h('div', 'font:12px var(--font-sans);color:#cf222e', esc(e.message)));
+        });
+    }
+    // 工作区的内容会被确认/还原改掉，那两个动作完事要把这儿刷新掉，
+    // 否则「待确认」那张卡还挂在上面，看着像没提交成功。
+    function wsRefreshIfLoaded() { if (wsLoaded) loadActivity(); }
+
+    syncPanes();
 
     function toBottom() { flow.scrollTop = flow.scrollHeight; }
 
@@ -102,7 +296,6 @@
     // 他改完之后递过来的那张卡：上半是「他干了哪些活」，下半是 diff + 确认/还原。
     // ops 是这一轮的工具调用（Read/Edit/浏览器…），工作台没有 Bash，
     // 所以「终端」块里列的是工具操作，不是 shell 命令。
-    var MONO = 'ui-monospace,SFMono-Regular,Menlo,monospace';
     function diffCard(d, ops) {
       ops = ops || [];
       // 他这轮什么都没干（没动文件、也没调一次工具）就别摆卡片。
@@ -207,6 +400,7 @@
           acts.remove();
           card.append(h('div', 'padding:11px 14px;font:12px var(--font-sans);color:#1a7f37', '已提交 ' + d2.commit + '，服务重启中…'));
           setTimeout(loadDiff, 6000);
+          setTimeout(wsRefreshIfLoaded, 6200);
         }).catch(function (e) {
           toast('失败: ' + e.message);
           apply.textContent = '确认生效并重启'; apply.style.opacity = '1';
@@ -223,6 +417,7 @@
             }
             acts.remove();
             card.append(h('div', 'padding:11px 14px;font:12px var(--font-sans);color:var(--text-faint)', '已还原，这次的改动都没了。'));
+            wsRefreshIfLoaded();
           }).catch(function (e) { toast('失败: ' + e.message); });
       };
 
@@ -418,6 +613,7 @@
           if (d.clean) return;             // 没改动就不塞卡片，省得刷屏
           convo.push({ who: 'diff', diff: d, ops: ops || [] });
           diffCard(d, ops);
+          wsRefreshIfLoaded();
         })
         .catch(function () {});
     }
