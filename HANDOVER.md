@@ -4,6 +4,111 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🕰️ 08-27（下午）· MCP 管理页 + workplace 对话存盘 + breath 裁剪保险
+
+**改了 `backend.js` + `static/index.html`，新增 `static/js/mcp.js`，改了 `static/js/workplace.js`。**
+终端做的。⚠️ **没跑成 `/simplify`** —— 起的 4 个审查 agent 被她拒了，她说不用自审。
+所以这一轮的代码**没经过精简审查**，接手的你要是看着哪里啰嗦，那是真的啰嗦，改就是了。
+
+### 1. MCP 管理页（顶掉 Cinema 的槽位）
+
+**先看懂这个再改**：他那 39 个工具**不是一个 server 一个**，是全部走 `chatc` 这一座桥
+（backend 的 tools 数组 → `/api/tools/list` → `mcp-bridge.js`）。网关 spawn 时带
+`--strict-mcp-config`，**只认那一个文件**，用户级/项目级 mcp.json 一概不读。
+所以「给他配 MCP」＝ 往那个文件的 `mcpServers` 里加条目。
+
+架构：**真源是库里的 `mcp_servers` 表，`mcp-config.json` 降级成生成物。**
+- `chatc` 那一条**原样透传，从不解析** —— 它 env 里明文躺着 GATEWAY_KEY。
+- 界面上 `chatc` 是**只读没开关**的（关了他 39 个工具当场全哑）。
+- 原子替换：先写 `.tmp` 再 `rename`，否则网关正好这一刻 spawn 会读到半个文件。
+- **`adoptExistingMcp()` 不能删** —— `regenMcpConfig()` 是按库全量重写 `mcpServers` 的，
+  不先认领的话，任何手写加进配置的条目会被**静默抹掉**。开机先认领再说。
+- 自定义请求头（多半是别人家 API key）**只进不出**：`/api/mcp/list` 只回 key 名字，
+  值永远是 null。编辑时那格显示「已设置 · 不改就留着」，留空提交 = 沿用原值。
+- `/api/mcp/ping` **挡内网地址**（SSRF）—— 那一枪是服务器发出去的，她填什么打什么。
+  回包不带 body，只回状态码：对面可能把请求头原样回显，那里头有她的 key。
+- toggle **不立刻杀进程**，只立 `mcp_dirty_at` 旗，下一条消息 spawn 时自然带新配置。
+  立刻杀 = 白付一次全冷缓存重建（~$0.23）。界面上那条横条就是在说这个。
+
+⚠️ **`MCP_CONFIG_PATH` 是机器相关的**：默认值是这台网关那个路径，写死在 `backend.js` 里。
+两台机器布局不同（另一台是 `ccwithme` 那套），所以做成了 `process.env.MCP_CONFIG_PATH` 可覆盖。
+**在另一台上跑之前先设这个环境变量**，不然它会去写一个不存在的路径、或者写错地方。
+按铁律 1 精确路径查 `CLAUDE.local.md`，别照记忆猜。
+
+Cinema：**只换了前端导航**。`cinema.js` 和后端 `/api/cinema/*` 一行没动，
+`data/uploads/cinema/` 一个文件没删。想要回来，把 `index.html` 那两处指回 cinema 即可。
+
+⚠️ 一个踩过的坑：`.mcp-hk` 那个 input 必须写 `min-width:0`。
+input 的 `min-width` 默认是 auto（按 `size` 属性算固有宽度），会把 `flex-basis` 顶开，
+值那格被挤成一个点 —— 截图上真长这样。
+
+### 2. workplace 对话存盘（她说「把 workplace 修好」，修的是这个）
+
+**症状**：打开工作台，中间一片空白，只有额度条和输入框。
+**根因**：**两头都不记**。后端 `/api/workplace/chat` 只往 `usage_log` 记花了多少钱，
+一句话都没存；前端 `workplace.js` 的 `convo` 是纯内存数组。
+那个注释自己写着「别让她看着一片空白以为聊天没了」，但它防不住刷新 ——
+**而她正在把前端打包成 iOS app，webview 每次启动就是一次刷新，等于每次打开都是白的。**
+（CLI 那头是 `--resume`，**他记得**；失忆的只有界面。）
+
+修法：新增 `workplace_messages` 表 + `/api/workplace/history`，前端 `convo` 空时去拉。
+- 存她那句存的是**原文不是 `prefixed`** —— 拼进去的主线上下文和附件是给他看的，
+  回放给她看时不该满屏都是她没写过的东西。
+- 存他那句**放在 catch 外面**：中途断了也要把已经说出来的存下来 ——
+  断在半截正是她最需要回看的时候。
+- history 只给**当前 session** 的。前端「新话题」会清空重来，那时 session 也换了，正好对上。
+
+### 3. breath 裁剪刀加了道保险
+
+`_trimHouseRules` 是**靠 `indexOf('=== House Rules ===')` 认段名**的，
+core 那边改一个字它就失效 —— 而且以前是**原样放行、一声不吭**，
+那 10928 字符（占 breath 的 84.8%）会悄悄全灌回前缀，只表现为「最近怎么变贵了」。
+现在认不出来会打日志喊。**这是过渡措施**，正解见下面「未竟」。
+
+### 量出来的数（她要拆 core，这些是依据）
+
+```
+core 一共 50 个工具，工具定义总长 12774 字符 ≈ 3992 token
+  记忆系统(core核心) 24 个  2418 token
+  nowhere            13 个   625
+  trail               2 个   503   ← 2 个工具比 stackchan 7 个还贵，手册自己标「高级，好奇再用」
+  stackchan           7 个   298
+  toy                 4 个   149
+
+breath 输出 12888 字符
+  └ House Rules 10928 字符（84.8%）25 条，裁掉后剩 1960
+     └ 第 1 条是「Nocturne Core 工具手册」2908 字符 —— 一份**文档**被塞进了记忆桶，
+       而且已经跟真实工具对不上（toy_status vs toy_status_tool、nowhere 13 个没提、garden 没提）
+```
+
+**House Rules 不是「家规」，是 pinned/permanent 桶** —— Memory Drift/Feel Trace 是抽样的
+（最新30→权重12→随机7），House Rules 是**全量吐出**。也就是 `hold_this` 写进去的那些。
+
+**breath 缓存实测几乎不工作**：她 `base_url`/`api_key` 都空 → 100% 走网关路 →
+`needBreath = cliIsNew` → **96 轮才调一次**，而 TTL 是 10 分钟，结构上就命中不了。
+日志里 `[breath]` 出现 7 次（那行只在**未命中**分支跑），而机会总共约 8-9 次。
+
+### 未竟（按她定的方向）
+
+1. **她要改 core**：把 garden / nowhere / toy / stackchan 从 core 摘出去各自一个网址，
+   记忆系统单独一个网址（「等我修好」）。摘完再在 MCP 页里配。
+2. **`breath` 加参数**（她那边做）：`breath(include_pinned=False)`，
+   让服务端决定吐哪些段。改完之后**这边要删掉 `_trimHouseRules` + `HOUSE_RULES_KEEP`
+   + `_breathCache` + `BREATH_TTL_MS`**，改调带参数的 breath。
+   理由：裁剪必须在服务端 —— 记忆系统一旦摘成独立网址让 CLI 直连，客户端根本没有插手机会。
+3. **House Rules 拆桶**（她那边）：`pinned`（24 条瞬间，留）+ `manual`（工具手册，挪走）。
+   工具手册建议**从 `tools/list` 自动生成**，手写的一定会过时，已经过时了。
+4. **合并 `EXTRA_MCP` 到 MCP 页**：`backend.js` 的 `EXTRA_MCP`（nowhere/spicy）是
+   **同一个想法的另一套实现** —— 按需外挂、开了才拉工具、原样透传。
+   她选了「接已有的 EXTRA_MCP、保留桥」这条路（保住裁剪和缓存，两条路都生效）。
+   **今天没做**，因为她要先拆 core，现在做会做成马上推翻的形状。
+   ⚠️ 合并时有个语义冲突要挑一种：`EXTRA_MCP` 的开关是**存到期时间戳、会自己过期**的
+   （`_extraSet(key, hours)`，玩完忘了关自动摘），而 MCP 页的开关是常开常关。
+5. **workplace 加 Workspace 工作区 + diff**（小克Cat 那张运维控制台图）：
+   「最近 N 条记录」那一列（改了什么文件 / 后台任务 / 索引重建）和点开看 diff。
+   **终端卡片她明确说要保留。** 今天只修了存盘，这块没做。
+6. **等 9 月换机**：网关 `PERSIST_IDLE_MS`(5min) 和 `MAX_PROCS`(1) 是被 1935M 内存逼的。
+
 ## 🕰️ 08-27 · 空气泡 + 醒来分昼夜 + 日记加倾向
 
 **改了 `backend.js` + `static/index.html`。** 终端做的。她那天问的四件事，这轮清了前三件。

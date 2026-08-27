@@ -2518,7 +2518,16 @@ function _trimHouseRules(raw) {
   if (!raw || typeof raw !== 'string' || HOUSE_RULES_KEEP < 0) return raw;
   const HEAD = '=== House Rules ===\n';
   const i = raw.indexOf(HEAD);
-  if (i < 0) return raw;
+  // ⚠️ 2026-08-27 加的保险：这把刀是**靠字符串认段名**的，core 那边段名改一个字它就失效。
+  //    以前失效是「原样放行，一声不吭」—— 那 10928 字符（占 breath 的 84.8%）会悄悄
+  //    全灌回前缀，只表现为「最近怎么变贵了」，查不到原因。
+  //    现在认不出来就喊一声。正解是让 breath 自己带参数别吐这段（要改 core），
+  //    改完这个函数连同 HOUSE_RULES_KEEP 一起删掉。
+  if (i < 0) {
+    console.log('[breath] ⚠️ 认不出 "=== House Rules ===" 段头 —— 裁剪没生效，' +
+                raw.length + ' 字符原样进前缀。core 那边改过段名？');
+    return raw;
+  }
   // House Rules 是 breath 的最后一段（server.py 组装顺序），后面没有别的段。
   const before = raw.slice(0, i).replace(/\n+$/, '');
   if (HOUSE_RULES_KEEP === 0) {
@@ -5744,6 +5753,49 @@ const wpSession = {
   set: (v) => { try { db.prepare("INSERT INTO settings (key,value) VALUES ('wp_session',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(v); } catch(e) {} },
 };
 
+// === workplace 对话存盘（2026-08-27）===
+// 以前**两头都不记**：后端只记花了多少钱，前端 workplace.js 的 convo 是纯内存数组。
+// 那个注释自己写着「别让她看着一片空白以为聊天没了」—— 但它防不住刷新。
+// 而她正要把前端打包成 iOS app，webview 每次启动就是一次刷新，
+// 等于**每次打开工作台都是一片空白**，她自己不知道跟这边聊过什么。
+// （CLI 那头是 --resume，他记得；失忆的只有界面。）
+db.exec(`
+  CREATE TABLE IF NOT EXISTS workplace_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    who TEXT NOT NULL,                 -- 'her' | 'him'
+    text TEXT NOT NULL DEFAULT '',
+    tools TEXT NOT NULL DEFAULT '[]',  -- JSON: [{name, input}]
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  )
+`);
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_wp_msg_session ON workplace_messages (session_id, id)'); } catch (e) {}
+
+function wpSave(sessionId, who, text, tools) {
+  if (!sessionId) return;
+  try {
+    db.prepare('INSERT INTO workplace_messages (session_id, who, text, tools) VALUES (?,?,?,?)')
+      .run(sessionId, who, String(text || ''), JSON.stringify(tools || []));
+  } catch (e) { console.error('[workplace 存盘]', e.message); }
+}
+
+// 开面板时拉回来。只给**当前这条会话**的 —— 前端「新话题」会清空重来，
+// 那时候 session 也换了，正好对得上，不会把上一个话题的东西混进来。
+app.get('/api/workplace/history', auth, (req, res) => {
+  const sid = wpSession.get();
+  if (!sid) return res.json({ messages: [] });
+  const rows = db.prepare(
+    'SELECT who, text, tools FROM workplace_messages WHERE session_id = ? ORDER BY id ASC LIMIT 200'
+  ).all(sid);
+  res.json({
+    messages: rows.map(r => {
+      let t = [];
+      try { t = JSON.parse(r.tools || '[]'); } catch (e) {}
+      return { who: r.who, text: r.text, tools: t };
+    }),
+  });
+});
+
 app.post('/api/workplace/chat', auth, async (req, res) => {
   const { message, reset, mainline_ids, upload_ids } = req.body || {};
   if (!message) return res.status(400).json({ error: 'message required' });
@@ -5763,6 +5815,11 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
   let sid = reset ? null : wpSession.get();
   const isNew = !sid;
   if (isNew) { sid = crypto.randomUUID(); wpSession.set(sid); }
+
+  // 存她那句。存的是**原文**不是 prefixed —— 拼进去的主线上下文和附件是给他看的，
+  // 回放给她看时应该只有她自己打的那句，不然满屏都是她没写过的东西。
+  wpSave(sid, 'her', message, []);
+  let _hisText = '', _hisTools = [];
 
   try {
     const gw = await fetch(WORKPLACE_URL, {
@@ -5785,9 +5842,11 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-        if (evt.delta)    res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n');
+        if (evt.delta)    { _hisText += evt.delta;
+                            res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n'); }
         if (evt.thinking) res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
-        if (evt.tool_use) res.write('event: tool_use\ndata: ' + JSON.stringify(evt.tool_use) + '\n\n');
+        if (evt.tool_use) { _hisTools.push({ name: evt.tool_use.name || '', input: evt.tool_use.input || '' });
+                            res.write('event: tool_use\ndata: ' + JSON.stringify(evt.tool_use) + '\n\n'); }
         if (evt.error) {
           // 会话丢了（网关重启/记录过期）就清掉，下一句自动开新的。
           // ⚠️ 别把 'session_lost' 这个内部标记原样吐给她 —— 界面上蹦一个英文单词，
@@ -5818,6 +5877,9 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
   } catch (e) {
     res.write('event: error\ndata: ' + JSON.stringify({ message: String(e.message || e) }) + '\n\n');
   }
+  // 存他那句。**放在 catch 外面**，中途断了也要把已经说出来的存下来 ——
+  // 断在半截正是她最需要回看的时候（想知道他做到哪儿了）。
+  if (_hisText || _hisTools.length) wpSave(sid, 'him', _hisText, _hisTools);
   res.end();
 });
 
@@ -9430,6 +9492,254 @@ async function checkDreamTick() {
 // 梦搭蒸馏那班车（每 15 分钟一拍）。门控全在 _dreamGatesPass 里，
 // 不满足就是一次几毫秒的查库，不花钱。
 setInterval(function() { checkDreamTick(); }, 15 * 60 * 1000);
+
+// ============================================================
+// === MCP 服务器管理（2026-08-27）===
+// 她要的是「以后能自己给他配 MCP」，不是看一眼列表就完了。
+//
+// 【怎么运转的，先看懂这段再改】
+// 他那 39 个工具**不是**一个 server 一个，是全部走 `chatc` 这一座桥：
+//   backend 的 tools 数组 → /api/tools/list → mcp-bridge.js 注册成 MCP 工具。
+// 网关 spawn CLI 时带 `--mcp-config <GEN> --strict-mcp-config`，
+// **strict 意味着只认这一个文件**，用户级/项目级的 mcp.json 一概不读。
+// 所以「给他配 MCP」= 往这个文件的 mcpServers 里加条目。
+//
+// 【为什么不让她直接编辑那个文件】
+// 那文件里 `chatc` 那一条的 env 明文躺着 GATEWAY_KEY。
+// → 真源在这儿的 mcp_servers 表，那个文件是**生成物**；
+// → 生成时 `chatc` 段**原样透传**，从不解析、不打印、不回前端（auth 红线）。
+//
+// 【自定义请求头】多半是别人家的 API key，所以**只进不出**：
+// 存库、生成配置时写进去，/api/mcp/list 永远只回 key 名字，值一律是 null。
+// ============================================================
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mcp_servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    transport TEXT NOT NULL DEFAULT 'http',   -- 'http'(Streamable HTTP) | 'sse'
+    url TEXT NOT NULL,
+    headers TEXT NOT NULL DEFAULT '{}',       -- JSON，值是密钥，不出这台机器
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    updated_at INTEGER DEFAULT (strftime('%s','now'))
+  )
+`);
+
+// 网关读的那份（生成物）。跟网关 spawn 时的 --mcp-config 必须是同一个路径。
+const MCP_CONFIG_PATH = process.env.MCP_CONFIG_PATH || '/opt/cc-gateway/mcp-config.json';
+// 内置的、她删不掉也改不了的 —— 删了他 39 个工具全没了。
+const MCP_BUILTIN = ['chatc'];
+
+// 【开机先认领】配置文件里已经有、但库里没有的条目，先收进库再说。
+// ⚠️ 不做这步 regenMcpConfig() 会把它们**静默删掉** —— 它是按库重写整个 mcpServers 的。
+//    手写加过一条、或者从别处搬过来一份，一个 toggle 就没了，而且没有任何提示。
+//    认领进来之后她在界面上看得见、关得掉，也就不会再被无声抹掉。
+function adoptExistingMcp() {
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(MCP_CONFIG_PATH, 'utf8')); } catch (e) { return 0; }
+  const servers = (cfg && cfg.mcpServers) || {};
+  let n = 0;
+  for (const [name, def] of Object.entries(servers)) {
+    if (MCP_BUILTIN.includes(name)) continue;
+    if (!_mcpValidName(name)) continue;
+    if (db.prepare('SELECT id FROM mcp_servers WHERE name = ?').get(name)) continue;
+    // 只认领 http/sse 那种；stdio 的（要跑本地命令）不进这张表 ——
+    // 那等于把「界面上能改的字段」变成一条可执行命令行，红线。
+    const url = def && def.url;
+    if (!url || !_mcpValidUrl(url)) continue;
+    db.prepare('INSERT INTO mcp_servers (name, transport, url, headers, enabled) VALUES (?,?,?,?,1)')
+      .run(name, def.type === 'sse' ? 'sse' : 'http', url, JSON.stringify(def.headers || {}));
+    n++;
+  }
+  if (n) console.log('[mcp] 认领了配置里已有的 ' + n + ' 个 server（原本不在库里，再生成会被抹掉）');
+  return n;
+}
+try { adoptExistingMcp(); } catch (e) { console.log('[mcp] 认领失败：' + e.message); }
+
+function _mcpValidName(s) { return /^[A-Za-z0-9_-]{1,64}$/.test(String(s || '')); }
+function _mcpValidUrl(s) {
+  try { const u = new URL(String(s)); return u.protocol === 'http:' || u.protocol === 'https:'; }
+  catch (e) { return false; }
+}
+
+// 生成 mcp-config.json。**原子替换**：先写 .tmp 再 rename，
+// 否则网关正好在这一刻 spawn 就会读到半个文件（CLI 那头只会报个看不懂的错）。
+function regenMcpConfig() {
+  let base = {};
+  try { base = JSON.parse(fs.readFileSync(MCP_CONFIG_PATH, 'utf8')) || {}; } catch (e) { base = {}; }
+  const prev = base.mcpServers || {};
+  const out = {};
+  // 内置的桥原样搬过去 —— 那一条带着 GATEWAY_KEY，只搬引用，不看内容。
+  for (const k of MCP_BUILTIN) if (prev[k]) out[k] = prev[k];
+  for (const r of db.prepare('SELECT * FROM mcp_servers WHERE enabled = 1 ORDER BY id').all()) {
+    if (MCP_BUILTIN.includes(r.name)) continue;           // 不许顶掉内置的
+    let hd = {};
+    try { hd = JSON.parse(r.headers || '{}') || {}; } catch (e) { hd = {}; }
+    const e = { type: r.transport === 'sse' ? 'sse' : 'http', url: r.url };
+    if (Object.keys(hd).length) e.headers = hd;
+    out[r.name] = e;
+  }
+  base.mcpServers = out;
+  const tmp = MCP_CONFIG_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(base, null, 2));
+  fs.renameSync(tmp, MCP_CONFIG_PATH);
+  // 别打印内容 —— 里面有 key。只报数。
+  console.log('[mcp] 配置已重生成：' + Object.keys(out).length + ' 个 server（内置 ' + MCP_BUILTIN.length + '）');
+  markMcpDirty();
+  return Object.keys(out).length;
+}
+
+// 改完不立刻杀进程 —— 那等于白付一次全冷缓存重建（~$0.23）。
+// 只立个旗，下一条消息本来就要 spawn，那时候自然带上新配置。
+// 前端据此显示「下次说话时生效」。
+function markMcpDirty() { try { _setSetting('mcp_dirty_at', Date.now()); } catch (e) {} }
+
+// —— 列表。**headers 的值一律不回**，只回 key 名字给她看「设过哪些」。
+app.get('/api/mcp/list', auth, async (req, res) => {
+  const rows = db.prepare('SELECT * FROM mcp_servers ORDER BY id').all().map(r => {
+    let hk = [];
+    try { hk = Object.keys(JSON.parse(r.headers || '{}') || {}); } catch (e) {}
+    return {
+      id: r.id, name: r.name, transport: r.transport, url: r.url,
+      enabled: !!r.enabled, header_keys: hk, builtin: false,
+    };
+  });
+  // 内置那座桥也列出来，但只读：她删不掉也改不了（删了他 39 个工具全没了）。
+  let builtin = [];
+  try {
+    const cfg = JSON.parse(fs.readFileSync(MCP_CONFIG_PATH, 'utf8'));
+    builtin = MCP_BUILTIN.filter(k => cfg.mcpServers && cfg.mcpServers[k]).map(k => ({
+      id: 'builtin:' + k, name: k, transport: 'stdio', url: '',
+      enabled: true, header_keys: [], builtin: true,
+    }));
+  } catch (e) {}
+  res.json({
+    servers: builtin.concat(rows),
+    dirty_at: _getSettingNum('mcp_dirty_at') || 0,
+    // 内置那座桥的「工具 n/n」要真去数 —— buildTools() 是现拼的（按需外挂那几组
+    // 开着才在里头），写死一个数迟早对不上。
+    tool_count: await (async () => { try { return (await buildTools()).length; } catch (e) { return 0; } })(),
+  });
+});
+
+app.post('/api/mcp/save', auth, (req, res) => {
+  const { id, name, transport, url, headers, enabled } = req.body || {};
+  if (!_mcpValidName(name)) return res.status(400).json({ error: '名称只能用字母数字 _ -，1~64 位' });
+  if (MCP_BUILTIN.includes(name)) return res.status(400).json({ error: '这个名字是内置的，换一个' });
+  if (!_mcpValidUrl(url)) return res.status(400).json({ error: '地址要是 http:// 或 https://' });
+  const tr = transport === 'sse' ? 'sse' : 'http';
+  // headers：只收「字符串→字符串」，值原样存，**不打印**。
+  let hd = {};
+  if (headers && typeof headers === 'object') {
+    for (const [k, v] of Object.entries(headers)) {
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(k)) continue;
+      if (typeof v !== 'string' || !v.length) continue;
+      hd[k] = v;
+    }
+  }
+  const en = enabled === false ? 0 : 1;
+  try {
+    if (id) {
+      const old = db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id);
+      if (!old) return res.status(404).json({ error: '没这条' });
+      // 编辑时前端不回传旧密钥（它根本拿不到），没传就沿用原来的。
+      const keep = (!headers || !Object.keys(hd).length) ? old.headers : JSON.stringify(hd);
+      db.prepare(`UPDATE mcp_servers SET name=?, transport=?, url=?, headers=?, enabled=?,
+                  updated_at=strftime('%s','now') WHERE id=?`).run(name, tr, url, keep, en, id);
+    } else {
+      db.prepare('INSERT INTO mcp_servers (name, transport, url, headers, enabled) VALUES (?,?,?,?,?)')
+        .run(name, tr, url, JSON.stringify(hd), en);
+    }
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) return res.status(400).json({ error: '这个名字已经有了' });
+    return res.status(500).json({ error: '存不进去：' + e.message });
+  }
+  const n = regenMcpConfig();
+  res.json({ ok: true, active: n });
+});
+
+app.post('/api/mcp/toggle', auth, (req, res) => {
+  const { id } = req.body || {};
+  const r = db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id);
+  if (!r) return res.status(404).json({ error: '没这条' });
+  db.prepare("UPDATE mcp_servers SET enabled = ?, updated_at = strftime('%s','now') WHERE id = ?")
+    .run(r.enabled ? 0 : 1, id);
+  const n = regenMcpConfig();
+  res.json({ ok: true, enabled: !r.enabled, active: n });
+});
+
+app.post('/api/mcp/delete', auth, (req, res) => {
+  const { id } = req.body || {};
+  const r = db.prepare('SELECT name FROM mcp_servers WHERE id = ?').get(id);
+  if (!r) return res.status(404).json({ error: '没这条' });
+  db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id);
+  const n = regenMcpConfig();
+  res.json({ ok: true, name: r.name, active: n });
+});
+
+// 探活：她加完想知道到底连不连得上。只打一个 initialize，不跑任何工具。
+// ⚠️ 这一枪是**服务器发出去的**，她填什么地址就打什么地址 —— 所以挡住内网地址，
+//    不然这个接口就成了一把探她自己内网的枪（SSRF）。
+app.post('/api/mcp/ping', auth, async (req, res) => {
+  const { id } = req.body || {};
+  const r = db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id);
+  if (!r) return res.status(404).json({ error: '没这条' });
+  let host = '';
+  try { host = new URL(r.url).hostname; } catch (e) { return res.json({ ok: false, msg: '地址不合法' }); }
+  if (/^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|\[?::1)/i.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+    return res.json({ ok: false, msg: '不测内网地址' });
+  }
+  let hd = {};
+  try { hd = JSON.parse(r.headers || '{}') || {}; } catch (e) {}
+
+  // MCP over HTTP 的回包可能是 application/json，也可能是 text/event-stream
+  // （Streamable HTTP 那档）。两种都得认，不然全新加的 server 一律显示「连不上」。
+  async function rpc(method, params, sid) {
+    const h = Object.assign({
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+    }, hd);
+    if (sid) h['Mcp-Session-Id'] = sid;
+    const resp = await fetch(r.url, {
+      method: 'POST', headers: h,
+      body: JSON.stringify({ jsonrpc: '2.0', id: Date.now() % 100000, method, params: params || {} }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const txt = await resp.text();
+    let body = null;
+    try {
+      body = JSON.parse(txt);
+    } catch (e) {
+      // SSE：挑出第一行 data: 里的 JSON
+      const dl = txt.split('\n').find(l => l.startsWith('data:'));
+      if (dl) { try { body = JSON.parse(dl.slice(5).trim()); } catch (_) {} }
+    }
+    return { resp, body, sid: resp.headers.get('mcp-session-id') || sid };
+  }
+
+  try {
+    const init = await rpc('initialize', {
+      protocolVersion: '2024-11-05', capabilities: {},
+      clientInfo: { name: 'chat-c', version: '1.0' },
+    });
+    if (!init.resp.ok) {
+      // 不回 body —— 对面可能把请求头原样回显，那里头有她的 key。只回状态码。
+      return res.json({ ok: false, msg: '对面回 ' + init.resp.status });
+    }
+    // 数工具。数不出来不算失败 —— 连上了就是连上了，有些 server 要求先 initialized。
+    let n = null;
+    try {
+      await rpc('notifications/initialized', {}, init.sid).catch(() => {});
+      const tl = await rpc('tools/list', {}, init.sid);
+      const arr = tl.body && tl.body.result && tl.body.result.tools;
+      if (Array.isArray(arr)) n = arr.length;
+    } catch (e) {}
+    res.json({ ok: true, msg: n === null ? '连得上' : ('连得上 · ' + n + ' 个工具'), tools: n });
+  } catch (e) {
+    res.json({ ok: false, msg: e.name === 'TimeoutError' ? '超时（8 秒）' : '连不上' });
+  }
+});
 
 // ============================================================
 // === 他自己醒过来（2026-08-22）===

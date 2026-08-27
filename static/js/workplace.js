@@ -229,15 +229,33 @@
       flow.append(card); toBottom();
     }
 
-    // 重放内存里的对话（抽屉关了再开）
-    convo.forEach(function (m) {
-      if (m.who === 'her') bubbleHer(m.text);
-      else if (m.who === 'him') {
-        var hb = bubbleHim();
-        hb.body.textContent = m.text;
-        (m.tools || []).forEach(function (t) { toolLine(hb.wrap, t.name, t.input); });
-      } else if (m.who === 'diff') diffCard(m.diff);
-    });
+    // 重放对话。
+    function replay(list) {
+      list.forEach(function (m) {
+        if (m.who === 'her') bubbleHer(m.text);
+        else if (m.who === 'him') {
+          var hb = bubbleHim();
+          hb.body.textContent = m.text;
+          (m.tools || []).forEach(function (t) { toolLine(hb.wrap, t.name, t.input); });
+        } else if (m.who === 'diff') diffCard(m.diff);
+      });
+    }
+    replay(convo);
+
+    // 08-27：convo 是纯内存的，**刷新一次就空**。以前只靠它，所以每次重新加载页面
+    //   工作台都是一片白 —— 而她正要打包成 iOS app，webview 每次启动就是一次刷新，
+    //   等于每次打开都不知道自己跟这边聊过什么。（CLI 那头 --resume 记得，失忆的只有界面。）
+    //   → 内存里没有就去后端拉当前这条会话的记录。
+    //   拉回来之后灌回 convo，这样后面「新话题」清空、追加新消息那些逻辑都不用改。
+    if (!convo.length) {
+      api('/api/workplace/history').then(function (r) { return r.json(); }).then(function (d) {
+        var list = (d && d.messages) || [];
+        if (!list.length || convo.length) return;   // 期间她已经说话了就别插队
+        convo = list.slice();
+        replay(list);
+        toBottom();
+      }).catch(function () {});
+    }
 
     // ── 底：输入条 ──
     var dock = h('div', 'flex:none;padding:8px var(--page-pad) calc(env(safe-area-inset-bottom) + 8px);background:transparent');
