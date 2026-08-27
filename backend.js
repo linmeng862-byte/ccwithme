@@ -8183,10 +8183,23 @@ app.get('/api/artifacts/:id', auth, (req, res) => {
 
 // 前端每认出一个生成物就 POST 一次，所以这里必须幂等：
 // 同一 conv 里标题和内容都没变的，认成同一个，只更新时间，不再堆一条。
+// 2026-08-27：作品集从「只收 HTML/SVG」扩成合集，md 和 pdf 也进这里。
+//   html/svg/md 的 content 是原文；pdf 的 content 是 base64——TEXT 列存不了二进制。
+//   类型不在白名单就打回：别让将来某个手滑的 POST 存进一堆前端不认识的东西。
+const ARTIFACT_LANGS = new Set(['html', 'svg', 'md', 'pdf']);
+const ARTIFACT_MAX_BYTES = 24 * 1024 * 1024;
+
 app.post('/api/artifacts', auth, (req, res) => {
   const { title, language, content, conv_id, msg_id } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'title required' });
+  const lang = String(language || 'html').toLowerCase();
+  if (!ARTIFACT_LANGS.has(lang)) {
+    return res.status(400).json({ error: '不支持的类型：' + lang + '（只收 html / svg / md / pdf）' });
+  }
   const body = String(content || '');
+  if (Buffer.byteLength(body) > ARTIFACT_MAX_BYTES) {
+    return res.status(413).json({ error: '这个文件超过 24MB 了，作品集放不下' });
+  }
   // 同名同内容就是同一个作品——不看 conv_id。
   // create_artifact 工具会先落一条没有 conv_id 的保底记录，前端随后带着 conv_id 再 POST 一次；
   // 把 conv_id 算进同一性的话，那两次会存成两条一模一样的东西。
@@ -8204,7 +8217,7 @@ app.post('/api/artifacts', auth, (req, res) => {
   const id = crypto.randomUUID();
   db.prepare(
     'INSERT INTO artifacts (id, title, language, content, conv_id, msg_id) VALUES (?,?,?,?,?,?)'
-  ).run(id, String(title), String(language || 'html'), body, conv_id || null,
+  ).run(id, String(title), lang, body, conv_id || null,
         Number.isFinite(+msg_id) ? +msg_id : null);
   res.json({ ok: true, id });
 });

@@ -1372,6 +1372,19 @@ html[data-theme="dark"]{--bubble-her:#332A2C}
 .artifact-act:hover{background:var(--text-primary);color:var(--bg-primary)}
 .artifact-act:active{transform:scale(.92)}
 .artifact-act:disabled{opacity:.5;cursor:default}
+/* 删除是最后一颗，hover 才变红——平时别一直瞪着她 */
+.artifact-row .artifact-act:last-child:hover{background:#B3382C;color:#fff}
+
+/* 顶上那条「加文件」：虚线框，跟底部那条实心的分开 */
+#artifactsAddBtn{
+  display:block;width:100%;margin:2px 0 14px;
+  padding:13px 0;border:1px dashed var(--border);border-radius:14px;
+  background:transparent;color:var(--text-secondary);
+  font:500 14px/1 var(--font-sans);cursor:pointer;
+  transition:border-color .15s,color .15s;
+}
+#artifactsAddBtn:hover{border-color:var(--text-secondary);color:var(--text-primary)}
+#artifactsAddBtn:active{transform:scale(.99)}
 
 /* 底部那条黑色 Download all —— 原来是顶上一个虚线框 */
 #artifactsDlAll{

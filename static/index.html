@@ -792,10 +792,22 @@ if(_screenTimeSupported){
 toolsBody.append(flRow,stRow);
 tools.append(toolsBody);
 c.append(tools);
+// 顶上一条：往合集里加文件。空的时候也要在，不然没有入口。
+var addBar=document.createElement('button');
+addBar.id='artifactsAddBtn';
+addBar.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:8px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>加文件（html / svg / md / pdf）';
+addBar.onclick=function(){
+  var inp=document.createElement('input');
+  inp.type='file';inp.accept='.html,.htm,.svg,.md,.markdown,.pdf';
+  inp.onchange=function(){if(inp.files&&inp.files[0])_uploadArtifactFile(inp.files[0])};
+  inp.click();
+};
+c.append(addBar);
+
 if(!_artifactsList.length){
   var emptyMsg=document.createElement('div');
   emptyMsg.style.cssText='text-align:center;padding:40px;color:var(--text-secondary);font-size:15px';
-  emptyMsg.innerHTML='还没有生成物。<br>让 Claude 生成 HTML 或 SVG 吧。';
+  emptyMsg.innerHTML='合集还是空的。<br>让他生成，或者点上面加一个 md / pdf 进来。';
   c.append(emptyMsg);return;
 }
 
@@ -809,9 +821,10 @@ _artifactsList.forEach(function(art){
   var hdr=document.createElement('div');
   hdr.style.cssText='display:flex;align-items:center;gap:12px;padding:12px 14px;user-select:none;cursor:pointer';
 
+  var ty=_artType(art);
   var iconBox=document.createElement('div');
   iconBox.style.cssText='width:38px;height:38px;border-radius:11px;background:#3D3A36;color:#F5F2ED;display:grid;place-items:center;font:700 12px var(--font-mono);flex:none';
-  iconBox.innerHTML=lang==='html'?'&lt;/&gt;':lang.toUpperCase().slice(0,2);
+  iconBox.innerHTML=ty.icon;
 
   var info=document.createElement('div');
   info.style.cssText='flex:1;min-width:0';
@@ -820,7 +833,7 @@ _artifactsList.forEach(function(art){
   n.textContent=art.title;
   var t=document.createElement('div');
   t.style.cssText='font:12px var(--font-sans);color:var(--text-time);margin-top:3px';
-  t.textContent='Code · '+lang.toUpperCase();
+  t.textContent=ty.label;
   info.append(n,t);
 
   var dlBtn=document.createElement('button');
@@ -835,7 +848,13 @@ _artifactsList.forEach(function(art){
   sendBtn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
   sendBtn.onclick=function(e){e.stopPropagation();_sendArtifactToHim(art,sendBtn)};
 
-  hdr.append(iconBox,info,dlBtn,sendBtn);
+  var delBtn=document.createElement('button');
+  delBtn.className='artifact-act';
+  delBtn.title='删除 '+art.title;
+  delBtn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>';
+  delBtn.onclick=function(e){e.stopPropagation();_deleteArtifact(art)};
+
+  hdr.append(iconBox,info,dlBtn,sendBtn,delBtn);
   card.append(hdr);
 
   // 点卡片本身 = 展开预览（正文是懒加载的，从库里来的要先拉回来）
@@ -845,10 +864,24 @@ _artifactsList.forEach(function(art){
     var show=function(){
       if(!art.content){toast('这个作品没有正文');return}
       expanded=true;
+      if(ty.ext==='.md'){
+        // md 直接用聊天里那套 marked 渲染，不套 iframe——省一个文档，也跟着主题走
+        frame=document.createElement('div');
+        frame.className='md';
+        frame.style.cssText='padding:14px 18px 18px;border-top:1px solid var(--border);font:15px/1.75 var(--font-sans);color:var(--text-primary);overflow-x:auto';
+        try{frame.innerHTML=window.marked?marked.parse(art.content,{breaks:true,gfm:true}):'<pre></pre>'}
+        catch(e){frame.textContent=art.content}
+        if(!window.marked)frame.querySelector('pre').textContent=art.content;
+        frame.querySelectorAll('a[href]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')});
+        card.append(frame);return;
+      }
+      var blob=_artifactBlob(art);
+      if(!blob){toast('这个文件坏了，打不开');expanded=false;return}
       frame=document.createElement('iframe');
-      frame.style.cssText='width:100%;min-height:400px;border:none;border-top:1px solid var(--border);display:block';
-      frame.sandbox='allow-scripts';
-      frame.src=URL.createObjectURL(new Blob([art.content],{type:'text/html'}));
+      frame.style.cssText='width:100%;min-height:'+(ty.ext==='.pdf'?'620px':'400px')+';border:none;border-top:1px solid var(--border);display:block';
+      // PDF 要用浏览器自带的阅读器，sandbox 会把它关掉，所以只给 html/svg 上 sandbox
+      if(ty.ext!=='.pdf')frame.sandbox='allow-scripts';
+      frame.src=URL.createObjectURL(blob);
       card.append(frame);
     };
     if(art.content){show();return}
@@ -898,9 +931,112 @@ function _sendArtifactToHim(art,btn){
 }
 
 function _showArtifactFull(art){var w=window.open('','_blank','');if(w){w.document.write(art.content);w.document.close()}}
+// ── 作品集类型表（2026-08-27）────────────────────────────────────────────
+// 以前不管什么东西都当 HTML 下，md 会存成 .html。现在按类型来。
+// pdf 的 content 是 base64，别的都是原文。
+var _ART_TYPES={
+  html:{mime:'text/html;charset=utf-8',ext:'.html',label:'HTML',icon:'&lt;/&gt;'},
+  svg :{mime:'image/svg+xml;charset=utf-8',ext:'.svg',label:'SVG',icon:'SVG'},
+  md  :{mime:'text/markdown;charset=utf-8',ext:'.md', label:'Markdown',icon:'MD'},
+  pdf :{mime:'application/pdf',ext:'.pdf',label:'PDF',icon:'PDF'}
+};
+function _artType(art){return _ART_TYPES[(art&&art.language||'html').toLowerCase()]||_ART_TYPES.html}
+// 标题里可能已经带扩展名了（她上传的文件就是），别下成 xxx.md.md
+function _artFilename(art){
+  var t=_artType(art),name=String(art&&art.title||'artifact');
+  return name.toLowerCase().slice(-t.ext.length)===t.ext?name:name+t.ext;
+}
+// base64 → Blob。PDF 走这条；atob 出来是二进制字符串，必须逐字节搬进 Uint8Array。
+function _b64ToBlob(b64,mime){
+  var clean=String(b64||'').replace(/^data:[^,]*,/,'').replace(/\s/g,'');
+  var bin=atob(clean),len=bin.length,buf=new Uint8Array(len);
+  for(var i=0;i<len;i++)buf[i]=bin.charCodeAt(i);
+  return new Blob([buf],{type:mime});
+}
+function _artifactBlob(art){
+  var t=_artType(art);
+  if(t.ext==='.pdf'){try{return _b64ToBlob(art.content,t.mime)}catch(e){return null}}
+  return new Blob([art.content],{type:t.mime});
+}
 // 库里来的作品正文是懒加载的，直接下会存出空文件——先把正文补齐再下
-function _downloadArtifact(art){if(!art)return;if(art._lazy&&!art.content){_fetchArtifactContent(art).then(function(){if(art.content)_downloadArtifact(art);else toast('这个作品没有正文')});return}if(!art.content)return;var blob=new Blob([art.content],{type:'text/html;charset=utf-8'});var url=URL.createObjectURL(blob);var w=window.open(url,'_blank');if(!w){var a=document.createElement('a');a.href=url;a.download=art.title||'artifact.html';document.body.appendChild(a);a.click();document.body.removeChild(a)}setTimeout(function(){URL.revokeObjectURL(url)},2000)}
+function _downloadArtifact(art){if(!art)return;if(art._lazy&&!art.content){_fetchArtifactContent(art).then(function(){if(art.content)_downloadArtifact(art);else toast('这个作品没有正文')});return}if(!art.content)return;var blob=_artifactBlob(art);if(!blob){toast('这个文件坏了，下不了');return}var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=_artFilename(art);document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(url)},2000)}
 function _downloadAllArtifacts(){var list=_artifactsList.filter(function(a){return a.content});if(!list.length){toast('No artifacts to download');return}list.forEach(function(art,i){setTimeout(function(){_downloadArtifact(art)},i*350)});toast('Downloading '+list.length+' artifacts…')}
+
+// ── 删除（二次确认）─────────────────────────────────────────────────────
+// 删了就没了，所以先弹一次。Esc 和点背景都算取消。
+function _confirmDelete(name,onYes){
+  var mask=document.createElement('div');
+  mask.style.cssText='position:fixed;inset:0;background:rgba(20,18,16,.42);z-index:9999;display:grid;place-items:center;padding:24px';
+  var box=document.createElement('div');
+  box.style.cssText='background:var(--bg-surface);border:1px solid var(--border);border-radius:18px;max-width:340px;width:100%;padding:22px 22px 16px;box-shadow:0 12px 40px rgba(0,0,0,.18)';
+  var h=document.createElement('div');
+  h.style.cssText='font:600 16px/1.4 var(--font-sans);color:var(--text-primary);margin-bottom:8px';
+  h.textContent='删除这个作品？';
+  var p=document.createElement('div');
+  p.style.cssText='font:14px/1.6 var(--font-sans);color:var(--text-secondary);margin-bottom:20px;word-break:break-all';
+  p.textContent='《'+name+'》删掉就找不回来了。';
+  var row=document.createElement('div');
+  row.style.cssText='display:flex;gap:10px;justify-content:flex-end';
+  var no=document.createElement('button');
+  no.style.cssText='padding:9px 18px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--text-primary);font:500 14px var(--font-sans);cursor:pointer';
+  no.textContent='取消';
+  var yes=document.createElement('button');
+  yes.style.cssText='padding:9px 18px;border-radius:12px;border:1px solid #B3382C;background:#B3382C;color:#fff;font:600 14px var(--font-sans);cursor:pointer';
+  yes.textContent='删除';
+  function close(){document.removeEventListener('keydown',onKey);mask.remove()}
+  function onKey(e){if(e.key==='Escape')close()}
+  no.onclick=close;
+  mask.onclick=function(e){if(e.target===mask)close()};
+  yes.onclick=function(){close();onYes()};
+  document.addEventListener('keydown',onKey);
+  row.append(no,yes);box.append(h,p,row);mask.append(box);document.body.append(mask);
+  yes.focus();
+}
+function _deleteArtifact(art){
+  _confirmDelete(art.title||'未命名',function(){
+    // 只在本地列表里的（还没落库）就直接从数组里拿掉
+    var drop=function(){
+      _artifactsList=_artifactsList.filter(function(a){return a!==art});
+      _renderArtifactsSheet();toast('已删除');
+    };
+    if(!art.id){drop();return}
+    api('/api/artifacts/'+encodeURIComponent(art.id),{method:'DELETE'})
+      .then(function(r){if(!r.ok)throw new Error(r.status);drop()})
+      .catch(function(){toast('删除失败，没删掉')});
+  });
+}
+
+// ── 往合集里加文件（html / svg / md / pdf）───────────────────────────────
+function _uploadArtifactFile(file){
+  if(!file)return;
+  var name=file.name||'file';
+  var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toLowerCase():'';
+  var lang={html:'html',htm:'html',svg:'svg',md:'md',markdown:'md',pdf:'pdf'}[ext];
+  if(!lang){toast('只收 html / svg / md / pdf');return}
+  if(file.size>24*1024*1024){toast('超过 24MB 了，放不下');return}
+  var rd=new FileReader();
+  rd.onerror=function(){toast('读不了这个文件')};
+  rd.onload=function(){
+    var content;
+    if(lang==='pdf'){
+      // reader 给的是 data:application/pdf;base64,xxxx —— 只留逗号后面那截
+      content=String(rd.result||'');
+      content=content.slice(content.indexOf(',')+1);
+    }else{
+      content=String(rd.result||'');
+    }
+    api('/api/artifacts',{method:'POST',body:JSON.stringify({title:name,language:lang,content:content})})
+      .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d}})})
+      .then(function(x){
+        if(!x.ok){toast(x.d&&x.d.error||'加不进去');return}
+        _artifactsList.unshift({id:x.d.id,title:name,language:lang,content:content});
+        var btn=$('artifactsTopBtn');if(btn)btn.style.display='';
+        _renderArtifactsSheet();toast('已加进合集');
+      })
+      .catch(function(){toast('加不进去')});
+  };
+  if(lang==='pdf')rd.readAsDataURL(file);else rd.readAsText(file,'utf-8');
+}
 
 var _MUSIC_PLAY_SVG='<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><polygon points="6,3 20,12 6,21"/></svg>';var _MUSIC_PAUSE_SVG='<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="5" y="3" width="5" height="18" rx="1"/><rect x="14" y="3" width="5" height="18" rx="1"/></svg>';
 function _renderMusicCard(m,parent){if(!m||!m.title||!parent)return;var coverSvg='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23DA7756" width="100" height="100"/><circle cx="50" cy="45" r="18" fill="none" stroke="%23fff" stroke-width="3"/><polygon points="44,38 44,52 58,45" fill="%23fff"/></svg>');function coverProxy(u){return u?assetUrl('/api/music/cover?url='+encodeURIComponent(u)):coverSvg}var card=document.createElement('div');card.className='music-card';card.style.margin='8px 0';var img=document.createElement('img');img.className='music-card-cover';img.src=coverProxy(m.cover_url);img.onerror=function(){img.src=coverSvg};if(!m.cover_url){var q=encodeURIComponent(m.title+' '+(m.artist||''));fetch('/api/music/search?q='+q).then(function(r){return r.json()}).then(function(d){var s=(d.songs||[])[0];if(s&&s.cover){img.src=coverProxy(s.cover);m.cover_url=s.cover}}).catch(function(){})}var info=document.createElement('div');info.className='music-card-info';var titleEl=document.createElement('div');titleEl.className='music-card-title';titleEl.textContent=m.title;var artistEl=document.createElement('div');artistEl.className='music-card-artist';artistEl.textContent=m.artist||'';var timeEl=document.createElement('div');timeEl.className='music-card-time';timeEl.textContent='0:00 / --:--';var progWrap=document.createElement('div');progWrap.className='music-card-progress';var progBar=document.createElement('div');progBar.className='music-card-progress-bar';progBar.style.width='0%';progWrap.append(progBar);info.append(titleEl,artistEl,timeEl,progWrap);var playBtn=document.createElement('button');playBtn.className='music-play-btn';playBtn.innerHTML=_MUSIC_PLAY_SVG;card.append(img,info,playBtn);var audio=null,playing=false;card.style.cursor="pointer";card.onclick=function(e){if(e.target===playBtn||e.target===progWrap||e.target===progBar||e.target===img)return;_showLyricsSheet(m);};function fmtTime(s){var mn=Math.floor(s/60),sc=Math.floor(s%60);return mn+':'+(sc<10?'0':'')+sc}playBtn.onclick=function(e){e.stopPropagation();if(playing){audio.pause();playing=false;playBtn.innerHTML=_MUSIC_PLAY_SVG;playBtn.classList.add('paused');if(typeof setClawdMood==='function')setClawdMood('idle');return}if(!audio&&m.audio_url){audio=new Audio(assetUrl(m.audio_url));audio.ontimeupdate=function(){var pct=audio.duration?audio.currentTime/audio.duration*100:0;progBar.style.width=pct+'%';timeEl.textContent=fmtTime(audio.currentTime)+' / '+fmtTime(audio.duration)};audio.onloadedmetadata=function(){timeEl.textContent='0:00 / '+fmtTime(audio.duration)};audio.onended=function(){playing=false;playBtn.innerHTML=_MUSIC_PLAY_SVG;playBtn.classList.add('paused');progBar.style.width='0%';timeEl.textContent='0:00 / '+fmtTime(audio.duration||0);if(typeof setClawdMood==='function')setClawdMood('idle')}}if(!audio){_showMusicSearch(m.title,m.artist||'',playBtn,timeEl,progBar);return}audio.play();playing=true;playBtn.innerHTML=_MUSIC_PAUSE_SVG;playBtn.classList.remove("paused");_lyricsAudio=audio;_lyricsIdx=-1;if(typeof setClawdMood==='function')setClawdMood('groove')};progWrap.onclick=function(e){e.stopPropagation();if(audio&&audio.duration){var rect=progWrap.getBoundingClientRect();audio.currentTime=((e.clientX-rect.left)/rect.width)*audio.duration}};parent.appendChild(card)}
