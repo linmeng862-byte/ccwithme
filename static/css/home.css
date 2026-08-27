@@ -1649,3 +1649,14 @@ html[data-theme="light"] .glass-btn{
 .home-weather svg{flex:none;opacity:.85}
 @media(prefers-color-scheme:dark){.home-weather{color:rgba(255,255,255,.6)}}
 html[data-theme="dark"] .home-weather{color:rgba(255,255,255,.6)}
+
+/* 08-27 他从相册发来的照片 —— 大图 + caption，跟她 workplace 发图对齐。
+   不是卡片：发图是他在给她看一张照片，不该包在回执卡里。 */
+.gallery-photo-msg{margin:8px 0;max-width:min(440px,78%)}
+.gallery-photo-img{display:block;width:100%;height:auto;border-radius:16px;cursor:zoom-in;background:var(--bg-surface)}
+.gallery-photo-caption{margin-top:6px;font:400 13px/1.5 var(--font-sans);color:var(--text-time)}
+html.as-non .gallery-photo-msg{align-self:flex-end}
+
+/* 08-27：点他设的 task 胶囊 → 直接开小票，闪一下他设的那行 */
+@keyframes rc-item-flash{0%,100%{background:transparent}25%,75%{background:rgba(196,168,130,.28)}}
+.rc-item-flash{animation:rc-item-flash 1.5s ease-in-out;border-radius:8px}

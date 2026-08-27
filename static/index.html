@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787548401">
+<link rel="stylesheet" href="/css/home.css?v=1787548403">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -267,10 +267,15 @@
            改成同一套：用 icons 表里新加的 calendar 路径，走 data-icon，跟别的图标同一条渲染路径。 -->
       <button class="mobile-sidebar-nav-item" id="drawerCalendar" type="button"><span class="mobile-sidebar-nav-icon" data-icon="calendar"></span><span>Calendar</span></button>
       <button class="mobile-sidebar-nav-item" id="atrioBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="atrio"></span><span>Atrio</span></button>
-            <button class="mobile-sidebar-nav-item" id="artifactsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="artifacts"></span><span>workplace</span></button>
+            <button class="mobile-sidebar-nav-item" id="artifactsBtn" type="button"><span class="mobile-sidebar-nav-icon" data-icon="artifacts"></span><span>Workplace</span></button>
       
       <button class="mobile-sidebar-nav-item" id="openMemory"><span class="mobile-sidebar-nav-icon" data-icon="memory"></span><span>Memory</span></button>
-      <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><path d="M2 13h12M4 13V8M8 13V4M12 13v-3"/></svg></span><span>usage</span></button>
+      <!-- 08-27：这一格原来是手写描边 svg（16x16，stroke-width 1.6），跟上面四个
+           Phosphor 填色图标（256 viewBox，fill="currentColor"）不是一套，看着细一号 ——
+           跟 08-24 Calendar 那次是同一个坑。改成 icons 表里新加的 usage（Phosphor ChartBar），
+           走 data-icon 同一条渲染路径。文字也一并 usage→Usage、workplace→Workplace，
+           跟 Calendar/Atrio/Memory 对齐首字母大写。 -->
+      <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon" data-icon="usage"></span><span>Usage</span></button>
 
 <div class="drawer-api-section" style="padding:12px 16px;border-top:1px solid var(--bg-sunken)">
 <div class="drawer-api-header" style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" id="drawerApiToggle" onclick="var f=document.getElementById('drawerApiForm');f.style.display=f.style.display==='block'?'none':'block';var c=document.getElementById('drawerApiChevron');if(c)c.style.transform=f.style.display==='block'?'rotate(180deg)':''"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16"><circle cx="8" cy="5" r="3"/><path d="M3 14v-1a4 4 0 018 0v1"/></svg><span style="flex:1;font:500 13px var(--font-sans);color:var(--text-secondary)">语音配置</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" id="drawerApiChevron"><path d="M4 6l4 4 4-4"/></svg></div>
@@ -388,21 +393,57 @@
   <div class="memory-search-bar" id="memorySearchBar"><div class="memory-search-bubble"><span class="memory-search-icon"></span><input class="memory-search-input" id="memorySearchInput" type="text" placeholder="Search" autocomplete="off" autocorrect="off" spellcheck="false"><button class="memory-search-clear hidden" id="memorySearchClear" aria-label="Clear">×</button></div></div>
 </section>
 
-<section id="stickerPanel" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:25;background:var(--bg-primary);border-top:1px solid var(--border);padding:12px 16px;max-height:40vh;overflow-y:auto;border-radius:20px 20px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.1)">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+<section id="stickerPanel" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:25;background:var(--bg-primary);border-top:1px solid var(--border);padding:12px 16px;max-height:46vh;overflow-y:auto;border-radius:20px 20px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.1)">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
     <span style="font:600 14px var(--font-sans)">Stickers</span>
-    <div style="display:flex;gap:8px" id="stickerCats"></div>
-    <button id="closeSticker" style="border:none;background:var(--bg-sunken);width:32px;height:32px;border-radius:50%;font-size:20px;cursor:pointer;color:var(--text-secondary);display:flex;align-items:center;justify-content:center">&times;</button>
+    <!-- 她的 / 他的：owner 分栏。库里 owner 就是 user / assistant 两个值 -->
+    <div style="display:flex;background:var(--bg-sunken);border-radius:12px;padding:2px" id="stickerOwnerTabs">
+      <button class="stk-tab" data-owner="user" style="padding:5px 14px;border:none;border-radius:10px;font:500 12px var(--font-sans);cursor:pointer">她的</button>
+      <button class="stk-tab" data-owner="assistant" style="padding:5px 14px;border:none;border-radius:10px;font:500 12px var(--font-sans);cursor:pointer">他的</button>
+    </div>
+    <div style="flex:1"></div>
+    <label id="stickerAddBtn" title="添加" style="width:30px;height:30px;border-radius:50%;background:var(--bg-sunken);display:grid;place-items:center;cursor:pointer;font-size:17px;color:var(--text-secondary)">+
+      <input type="file" id="stickerFileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" style="display:none" />
+    </label>
+    <button id="stickerEditToggle" title="编辑" style="width:30px;height:30px;border-radius:50%;background:var(--bg-sunken);border:none;cursor:pointer;color:var(--text-secondary);display:grid;place-items:center">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+    </button>
+    <button id="closeSticker" style="border:none;background:var(--bg-sunken);width:30px;height:30px;border-radius:50%;font-size:19px;cursor:pointer;color:var(--text-secondary);display:grid;place-items:center">&times;</button>
   </div>
   <div id="stickerGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"></div>
-  <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
-    <label style="font:12px var(--font-sans);color:var(--text-secondary);cursor:pointer">
-      + Upload sticker
-      <input type="file" id="stickerFileInput" accept="image/png,image/jpg,image/jpeg,image/gif,image/webp" style="display:none" />
-    </label>
-    <input id="stickerCategory" type="text" placeholder="分类 (如: happy, cry, love)" style="margin-left:8px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font:12px var(--font-sans);width:140px" />
-  </div>
 </section>
+
+<!-- 表情编辑卡片（她图里那张）。描述那栏标了「必填」—— 他只看一帧，
+     没有描述就等于给他一张看不懂的图。 -->
+<div id="stickerEditSheet" style="display:none;position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.45);backdrop-filter:blur(3px)">
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(380px,92vw);max-height:88vh;overflow-y:auto;background:var(--bg-primary);border-radius:22px;padding:20px">
+    <div style="display:flex;align-items:flex-start;margin-bottom:14px">
+      <div style="flex:1">
+        <div id="stkEditTitle" style="font:600 19px var(--font-sans)"></div>
+        <div id="stkEditStatus" style="font:12px var(--font-sans);color:var(--text-time);margin-top:3px"></div>
+      </div>
+      <button id="stkEditClose" style="border:none;background:transparent;font-size:22px;cursor:pointer;color:var(--text-secondary)">&times;</button>
+    </div>
+    <img id="stkEditImg" style="width:100%;max-height:230px;object-fit:contain;background:var(--bg-sunken);border-radius:14px;margin-bottom:16px">
+    <div style="font:500 12px var(--font-sans);color:var(--text-secondary);margin-bottom:5px">名称</div>
+    <input id="stkEditName" style="width:100%;padding:11px;border:1px solid var(--border);border-radius:11px;font:15px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;margin-bottom:15px">
+    <div style="font:500 12px var(--font-sans);color:var(--text-secondary);margin-bottom:5px">属于谁</div>
+    <div style="display:flex;background:var(--bg-sunken);border-radius:12px;padding:3px;margin-bottom:15px" id="stkEditOwner">
+      <button class="stk-own" data-owner="user" style="flex:1;padding:9px;border:none;border-radius:10px;font:500 14px var(--font-sans);cursor:pointer">她的</button>
+      <button class="stk-own" data-owner="assistant" style="flex:1;padding:9px;border:none;border-radius:10px;font:500 14px var(--font-sans);cursor:pointer">他的</button>
+    </div>
+    <div style="font:500 12px var(--font-sans);color:var(--text-secondary);margin-bottom:5px">这个表情正在做什么？通常代表什么情绪或语气？<span style="color:#E54D2E">必填</span></div>
+    <textarea id="stkEditDesc" rows="3" style="width:100%;padding:11px;border:1px solid var(--border);border-radius:11px;font:14px/1.5 var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;resize:vertical;margin-bottom:15px"></textarea>
+    <div style="font:500 12px var(--font-sans);color:var(--text-secondary);margin-bottom:5px">常用情绪标签</div>
+    <input id="stkEditTags" placeholder="开饭/开吃/品鉴" style="width:100%;padding:11px;border:1px solid var(--border);border-radius:11px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button id="stkEditDelete" style="border:none;background:transparent;color:#E54D2E;font:500 14px var(--font-sans);cursor:pointer;padding:10px 4px">删除</button>
+      <div style="flex:1"></div>
+      <button id="stkEditReprocess" style="padding:11px 16px;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-secondary);border-radius:12px;font:500 14px var(--font-sans);cursor:pointer">重新处理</button>
+      <button id="stkEditSave" style="padding:11px 20px;border:none;background:var(--accent);color:#fff;border-radius:12px;font:600 14px var(--font-sans);cursor:pointer">保存修改</button>
+    </div>
+  </div>
+</div>
 
 <section id="diaryPanel" aria-hidden="true">
   <header class="profile-header" style="padding:calc(env(safe-area-inset-top) + 9px) 18px 0;flex:none">
@@ -711,7 +752,10 @@ const lucidePaths={
   x:'<path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/>',
   diary:'<path d="M200,32H168V24a8,8,0,0,0-16,0v8H104V24a8,8,0,0,0-16,0v8H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm0,176H56V48H88v8a8,8,0,0,0,16,0V48h48v8a8,8,0,0,0,16,0V48h32Z"/>',
   chatAdd:'<path d="M128,24A104,104,0,0,0,36.18,176.88L24.83,210.93a16,16,0,0,0,20.24,20.24l34.05-11.35A104,104,0,1,0,128,24Z"/><path fill="#fff" d="M172,120a8,8,0,0,1-8,8H136v28a8,8,0,0,1-16,0V128H92a8,8,0,0,1,0-16h28V84a8,8,0,0,1,16,0v28h28A8,8,0,0,1,172,120Z"/>',
-  calendar:'<path d="M208,32H180V24a12,12,0,0,0-24,0v8H100V24a12,12,0,0,0-24,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM76,56v8a12,12,0,0,0,24,0V56h56v8a12,12,0,0,0,24,0V56h12V80H64V56ZM64,200V104H192v96Z"/>',
+  calendar:'<path d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM72,48v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80H48V48ZM208,208H48V96H208Z"/>',
+  usage:'<path d="M224,200h-8V40a8,8,0,0,0-8-8H160a8,8,0,0,0-8,8V80H104a8,8,0,0,0-8,8v40H48a8,8,0,0,0-8,8v64H32a8,8,0,0,0,0,16H224a8,8,0,0,0,0-16ZM168,48h32V200H168ZM112,96h40V200H112ZM56,144H96v56H56Z"/>',
+  paperclip:'<path d="M209.66,122.34a8,8,0,0,1,0,11.32l-82.05,82a56,56,0,0,1-79.2-79.21L147.67,35.73a40,40,0,1,1,56.61,56.55L105,193A24,24,0,1,1,71,159L154.3,74.38A8,8,0,1,1,165.7,85.6L82.39,170.31a8,8,0,1,0,11.27,11.36L192.93,81A24,24,0,1,0,159,47L59.76,147.68a40,40,0,1,0,56.53,56.62l82.06-82A8,8,0,0,1,209.66,122.34Z"/>',
+  terminal:'<path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216Z"/><path d="M40,88H216v14H40Z"/><path d="M65,72a9,9,0,1,1-9-9A9,9,0,0,1,65,72Z"/><path d="M97,72a9,9,0,1,1-9-9A9,9,0,0,1,97,72Z"/><path d="M129,72a9,9,0,1,1-9-9A9,9,0,0,1,129,72Z"/>',
   history:'<path d="M136,80v43.47l36.12,21.67a8,8,0,0,1-8.24,13.72l-40-24A8,8,0,0,1,120,128V80a8,8,0,0,1,16,0Zm-8-48A95.44,95.44,0,0,0,60.08,60.15C52.81,67.51,46.35,74.59,40,82V64a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H72a8,8,0,0,0,0-16H49c7.15-8.42,14.27-16.35,22.39-24.57a80,80,0,1,1,1.66,114.75,8,8,0,1,0-11,11.64A96,96,0,1,0,128,32Z"/>'
 };
 const _actionPaths={copy:'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',share:'<path d="M12 2v13"/><path d="m16 6-4-4-4 4"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>',play:'<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/>',stop:'<rect width="18" height="18" x="3" y="3" rx="2"/>',up:'<path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/>',down:'<path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/>',audio:'<path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/>'};
@@ -1216,6 +1260,7 @@ function _renderTodos(){
 
 function _buildRow(it){
   var row=document.createElement('div');row.className='rc-item'+(it.done?' done':'');
+  row.dataset.todoId=it.id;   // 08-27：点他设的 task 胶囊要能定位到这行闪一下
   var check=document.createElement('button');check.className='rc-check';check.onclick=function(){_toggleItem(it)};row.appendChild(check);
   if(it.trigger_at){var t=document.createElement('span');t.className='rc-trigger'+(it.trigger_at<=Date.now()&&!it.done?' overdue':'');t.textContent=_badgeText(it.trigger_at);row.appendChild(t)}
   var body=document.createElement('div');body.className='rc-body';body.textContent=it.body;row.appendChild(body);
@@ -1739,10 +1784,9 @@ function _renderCallCards(row){
   var MISSED='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/><polyline points="22 3 22 8 17 8"/><line x1="22" y1="3" x2="16.5" y2="8.5"/></svg>';
   while((m=re.exec(text))!==null){
     var kind=m[1],dur=m[2]||"";
-    // 接通了的通话不再单独摆一条「语音通话 00:42」—— 说过的话本身已经
-    // 一条条语音条躺在记录里了，再来一条摘要就是重复。
-    // 未接 / 拒接留着：那两种情况没有内容，不摆就什么都看不见了。
-    if(kind==='ended'){row.style.display='none';return}
+    // 08-27：接通的通话以前被整条藏掉（理由是「语音条已经在记录里了，摘要重复」），
+    // 但她给的参考图里明确要那条「语音通话 02:17」—— 通话是一件独立发生过的事，
+    // 时长本身就是内容。改回照常渲染，三种状态都摆。
     // 按她给的参考图：图标带颜色，字是正常文字色（不是整条染色）。
     // 接通=中性电话、拒接=挂断、未接=带下箭头的来电（红的，一眼看得出漏掉了）。
     var icon=kind==='ended'?PHONE:(kind==='rejected'?HANGUP:MISSED);
@@ -3084,7 +3128,29 @@ var now=new Date();dateEl.textContent=now.getFullYear()+'/'+(now.getMonth()+1)+'
 content.append(dateEl);
 body.append(content);
 card.append(label,body);parent.appendChild(card)}
-function _renderGalleryShareCard(gs,parent){if(!gs||!gs.image_url||!parent)return;var albumName=gs.album_title||'Gallery';var caption=gs.caption||'';var card=document.createElement('div');card.className='memory-save-card';card.onclick=function(){if(typeof openGalleryPanel==='function'){openGalleryPanel();if(gs.album_id){setTimeout(function(){if(typeof _galleryAlbums!=='undefined'){var a=_galleryAlbums.find(function(x){return x.id===gs.album_id});if(a&&typeof _openAlbum==='function')_openAlbum(a.id)}},600)}}};var label=document.createElement('div');label.className='ms-label';label.textContent='相册回忆';var body=document.createElement('div');body.className='ms-body';var ICON_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="#C4A882" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';var thumbWrap=document.createElement('div');thumbWrap.className='ms-thumb-wrap';if(gs.image_url&&gs.image_url.indexOf('data:image/svg')===-1){var img=document.createElement('img');img.className='ms-thumb';img.src=assetUrl(gs.image_url);img.loading='lazy';img.onerror=function(){var d=document.createElement('div');d.className='ms-thumb-icon';d.innerHTML=ICON_SVG;thumbWrap.innerHTML='';thumbWrap.append(d);_addStarBadgeToThumb(thumbWrap)};thumbWrap.append(img);_addStarBadgeToThumb(thumbWrap)}else{var icon=document.createElement('div');icon.className='ms-thumb-icon';icon.innerHTML=ICON_SVG;thumbWrap.append(icon);_addStarBadgeToThumb(thumbWrap)}body.append(thumbWrap);var content=document.createElement('div');content.className='ms-content';var title=document.createElement('div');title.className='ms-title';title.textContent='来自 「'+albumName+'」';content.append(title);if(caption){var sub=document.createElement('div');sub.className='ms-subtitle';sub.textContent=caption;content.append(sub)}if(gs.created_at){var dateEl=document.createElement('div');dateEl.className='ms-date';var d=new Date(gs.created_at*1000);dateEl.textContent=d.getFullYear()+'/'+(d.getMonth()+1)+'/'+d.getDate();content.append(dateEl)}var footer=document.createElement('div');footer.className='ms-footer';var star=document.createElement('span');star.className='ms-star';star.innerHTML='<svg viewBox="0 0 14 13" fill="currentColor"><path d="M7 0l1.6 4.9h5.1l-4.1 3 1.6 4.9L7 9.8l-4.1 3 1.6-4.9-4.1-3h5.1z"/></svg>';footer.append(star);var meta=document.createElement('span');meta.className='ms-meta';meta.textContent=' 来自 Gallery · '+albumName;footer.append(meta);content.append(footer);body.append(content);card.append(label,body);parent.appendChild(card)}
+function _renderGalleryShareCard(gs,parent){
+  // 08-27 她要的：他从相册发来的照片，就该像她在 workplace 发图那样 —— 一张大图 + 一行 caption，
+  // 不是那张小缩略卡。缩略卡留给 save_to_gallery（「已存入相册」那条），两件事不一样：
+  // 存图是一条回执，发图是他在给她看一张照片。
+  if(!gs||!gs.image_url||!parent)return;
+  var caption=gs.caption||'';
+  var wrap=document.createElement('div');wrap.className='gallery-photo-msg';
+  var img=document.createElement('img');img.className='gallery-photo-img';
+  img.src=assetUrl(gs.image_url);img.loading='lazy';img.alt=caption;img.title='点击放大';
+  // 点开放大：复用她那侧图片同一个 .image-expand 灯箱，不另起一套
+  img.onclick=function(e){
+    e.stopPropagation();
+    var ex=document.createElement('div');ex.className='image-expand';
+    var fi=document.createElement('img');fi.src=img.src;ex.append(fi);
+    ex.onclick=function(){ex.remove()};
+    document.body.append(ex);
+  };
+  // 图挂了就整条不显示空框，退回一行文字，别留个碎图图标在那儿
+  img.onerror=function(){wrap.remove();if(caption&&parent){var t=document.createElement('div');t.className='gallery-photo-caption';t.textContent=caption;parent.appendChild(t)}};
+  wrap.append(img);
+  if(caption){var cap=document.createElement('div');cap.className='gallery-photo-caption';cap.textContent=caption;wrap.append(cap)}
+  parent.appendChild(wrap);
+}
 function _addStarBadgeToThumb(wrap){var badge=document.createElement('div');badge.className='ms-thumb-badge';badge.innerHTML='<svg viewBox="0 0 14 13" fill="#fff"><path d="M7 0l1.6 4.9h5.1l-4.1 3 1.6 4.9L7 9.8l-4.1 3 1.6-4.9-4.1-3h5.1z"/></svg>';wrap.append(badge)}
 function _addStarBadgeToImages(url){if(!url)return;var imgs=document.querySelectorAll('.msg-you img');imgs.forEach(function(img){if(!img.src)return;var match=img.src===url||img.src.indexOf(url)>-1;if(!match){try{var fname=url.split('/').pop();if(fname&&img.src.indexOf(fname)>-1)match=true}catch(e){}}if(match){var wrap=img.closest('.msg-you');if(wrap&&!wrap.querySelector('.gal-star-badge'))_addBadgeToImg(img)}})}
 function _addBadgeToImg(img){var parent=img.parentElement;if(!parent)return;parent.style.position=parent.style.position||'relative';var badge=document.createElement('div');badge.className='gal-star-badge';badge.style.cssText='position:absolute;bottom:8px;right:8px;width:24px;height:24px;border-radius:50%;background:#E8A8B8;display:grid;place-items:center;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:5';badge.innerHTML='<svg width="12" height="11" viewBox="0 0 14 13" fill="none"><path d="M7 0l1.6 4.9h5.1l-4.1 3 1.6 4.9L7 9.8l-4.1 3 1.6-4.9-4.1-3h5.1z" fill="#fff"/></svg>';parent.appendChild(badge)}
@@ -3240,7 +3306,14 @@ function _downloadFile(ev,id,name){
   }).catch(function(){try{toast('下载失败')}catch(e){}});
   return false;
 }
-function _renderToolFileCard(fc,parent){if(!fc||!fc.id||!parent)return;var name=fc.filename||'file';var id=fc.id;var sizeStr=fc.size?_formatFileSize(fc.size):'';var url='#';var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var card=document.createElement('a');card.href=url;card.download=name;card.onclick=function(ev){return _downloadFile(ev,id,name)};card.className='file-card';card.dataset.fileId=id;card.dataset.fileName=name;card.style.cssText='display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s';card.onmouseenter=function(){card.style.background='var(--bg-hover)'};card.onmouseleave=function(){card.style.background='var(--bg-surface)'};var iconSpan=document.createElement('span');iconSpan.style.cssText='display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none';iconSpan.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var infoSpan=document.createElement('span');infoSpan.style.cssText='flex:1;min-width:0';var nameEl=document.createElement('span');nameEl.style.cssText='display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';nameEl.textContent=name;var metaEl=document.createElement('span');metaEl.className='file-card-meta';metaEl.style.cssText='display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px';var parts=[ext.toLowerCase()];if(sizeStr)parts.push(sizeStr);metaEl.textContent=parts.join(' · ');var dlSpan=document.createElement('span');dlSpan.style.cssText='flex:none;color:var(--text-time)';dlSpan.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';infoSpan.append(nameEl,metaEl);card.append(iconSpan,infoSpan,dlSpan);parent.appendChild(card)}
+function _renderToolFileCard(fc,parent){if(!fc||!fc.id||!parent)return;
+// 08-27 她说「文件卡片渲染了两次」。跟 08-23 指令胶囊那次同一个模式：
+// 正文里的 [FILE:id] 由 _renderFileCards 画一张（在气泡里），trace 里的 file_card
+// 又由这儿画一张（在气泡外）—— 同一个文件，两条路各画各的，谁也不认识谁。
+// 这儿是后画的那条，看见整行范围内已经有同 id 的卡就不画了。
+var _scope=parent.closest?(parent.closest('.msg')||parent):parent;
+if(_scope.querySelector('.file-card[data-file-id="'+String(fc.id).replace(/"/g,'\\"')+'"]'))return;
+var name=fc.filename||'file';var id=fc.id;var sizeStr=fc.size?_formatFileSize(fc.size):'';var url='#';var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var card=document.createElement('a');card.href=url;card.download=name;card.onclick=function(ev){return _downloadFile(ev,id,name)};card.className='file-card';card.dataset.fileId=id;card.dataset.fileName=name;card.style.cssText='display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s';card.onmouseenter=function(){card.style.background='var(--bg-hover)'};card.onmouseleave=function(){card.style.background='var(--bg-surface)'};var iconSpan=document.createElement('span');iconSpan.style.cssText='display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none';iconSpan.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var infoSpan=document.createElement('span');infoSpan.style.cssText='flex:1;min-width:0';var nameEl=document.createElement('span');nameEl.style.cssText='display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';nameEl.textContent=name;var metaEl=document.createElement('span');metaEl.className='file-card-meta';metaEl.style.cssText='display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px';var parts=[ext.toLowerCase()];if(sizeStr)parts.push(sizeStr);metaEl.textContent=parts.join(' · ');var dlSpan=document.createElement('span');dlSpan.style.cssText='flex:none;color:var(--text-time)';dlSpan.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';infoSpan.append(nameEl,metaEl);card.append(iconSpan,infoSpan,dlSpan);parent.appendChild(card)}
 function _renderCmdCapsulesAfter(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html2=md.innerHTML;var re=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;var capsules=[];while((match=re.exec(html2))!==null){changed=true;var cid=match[1],ctype=match[2],ctitle=match[3];var cmdIcon=ctype==='quiz'?'\u{1F4DD}':ctype==='task'?'\u{1F4CB}':'\u23F1\uFE0F';var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',cid);cap.setAttribute('data-cmd-type',ctype);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.innerHTML='<span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});capsules.push(cap);html2=html2.replace(match[0],'')}if(changed){md.innerHTML=html2;var bubbleEl=body.querySelector('.bubble');var after=bubbleEl||md;capsules.forEach(function(c){after.after(c);after=c})}var existing=md.querySelectorAll('.cmd-capsule[data-cmd-id]');if(existing.length){var bubbleEl2=body.querySelector('.bubble');var after2=bubbleEl2||md;existing.forEach(function(c){c.remove();after2.after(c);after2=c})}
   // 08-23 她说「指令胶囊出现了三次」。上面这句只在 `md` 里找已有胶囊，可它把找到的
   // 移到了 msg-body（bubble 之后）—— 移出去就不在查询范围里了。于是 renderMessage
@@ -5446,6 +5519,14 @@ function showTimerWidget(){
   });
 }
 function hideTimerWidget(){
+  // 08-27 她说「番茄钟右滑形成的侧边小窗不显示剩余时间，圆环时间条也不变」。
+  // 根因在这儿：这个函数**只收卡片，不收贴边条**。番茄钟结束/取消时
+  // pollCommands 会把 _timerCmd 置空再调它 —— 卡片收了，pill 却留在屏幕上，
+  // 而 _tickTimer 第一行 `if(!_timerCmd)return` 让它再也不更新 → 数字和圆环就那么冻着。
+  // 顺带 clearInterval：以前这条路上没人停它，那个 200ms 的定时器会一直空转下去。
+  clearInterval(_timerInterval);_timerInterval=null;
+  if(typeof hideTimerPill==='function')hideTimerPill();
+  _timerDocked=false;
   var w=$('timerWidget');if(!w)return;
   w.style.transform='translateX(-50%) translateY(12px)';
   w.style.opacity='0';
@@ -5468,9 +5549,10 @@ function setOvertimeStyle(on){
     if(elapsed)elapsed.style.color='rgba(0,0,0,.35)';
   }
 }
-function startTimerCountdown(){
-  clearInterval(_timerInterval);_timerOvertimed=false;setOvertimeStyle(false);
-  _timerInterval=setInterval(function(){
+// 08-27：原来这一整段是写在 setInterval 里的匿名函数，只有 200ms 一跳才画一次。
+// 右滑停靠过去那一刻贴边条上还是初始的 `--`，要等下一跳才出数字。抽成具名的，
+// dockToPill 也调一次，贴过去立刻就是对的。
+function _tickTimer(){
     if(!_timerCmd||!_timerCmd.started_at)return;
     laUpdateTimer();
     var total=_timerCmd.countdown_seconds*1000,elapsed=Date.now()-_timerCmd.started_at*1000,remaining=Math.max(0,total-elapsed),overtimed=elapsed>total;
@@ -5498,7 +5580,11 @@ function startTimerCountdown(){
     }
     var elapsedMin=Math.floor(elapsed/60000),elapsedSec=Math.floor((elapsed%60000)/1000);
     $('timerElapsed').textContent=overtimed?'超时 '+mins+'分'+secs+'秒':'已过 '+elapsedMin+':'+String(elapsedSec).padStart(2,'0');
-  },200);
+}
+function startTimerCountdown(){
+  clearInterval(_timerInterval);_timerOvertimed=false;setOvertimeStyle(false);
+  _tickTimer();                       // 先画一次，别让第一眼是 --
+  _timerInterval=setInterval(_tickTimer,200);
 }
 $('timerDone').onclick=function(){
   if(!_timerCmd)return;
@@ -5556,6 +5642,7 @@ function hideTimerPill(){
 }
 function dockToPill(){
   _timerDocked=true;
+  _tickTimer();                       // 贴过去立刻就把数字和圆环画对
   var widget=$('timerWidget');
   widget.style.opacity='0';widget.style.pointerEvents='none';
   setTimeout(function(){widget.classList.add('hidden')},400);
@@ -6408,53 +6495,166 @@ $('stickerButton').onclick = function() {
     bd.onclick = function() { $('stickerPanel').style.display = 'none'; bd.remove(); };
     document.body.appendChild(bd);
   }
-  loadStickers('happy');
-  renderStickerCats();
+  loadStickers();   // 08-27：分类不再写死，按 owner 分栏；renderStickerCats 已删
 };
 $('closeSticker').onclick = function() {
   $('stickerPanel').style.display = 'none';
   var bd = $('stickerBackdrop'); if (bd) bd.remove();
 };
 
-function renderStickerCats() {
-  var cats = ['happy','cry','love','angry','surprise','shy'];
-  var h = '';
-  cats.forEach(function(c) {
-    h += '<button style="padding:4px 10px;border:1px solid var(--border);border-radius:12px;font:11px var(--font-sans);background:transparent;color:var(--text-secondary);cursor:pointer;margin-right:4px" onclick="loadStickers(\''+c+'\')">'+c+'</button>';
+// ── 表情包面板（08-27 重做）──
+// 以前：分类写死 6 个、点一下直接飞出去、上传只能填个分类。
+// 现在：按 owner 分「她的/他的」两栏，点击=发送，编辑模式下点击=打开编辑卡片。
+var _stkOwner = 'user';        // 当前看的是谁的
+var _stkEditMode = false;      // true = 点一下打开编辑卡片，不发送
+var _stkList = [];             // 当前这一栏的数据，编辑卡片从这儿取
+var _stkEditing = null;
+
+function _stkPaintTabs() {
+  document.querySelectorAll('#stickerOwnerTabs .stk-tab').forEach(function(b) {
+    var on = b.dataset.owner === _stkOwner;
+    b.style.background = on ? 'var(--bg-primary)' : 'transparent';
+    b.style.color = on ? 'var(--text-primary)' : 'var(--text-secondary)';
+    b.style.boxShadow = on ? '0 1px 3px rgba(0,0,0,.08)' : 'none';
   });
-  $('stickerCats').innerHTML = h;
+  var eb = $('stickerEditToggle');
+  if (eb) { eb.style.background = _stkEditMode ? 'var(--accent)' : 'var(--bg-sunken)';
+            eb.style.color = _stkEditMode ? '#fff' : 'var(--text-secondary)'; }
 }
 
-async function loadStickers(cat) {
-  var r = await fetch('/api/stickers?category=' + encodeURIComponent(cat || 'happy'));
-  var stickers = await r.json();
+async function loadStickers() {
+  _stkPaintTabs();
   var grid = $('stickerGrid');
-  if (!stickers.length) {
-    grid.innerHTML = '<p style="color:var(--text-secondary);grid-column:1/-1;text-align:center;padding:16px">还没有表情包，上传图吧！</p>';
+  try {
+    var r = await fetch('/api/stickers?owner=' + encodeURIComponent(_stkOwner));
+    _stkList = await r.json();
+  } catch (e) { _stkList = []; }
+  if (!Array.isArray(_stkList)) _stkList = [];
+  if (!_stkList.length) {
+    grid.innerHTML = '<p style="color:var(--text-secondary);grid-column:1/-1;text-align:center;padding:20px;font:13px var(--font-sans)">这儿还没有表情，点右上角 + 添加</p>';
     return;
   }
-  grid.innerHTML = stickers.map(function(s) {
-    return '<img src="'+assetUrl('/stickers/'+s.filename)+'" style="width:100%;aspect-ratio:1;object-fit:contain;border-radius:8px;cursor:pointer;background:var(--bg-sunken)" onclick="sendSticker(\''+s.filename+'\')" />';
+  grid.innerHTML = _stkList.map(function(s) {
+    // status 直接摆在图上：processing = 他正在认，failed = 认砸了要她补
+    var badge = s.status === 'processing' ? '<span style="position:absolute;left:3px;bottom:3px;background:rgba(0,0,0,.55);color:#fff;font:10px var(--font-sans);padding:2px 5px;border-radius:6px">识别中</span>'
+              : s.status === 'failed' ? '<span style="position:absolute;left:3px;bottom:3px;background:#E54D2E;color:#fff;font:10px var(--font-sans);padding:2px 5px;border-radius:6px">待补充</span>' : '';
+    return '<div style="position:relative;aspect-ratio:1" data-stk-id="' + escHtml(s.id) + '">'
+      + '<img src="' + escHtml(assetUrl(s.url)) + '" loading="lazy" alt="' + escHtml(s.name || '') + '"'
+      + ' style="width:100%;height:100%;object-fit:contain;border-radius:8px;cursor:pointer;background:var(--bg-sunken)">'
+      + badge + '</div>';
   }).join('');
 }
 
-function sendSticker(fname) {
+// 一个 listener 管整个网格（网格是 innerHTML 重画的，逐个绑会随重画丢掉）
+$('stickerGrid').addEventListener('click', function(e) {
+  var cell = e.target.closest('[data-stk-id]'); if (!cell) return;
+  var s = _stkList.find(function(x) { return x.id === cell.dataset.stkId; }); if (!s) return;
+  if (_stkEditMode) { openStickerEdit(s); return; }
+  if (s.status !== 'active') { toast(s.status === 'processing' ? '他还在认这张，等一下' : '这张还差个描述，点编辑补一下'); return; }
+  sendSticker(s.url);
+});
+
+document.querySelectorAll('#stickerOwnerTabs .stk-tab').forEach(function(b) {
+  b.onclick = function() { _stkOwner = b.dataset.owner; loadStickers(); };
+});
+$('stickerEditToggle').onclick = function() { _stkEditMode = !_stkEditMode; _stkPaintTabs(); toast(_stkEditMode ? '点表情可以编辑' : '点表情就发出去'); };
+
+function sendSticker(url) {
   $('stickerPanel').style.display = 'none';
-  sendMessage('[Sticker] /stickers/' + fname, true);
+  var bd = $('stickerBackdrop'); if (bd) bd.remove();
+  sendMessage('[Sticker] ' + url, true);
 }
 
+// ── 编辑卡片 ──
+function openStickerEdit(s) {
+  _stkEditing = s;
+  $('stkEditTitle').textContent = s.name || '未命名';
+  $('stkEditStatus').textContent = s.status === 'active' ? '已加入表情库'
+    : s.status === 'processing' ? '他正在认这张…' : '还没认出来，自己写一下';
+  $('stkEditImg').src = assetUrl(s.url);
+  $('stkEditName').value = s.name || '';
+  $('stkEditDesc').value = s.description || '';
+  $('stkEditTags').value = (s.emotion_tags || []).join('/');
+  _stkPaintOwner(s.owner || 'user');
+  $('stickerEditSheet').style.display = 'block';
+}
+function _stkPaintOwner(owner) {
+  document.querySelectorAll('#stkEditOwner .stk-own').forEach(function(b) {
+    var on = b.dataset.owner === owner;
+    b.style.background = on ? 'var(--bg-primary)' : 'transparent';
+    b.style.color = on ? 'var(--text-primary)' : 'var(--text-secondary)';
+    b.style.boxShadow = on ? '0 1px 3px rgba(0,0,0,.08)' : 'none';
+    b.dataset.on = on ? '1' : '';
+  });
+}
+document.querySelectorAll('#stkEditOwner .stk-own').forEach(function(b) {
+  b.onclick = function() { _stkPaintOwner(b.dataset.owner); };
+});
+$('stkEditClose').onclick = function() { $('stickerEditSheet').style.display = 'none'; };
+$('stickerEditSheet').onclick = function(e) { if (e.target === this) this.style.display = 'none'; };
+
+$('stkEditSave').onclick = async function() {
+  if (!_stkEditing) return;
+  var desc = $('stkEditDesc').value.trim();
+  // 后端也拦，这里先拦一道 —— 不让她白跑一趟网络请求
+  if (!desc) { toast('描述不能空——他只看得到这一句'); return; }
+  var owner = (document.querySelector('#stkEditOwner .stk-own[data-on="1"]') || {}).dataset;
+  try {
+    var r = await api('/api/stickers/' + _stkEditing.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: $('stkEditName').value.trim(), description: desc,
+        emotion_tags: $('stkEditTags').value, owner: owner ? owner.owner : 'user'
+      })
+    });
+    if (!r.ok) { var e = await r.json().catch(function(){return{}}); toast(e.error || '保存失败'); return; }
+    $('stickerEditSheet').style.display = 'none';
+    toast('存好了'); loadStickers();
+  } catch (ex) { toast('保存失败: ' + ex.message); }
+};
+
+$('stkEditReprocess').onclick = async function() {
+  if (!_stkEditing) return;
+  try {
+    var r = await api('/api/stickers/' + _stkEditing.id + '/reprocess', { method: 'POST' });
+    if (!r.ok) { toast('重新处理失败'); return; }
+    $('stickerEditSheet').style.display = 'none';
+    toast('他重新看一遍，一会儿刷新一下'); loadStickers();
+  } catch (ex) { toast('重新处理失败'); }
+};
+
+$('stkEditDelete').onclick = async function() {
+  if (!_stkEditing) return;
+  if (!confirm('删掉「' + (_stkEditing.name || '这张') + '」？')) return;
+  try {
+    var r = await api('/api/stickers/' + _stkEditing.id, { method: 'DELETE' });
+    if (!r.ok) { toast('删除失败'); return; }
+    $('stickerEditSheet').style.display = 'none';
+    toast('删了'); loadStickers();
+  } catch (ex) { toast('删除失败'); }
+};
+
+// ── 上传 ──
+// 名字/描述都不填 —— 后端会交给他自动认（status: processing → active）。
+// 她想改随时点编辑，人工填的永远优先。
 $('stickerFileInput').onchange = async function() {
   var f = this.files[0]; if (!f) return;
-  var cat = document.getElementById('stickerCategory').value || 'happy';
-  var fd = new FormData(); fd.append('file', f); fd.append('category', cat);
+  this.value = '';
+  toast('上传中…');
+  var fd = new FormData(); fd.append('file', f); fd.append('owner', _stkOwner);
   try {
     var r = await fetch('/api/stickers/upload', {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + state.token }, body: fd
     });
-    if (r.ok) { toast('Sticker uploaded!'); loadStickers(cat); }
-    else { var e = await r.json().catch(function(){return{}}); toast('Upload failed: '+(e.error||r.status)); }
-  } catch(ex) { toast('Upload failed: '+ex.message); }
-  this.value = '';
+    var j = await r.json().catch(function(){return{}});
+    if (!r.ok) { toast('上传失败: ' + (j.error || r.status)); return; }
+    toast(j.status === 'processing' ? '存好了，他正在认这张' : '存好了');
+    loadStickers();
+    // 他认完要几十秒，隔一会儿自己刷一次，省得她盯着「识别中」不动
+    if (j.status === 'processing') setTimeout(function() {
+      if ($('stickerPanel').style.display !== 'none') loadStickers();
+    }, 30000);
+  } catch (ex) { toast('上传失败: ' + ex.message); }
 };
 
 	// WKWebView: <a download> 不生效，拦截文件卡片下载链接
@@ -6513,26 +6713,35 @@ $('stickerFileInput').onchange = async function() {
 	      };
 	      return;
 	    }
+	    // 08-27 她说「他设的 task 渲染的气泡点不开，干脆不要了直接进 receipt」。
+	    // 点击本身是通的（playwright 验过，handler 触发了）—— 是这里原来弹的那个
+	    // 「标记为已完成？」小窗没意义：小票上本来就能勾。所以不弹窗了，直接开小票。
+	    // ⚠️ 小票的任务存在 localStorage 的 _todos 里，靠 pollCommands 同步进来。
+	    //    换设备 / 清过缓存 / 这条是刚下发的，_todos 里可能压根没有它 ——
+	    //    那样「直接进 receipt」就是打开一张没有这条任务的小票，等于白点。
+	    //    所以先补进去再开，补的字段跟 pollCommands 那边一模一样，别让两处长出两种行。
 	    else if(cmd.type==='task'){
-	      sheet('quiz',true);
-	      $('quizSheetTitle').textContent=cmd.title||'任务';
-	      $('quizQuestion').textContent='';
-	      $('quizResult').classList.add('hidden');
-	      var optDiv=$('quizOptions');optDiv.classList.remove('hidden');
-	      $('quizTextInput').classList.add('hidden');
-	      optDiv.innerHTML='<div style="font:15px/1.5 var(--font-serif);color:var(--text-secondary);padding:8px 0 16px">标记为已完成？</div><div style="display:flex;gap:10px"><button id="quizCompleteBtn" style="flex:1;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:12px;font:600 15px/1 var(--font-sans);cursor:pointer">\u2713 完成</button><button id="quizCancelBtn" style="flex:0 0 auto;padding:12px 20px;background:var(--bg-surface);color:var(--text-secondary);border:1px solid var(--border);border-radius:12px;font:500 14px/1 var(--font-sans);cursor:pointer">取消</button></div>';
-	      $('quizCompleteBtn').onclick=function(){
-	        api('/api/commands/'+cmd.id+'/complete',{method:'POST'}).then(function(){
-	          $('quizResult').classList.remove('hidden');$('quizResult').textContent='\u2713 已完成';
-	          optDiv.classList.add('hidden');
-	          var caps=document.querySelectorAll('.cmd-capsule[data-cmd-id="'+cmdId+'"]');
-	          caps.forEach(function(c){c.style.opacity='0.4';c.style.textDecoration='line-through';c.style.pointerEvents='none'});
-	          var t=_todos.find(function(x){return x._cmdId===cmd.id});
-	          if(t&&!t.done){t.done=1;t.done_at=Date.now();_saveTodos();_updateTodoBadge()}
-	          setTimeout(function(){sheet('quiz',false)},1000);
-	        }).catch(function(){toast('操作失败')});
-	      };
-	      $('quizCancelBtn').onclick=function(){sheet('quiz',false)};
+	      var _t=_todos.find(function(x){return x._cmdId===cmd.id});
+	      if(!_t&&cmd.status!=='done'&&cmd.status!=='cancelled'){
+	        _t={id:Date.now()+Math.random(),body:cmd.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd.id};
+	        _todos.push(_t);_saveTodos();_updateTodoBadge();
+	      }
+	      // 跟顶部那颗小票按钮走同一套开法（见 todoTopBtn.onclick），别另开一条路
+	      _renderTodos();sheet('todo',true);
+	      $('todoSheet').classList.add('expanded');$('todoSheet').style.transform='';
+	      // 闪一下他设的那行，否则一屏待办里认不出是哪条
+	      if(_t){
+	        setTimeout(function(){
+	          var rows=$('todoContent').querySelectorAll('.rc-item');
+	          for(var i=0;i<rows.length;i++){
+	            if(rows[i].dataset.todoId==String(_t.id)){
+	              rows[i].classList.add('rc-item-flash');
+	              setTimeout(function(el){return function(){el.classList.remove('rc-item-flash')}}(rows[i]),1600);
+	              break;
+	            }
+	          }
+	        },260);
+	      }
 	      return;
 	    }
 	  }).catch(function(){toast('加载失败')});

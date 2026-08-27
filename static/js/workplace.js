@@ -43,14 +43,18 @@
   }
 
   // diff 染色：+ 绿 / - 红 / @@ 灰，其余原样
-  function renderDiff(text) {
+  // dark=true 时用终端那套亮色（#1a7f37 那种深绿画在深色底上根本看不清）。
+  // 工作区 08-27 改成终端流之后就是深色底，对话流里那些 diff 还是浅底，两套都要留。
+  function renderDiff(text, dark) {
+    var base = dark ? '#C9C5BF' : 'var(--text-secondary)';
+    var faint = dark ? '#7C766E' : 'var(--text-faint)';
     return text.split('\n').map(function (l) {
       var color = '', bg = '';
-      if (/^\+\+\+|^---/.test(l))      { color = 'var(--text-faint)'; }
-      else if (l[0] === '+')           { color = '#1a7f37'; bg = 'rgba(46,160,67,.10)'; }
-      else if (l[0] === '-')           { color = '#cf222e'; bg = 'rgba(207,34,46,.10)'; }
-      else if (l.slice(0, 2) === '@@') { color = 'var(--text-faint)'; bg = 'rgba(128,128,128,.08)'; }
-      return '<div style="color:' + (color || 'var(--text-secondary)') + ';background:' + (bg || 'transparent') +
+      if (/^\+\+\+|^---/.test(l))      { color = faint; }
+      else if (l[0] === '+')           { color = dark ? '#7EE787' : '#1a7f37'; bg = dark ? 'rgba(63,185,80,.14)' : 'rgba(46,160,67,.10)'; }
+      else if (l[0] === '-')           { color = dark ? '#FF8A80' : '#cf222e'; bg = dark ? 'rgba(248,81,73,.14)' : 'rgba(207,34,46,.10)'; }
+      else if (l.slice(0, 2) === '@@') { color = faint; bg = dark ? 'rgba(255,255,255,.06)' : 'rgba(128,128,128,.08)'; }
+      return '<div style="color:' + (color || base) + ';background:' + (bg || 'transparent') +
              ';padding:0 8px;white-space:pre">' + (esc(l) || '&nbsp;') + '</div>';
     }).join('');
   }
@@ -72,11 +76,29 @@
     // 窄屏（手机 / iOS webview）一次只显示一个，靠上面那排分段切；
     // 宽屏两列并排，分段行自己收起来。她主要在手机上看，所以窄屏是默认形态。
     var MONO = 'ui-monospace,SFMono-Regular,Menlo,monospace';
+    // 08-27 她给了张 Claude Code 在 Mac 终端里的截图：「工作区就是我在那边跟在真的终端显示差不多的」。
+    // 所以工作区整块改成终端窗口 —— 固定的标题栏（红黄绿三颗）+ 下面一条深色的流。
+    // ⚠️ 这块**故意不跟随她的浅色/深色主题**：真终端本来就是深色，跟着变反而不像了。
+    //    颜色用暖黑不用纯黑，跟她 app 那套米色调放在一起才不打架。
+    var T_BG = '#1F1E1D', T_BAR = '#2B2926', T_LINE = '#3A3733',
+        T_TXT = '#DCD7CF', T_DIM = '#857F76', T_GREEN = '#6BAF7B', T_ORANGE = '#D97757';
     var tabRowTop = h('div', 'flex:none;display:flex;gap:6px;padding:8px 14px 0');
     var tabChat = h('button', '', '对话');
-    var tabWs = h('button', '', '工作区');
+    // 08-27 她要「工作区那个入口用终端窗口的图标」。icons 表里新加的 terminal
+    // （外框 + 标题栏三个圆点），走 currentColor，选中/未选中自动跟着 tab 的字色走。
+    // icon() 万一没加载就只剩文字，别让 tab 变成空按钮。
+    var tabWs = h('button', '', '');
+    if (typeof icon === 'function') {
+      var _ti = h('span', 'display:inline-flex;width:15px;height:15px;flex:none');
+      _ti.innerHTML = icon('terminal');
+      var _tsvg = _ti.querySelector('svg');
+      if (_tsvg) { _tsvg.style.width = '100%'; _tsvg.style.height = '100%'; }
+      tabWs.append(_ti);
+    }
+    tabWs.append(h('span', '', '工作区'));
     function tabCss(on) {
-      return 'flex:1;padding:7px;border-radius:11px;cursor:pointer;font:600 13px var(--font-sans);border:1px solid ' +
+      return 'flex:1;padding:7px;border-radius:11px;cursor:pointer;font:600 13px var(--font-sans);' +
+        'display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid ' +
         (on ? 'var(--accent)' : 'var(--border)') + ';background:' +
         (on ? 'var(--accent)' : 'var(--bg-surface)') + ';color:' +
         (on ? 'var(--accent-fg)' : 'var(--text-secondary)');
@@ -88,7 +110,17 @@
     c.append(main);
 
     var flow = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px');
-    var wsPane = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:14px;display:none;flex-direction:column;gap:10px');
+    // 终端窗口：wsPane 自己不滚（标题栏要钉住），滚的是里面的 wsBody。
+    var wsPane = h('div', 'flex:1;min-width:0;display:none;flex-direction:column;overflow:hidden;background:' + T_BG);
+    var wsBar = h('div', 'flex:none;display:flex;align-items:center;gap:7px;padding:8px 11px;background:' + T_BAR + ';border-bottom:1px solid ' + T_LINE);
+    ['#FF5F57', '#FEBC2E', '#28C840'].forEach(function (col) {
+      wsBar.append(h('div', 'width:11px;height:11px;border-radius:50%;flex:none;background:' + col));
+    });
+    wsBar.append(h('div', 'flex:1;text-align:center;font:11px ' + MONO + ';color:' + T_DIM + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap', 'workplace — 最近的记录'));
+    var wsReload = h('button', 'flex:none;padding:2px 9px;border:1px solid ' + T_LINE + ';border-radius:7px;background:transparent;color:' + T_DIM + ';font:11px ' + MONO + ';cursor:pointer', '刷新');
+    wsBar.append(wsReload);
+    var wsBody = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:8px 0;font:12px/1.6 ' + MONO);
+    wsPane.append(wsBar, wsBody);
     main.append(flow, wsPane);
 
     // 宽屏并排 / 窄屏切换。matchMedia 而不是只在打开时量一次 ——
@@ -135,29 +167,32 @@
       return (d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
 
-    // 一条记录一张卡：头一直在，diff 折在下面，点头才拉。
+    // 一条记录 = 终端里的一行。点行展开 diff，diff 用 └ 挂在下面 ——
+    // 跟她截图里 Bash(...) 底下那条 └ 是同一个形状。
+    // ⚠️ 展开逻辑（op 没有 diff、pending 走 /show 不带 sha）跟改版前一模一样，只换了皮。
     function wsCard(r) {
       var isPending = r.kind === 'pending';
       var isOp = r.kind === 'op';
-      var card = h('div', 'border:1px solid ' + (isPending ? 'var(--accent)' : 'var(--border)') +
-        ';border-radius:14px;background:var(--bg-surface);overflow:hidden;flex:none');
+      var dotColor = isPending ? T_ORANGE : (isOp ? T_DIM : T_GREEN);
+      var block = h('div', 'flex:none');
 
-      var hdr = h('div', 'display:flex;align-items:flex-start;gap:10px;padding:11px 12px;cursor:pointer;user-select:none');
-      var dotColor = isPending ? 'var(--accent)' : (isOp ? 'var(--text-faint)' : '#6BAF7B');
-      hdr.append(h('span', 'width:8px;height:8px;border-radius:50%;flex:none;margin-top:6px;background:' + dotColor));
+      var hdr = h('div', 'display:flex;align-items:flex-start;gap:8px;padding:4px 12px;cursor:pointer;user-select:none');
+      hdr.onmouseenter = function () { hdr.style.background = 'rgba(255,255,255,.05)'; };
+      hdr.onmouseleave = function () { hdr.style.background = 'transparent'; };
+      hdr.append(h('span', 'width:7px;height:7px;border-radius:50%;flex:none;margin-top:7px;background:' + dotColor));
 
       var mid = h('div', 'flex:1;min-width:0');
-      var line1 = h('div', 'display:flex;align-items:baseline;gap:7px');
+      var line1 = h('div', 'display:flex;align-items:baseline;gap:8px');
       if (r.kind === 'commit') {
-        line1.append(h('span', 'font:600 12px ' + MONO + ';color:var(--accent);flex:none', r.sha));
+        line1.append(h('span', 'font:600 12px ' + MONO + ';color:' + T_ORANGE + ';flex:none', r.sha));
       } else {
-        line1.append(h('span', 'font:600 12px var(--font-sans);color:' + dotColor + ';flex:none',
+        line1.append(h('span', 'font:600 12px ' + MONO + ';color:' + dotColor + ';flex:none',
           isPending ? '待确认' : '操作'));
       }
-      line1.append(h('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 13px var(--font-sans);color:var(--text-primary)', r.title || ''));
+      line1.append(h('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px ' + MONO + ';color:' + T_TXT, r.title || ''));
       mid.append(line1);
 
-      var line2 = h('div', 'margin-top:3px;font:11px var(--font-sans);color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+      var line2 = h('div', 'font:11px ' + MONO + ';color:' + T_DIM + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
       if (isOp) {
         line2.textContent = (r.items || []).map(function (it) {
           return it.verb + (it.target ? ' ' + it.target : '');
@@ -169,12 +204,13 @@
       }
       mid.append(line2);
       hdr.append(mid);
-      var chev = h('span', 'flex:none;color:var(--text-faint);font:12px var(--font-sans);transition:transform .15s;margin-top:2px', '⌄');
+      var chev = h('span', 'flex:none;color:' + T_DIM + ';font:11px ' + MONO + ';transition:transform .15s;margin-top:3px', '⌄');
       hdr.append(chev);
-      card.append(hdr);
+      block.append(hdr);
 
-      var fold = h('div', 'display:none;border-top:1px solid var(--bg-sunken)');
-      card.append(fold);
+      // └ 那条竖线：diff 挂在行下面，缩进对齐圆点右边
+      var fold = h('div', 'display:none;margin:2px 0 6px 15px;padding-left:11px;border-left:1px solid ' + T_LINE);
+      block.append(fold);
 
       var opened = false, fetched = false;
       hdr.onclick = function () {
@@ -187,19 +223,19 @@
         // op 没有 diff —— 那只是他调过的工具，文件当时改成什么样没人留底。
         // 与其编一个假的 diff，不如老实把调用参数摆出来。
         if (isOp) {
-          var box = h('div', 'padding:10px 12px;display:flex;flex-direction:column;gap:6px');
+          var box = h('div', 'padding:4px 0;display:flex;flex-direction:column;gap:4px');
           (r.items || []).forEach(function (it) {
-            var row = h('div', 'font:11px/1.5 ' + MONO + ';color:var(--text-secondary);word-break:break-all');
-            row.append(h('span', 'color:var(--text-primary);font-weight:600', it.name + ' '), h('span', '', it.input || ''));
+            var row = h('div', 'font:11px/1.5 ' + MONO + ';color:' + T_DIM + ';word-break:break-all');
+            row.append(h('span', 'color:' + T_TXT + ';font-weight:600', it.name + ' '), h('span', '', it.input || ''));
             box.append(row);
           });
-          box.append(h('div', 'font:11px var(--font-sans);color:var(--text-faint);padding-top:4px',
+          box.append(h('div', 'font:11px ' + MONO + ';color:' + T_DIM + ';padding-top:2px',
             '这类记录只有调用参数，没有 diff（当时的文件内容没留底）。'));
           fold.append(box);
           return;
         }
 
-        var loading = h('div', 'padding:12px;font:12px var(--font-sans);color:var(--text-faint)', '读取中…');
+        var loading = h('div', 'padding:4px 0;font:11px ' + MONO + ';color:' + T_DIM, '读取中…');
         fold.append(loading);
         var url = '/api/workplace/show?' + (isPending ? '' : 'sha=' + encodeURIComponent(r.id));
         fetch(url, { headers: authHeaders() })
@@ -207,38 +243,33 @@
           .then(function (d) {
             loading.remove();
             if (d.error) {
-              fold.append(h('div', 'padding:12px;font:12px var(--font-sans);color:#cf222e', d.error));
+              fold.append(h('div', 'padding:4px 0;font:11px ' + MONO + ';color:#FF8A80', d.error));
               return;
             }
             if (d.empty) {
-              fold.append(h('div', 'padding:12px;font:12px var(--font-sans);color:var(--text-faint)',
+              fold.append(h('div', 'padding:4px 0;font:11px ' + MONO + ';color:' + T_DIM,
                 '这条没有文本 diff（可能是新文件、二进制或只改了权限）。'));
               return;
             }
-            var pre = h('div', 'font:11px/1.55 ' + MONO + ';max-height:46vh;overflow:auto;padding:4px 0');
-            pre.innerHTML = renderDiff(d.diff);
+            var pre = h('div', 'font:11px/1.55 ' + MONO + ';max-height:46vh;overflow:auto;padding:2px 0');
+            // git show --format= 还是会留一个前导空行，削掉再画
+            pre.innerHTML = renderDiff(String(d.diff).replace(/^\n+/, ''), true);   // true = 深色底那套配色
             fold.append(pre);
           })
           .catch(function (e) {
             loading.remove();
-            fold.append(h('div', 'padding:12px;font:12px var(--font-sans);color:#cf222e', esc(e.message)));
+            fold.append(h('div', 'padding:4px 0;font:11px ' + MONO + ';color:#FF8A80', esc(e.message)));
           });
       };
-      return card;
+      return block;
     }
 
     function loadActivity() {
       wsLoaded = true;
-      wsPane.innerHTML = '';
-      var head = h('div', 'flex:none;display:flex;align-items:center;gap:8px;padding-bottom:2px');
-      head.append(h('span', 'font:600 13px var(--font-sans);color:var(--text-primary)', '最近的记录'));
-      var refresh = h('button', 'margin-left:auto;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--bg-surface);color:var(--text-secondary);font:12px var(--font-sans);cursor:pointer', '刷新');
-      refresh.onclick = function () { loadActivity(); };
-      head.append(refresh);
-      wsPane.append(head);
+      wsBody.innerHTML = '';      // 标题栏钉在 wsBar 上，这儿只重建流本身
 
-      var tip = h('div', 'font:11px var(--font-sans);color:var(--text-faint)', '读取中…');
-      wsPane.append(tip);
+      var tip = h('div', 'padding:6px 12px;font:11px ' + MONO + ';color:' + T_DIM, '读取中…');
+      wsBody.append(tip);
 
       fetch('/api/workplace/activity?limit=20', { headers: authHeaders() })
         .then(function (r) { return r.json(); })
@@ -246,20 +277,22 @@
           tip.remove();
           var list = (d && d.records) || [];
           if (d && d.error) {
-            wsPane.append(h('div', 'font:12px var(--font-sans);color:#cf222e', d.error));
+            wsBody.append(h('div', 'padding:6px 12px;font:11px ' + MONO + ';color:#FF8A80', d.error));
             return;
           }
           if (!list.length) {
-            wsPane.append(h('div', 'font:13px var(--font-sans);color:var(--text-faint);padding:14px 0', '还没有记录。'));
+            wsBody.append(h('div', 'padding:10px 12px;font:12px ' + MONO + ';color:' + T_DIM, '还没有记录。'));
             return;
           }
-          list.forEach(function (r) { wsPane.append(wsCard(r)); });
+          list.forEach(function (r) { wsBody.append(wsCard(r)); });
         })
         .catch(function (e) {
           tip.textContent = '';
-          wsPane.append(h('div', 'font:12px var(--font-sans);color:#cf222e', esc(e.message)));
+          wsBody.append(h('div', 'padding:6px 12px;font:11px ' + MONO + ';color:#FF8A80', esc(e.message)));
         });
     }
+    wsReload.onclick = function () { loadActivity(); };
+
     // 工作区的内容会被确认/还原改掉，那两个动作完事要把这儿刷新掉，
     // 否则「待确认」那张卡还挂在上面，看着像没提交成功。
     function wsRefreshIfLoaded() { if (wsLoaded) loadActivity(); }
@@ -505,7 +538,10 @@
     var clip = h('button', 'cursor:pointer');
     clip.className = 'composer-icon composer-circle';
     clip.setAttribute('aria-label', '添加文件');
-    if (typeof icon === 'function') clip.innerHTML = icon('plus'); else clip.textContent = '+';
+    // 08-27 她说「想在这边直接发图发文件」—— 其实早就能发，就是这颗按钮长得像「新建」，
+    // 看不出是发文件的入口。换成回形针（icons 表新加的 paperclip，跟抽屉那套同源）。
+    // icon() 万一没加载还是退回 '+'，别让按钮变成空的。
+    if (typeof icon === 'function') clip.innerHTML = icon('paperclip'); else clip.textContent = '+';
     clip.title = '发文件给他（图片 / PDF / 任意文件，单个最大 20MB）';
     clip.onclick = function () { picker.click(); };
     picker.onchange = function () {

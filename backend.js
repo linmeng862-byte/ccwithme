@@ -611,6 +611,53 @@ const projectDir = path.join(__dirname, 'data', 'projects');
 if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
 const galleryPhotoDir = path.join(__dirname, 'data', 'uploads', 'gallery');
 if (!fs.existsSync(galleryPhotoDir)) fs.mkdirSync(galleryPhotoDir, { recursive: true });
+
+// 08-27 相册里的图全是坏的。根因：save_to_gallery 以前只认 `/api/uploads/` 这一种前缀，
+// 别的原样存进库。可他实际填进来的是
+//   `/home/ubuntu/ccwith/data/uploads/xxx.jpeg`（服务器上的绝对路径，浏览器当然拿不到）
+//   `https://ccwith.app/uploads/xxx.jpg`（`/uploads/` 这条路由根本不存在）
+// 两种都存成了库里的死链，前端 <img> 一律 404 → 卡片退回占位图标 = 她看到的「图不显示」。
+// 现在统一在这儿归一化：不管他写的是哪种花样，一律抠出末段 id/文件名回 uploads 表认领，
+// 认领到就把原图**拷进** gallery 目录（拷贝而不是引用：uploads 会被清理，相册要能自己活）。
+// 认不出来就返回 '' —— 让工具报错重来，**绝不再把坏 url 静默存进库**。
+// 08-27 相册也压一道。她那张金戒指是 15.7MB 的 iPhone 原图，存进相册还是原尺寸，
+// 手机上翻相册要等半天。长边 2048 / q85 —— 跟前端发图那套同一组参数，肉眼看不出差别。
+// ⚠️ GIF / WebP 不碰：动图压完就不动了（表情包那边踩过，见 09-踩坑总表）。
+//    压完反而更大就留原图（小图重编码经常这样）。压挂了也留原图 —— 存进去比存不进去重要。
+async function _galleryStoreImage(srcPath, ext) {
+  const fname = 'gal_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const animated = /\.(gif|webp)$/i.test(ext);
+  if (!animated) {
+    try {
+      const meta = await sharp(srcPath).metadata();
+      if (Math.max(meta.width || 0, meta.height || 0) > 2048 || fs.statSync(srcPath).size > 1.2 * 1024 * 1024) {
+        const out = path.join(galleryPhotoDir, fname + '.jpg');
+        await sharp(srcPath).rotate().resize(2048, 2048, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 }).toFile(out);
+        if (fs.statSync(out).size < fs.statSync(srcPath).size) return fname + '.jpg';
+        fs.unlinkSync(out);   // 压完反而更大，扔掉重来
+      }
+    } catch (e) { console.log('[gallery] 压缩失败，用原图:', e.message); }
+  }
+  fs.copyFileSync(srcPath, path.join(galleryPhotoDir, fname + ext));
+  return fname + ext;
+}
+
+async function _galleryNormalizeUrl(u) {
+  u = String(u || '').trim();
+  if (!u) return '';
+  if (u.startsWith('/gallery-photo/')) return u;           // 已经是相册自己的图
+  if (u.startsWith('data:')) return '';                    // base64 不收，太大
+  // 末段：/api/uploads/<conv>/<id> / 绝对路径 / http url，抠出来的都是文件名或 id
+  let tail = u.split('?')[0].split('#')[0].split('/').filter(Boolean).pop() || '';
+  if (!tail) return '';
+  const bare = tail.replace(/\.[^.]+$/, '');               // 去扩展名 = uploads.id
+  const up = db.prepare('SELECT * FROM uploads WHERE id = ? OR id = ? OR filename = ? OR path LIKE ?')
+               .get(bare, tail, tail, '%' + bare + '%');
+  if (!up || !up.path || !fs.existsSync(up.path)) return '';
+  const ext = path.extname(up.filename || '') || path.extname(up.path) || '.jpg';
+  return '/gallery-photo/' + await _galleryStoreImage(up.path, ext);
+}
 // 相册不再预置任何默认项（08-22 她说「gallery 有硬编码的三个相册删了」）。
 // 以前这里每次启动都会补建「她 / 我们俩 / 想留的项目」三个空相册 ——
 // ⚠️ 它是**按标题查重再补建**的，所以她删掉一个，下次重启又长回来。
@@ -669,6 +716,34 @@ function _splitNationality(str) {
 }
 // EPUB 的书名/作者不该靠猜正文 —— OPF 里就写着 dc:title / dc:creator。
 // ⚠️ 以前这儿一行都没读，author 永远是空字符串，封面上就只剩书名。
+// 08-27 她说「上传的 pdf 打开怎么短行很奇怪」。
+// 根因：pdf-parse 是按**排版行**吐 \n 的 —— PDF 里没有「段落」这个概念，只有一行行的字。
+// 于是一段话被切成每行三十来字，前端照着渲染就是满屏短行。
+// 这儿把排版折行合并回段落：空行 = 真段落边界，留着；单个 \n 逐条判断是不是硬折行。
+// ⚠️ 只对 PDF 做。TXT / EPUB 的换行是作者自己打的，动它就是篡改原文。
+function _reflowPdfText(raw) {
+  if (!raw) return raw;
+  return raw.split(/\n{2,}/).map(function (para) {
+    var lines = para.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+    if (lines.length < 2) return lines.join('');
+    // 正文行宽用中位数估：比它明显短的行多半是段末或标题，那种换行要留
+    var lens = lines.map(function (l) { return l.length; }).slice().sort(function (a, b) { return a - b; });
+    var width = lens[Math.floor(lens.length / 2)];
+    var out = lines[0];
+    for (var i = 1; i < lines.length; i++) {
+      var prev = lines[i - 1], cur = lines[i];
+      // 上一行明显没排满 = 它本来就该断在那儿（段末、标题、版权页那种一行一个字段），
+      // 换行留着。排满了的才是被排版硬折的，合并。
+      if (prev.length < width * 0.75) { out += '\n' + cur; continue; }
+      // 英文断词的连字符：合并时要把 '-' 吃掉，不然 "beau-tiful" 会留个杠
+      if (/[A-Za-z]-$/.test(out)) { out = out.slice(0, -1) + cur; continue; }
+      // 中文直接拼；两边都是拉丁字母才补空格，否则会在中文里插空格
+      out += (/[A-Za-z0-9,;:]$/.test(out) && /^[A-Za-z0-9(“"']/.test(cur)) ? ' ' + cur : cur;
+    }
+    return out;
+  }).join('\n\n');
+}
+
 async function _epubMeta(zip) {
   try {
     const opfName = Object.keys(zip.files).find(f => /\.opf$/i.test(f));
@@ -774,6 +849,7 @@ app.post('/api/reading/upload', auth, readingUpload.single('file'), fixNames, as
         raw = pdfData.text || '';
         if (!raw.trim()) return res.status(400).json({ error: 'PDF 无法提取文字，可能是扫描件或图片PDF' });
         raw = raw.replace(/\n{4,}/g, '\n\n').replace(/^\s+\d+\s*$/gm, '').trim();
+        raw = _reflowPdfText(raw);
         console.log('[upload] PDF raw text (first 200 chars):', raw.slice(0, 200));
       } catch(e) {
         console.log('[upload] PDF error:', e.message);
@@ -805,7 +881,11 @@ app.post('/api/reading/upload', auth, readingUpload.single('file'), fixNames, as
     const _titleFromFile = req.file.originalname.replace(ext, '');
     if ((!title || title === _titleFromFile) && chapters.length > 0 && chapters[0].content) {
       const lines = chapters[0].content.split('\n').map(l => l.replace(/<[^>]+>/g, '').trim()).filter(l => l.length > 2 && l.length < 80);
-      var cnLine = lines.find(l => /[\[《].+[\]》]/.test(l)) || lines.find(l => /著\s*$/.test(l)) || lines.find(l => /[一-鿿]/.test(l));
+      // 08-27：先找版权页明写的「书名：X」，跟下面认作者那条对称。
+      // 不加这条就会去猜带《》的行 —— 加缪那本被猜成了正文里引的
+      // 「——司汤达《帕利亚诺公爵夫人》」，而版权页第三行就写着真书名。
+      const _tm = chapters[0].content.split('\n').slice(0, 40).join('\n').match(/(?:书名|題名|标题)\s*[:：]\s*(.{1,60})/);
+      var cnLine = (_tm && _tm[1].trim()) || lines.find(l => /[\[《].+[\]》]/.test(l)) || lines.find(l => /著\s*$/.test(l)) || lines.find(l => /[一-鿿]/.test(l));
       if (cnLine) { title = cnLine.replace(/^[\[《]\s*|\s*[\]》]$/g, '').replace(/\s*\/\s*.+$/, '').slice(0, 80); console.log('[upload] title from content:', title); }
     }
     // 作者：元数据没有的话，从正文头部找「作者：X」「X 著」这类写法
@@ -1287,7 +1367,114 @@ const stickerUpload = multer({ dest: path.join(__dirname, 'data', 'uploads', 'tm
 
 // 动态表情：只收 GIF / animated WebP。原文件原样存，不转码、不压成静态图。
 // 首帧另存一张 PNG 缩略图 —— 给模型看的是它，不是整个动图（省 token 又稳定）。
-const STICKER_EXT = { '.gif': 'image/gif', '.webp': 'image/webp' };
+// 08-27 她要「在动图基础上支持图片上传」。静态图进来了，但两类要分开对待：
+// 动图**原样存不压不转**（压完就不动了，见 09-踩坑总表），静态图才压。
+const STICKER_EXT = {
+  '.gif': 'image/gif', '.webp': 'image/webp',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+};
+const STICKER_ANIMATED = { '.gif': 1, '.webp': 1 };
+
+// 静态表情压一道：长边 512（表情包在聊天里就芝麻大，再大是白占流量），
+// 有透明通道就存 PNG（表情包十有八九是抠好的，转 JPEG 会糊一圈黑边），
+// 没有就 JPEG q88。压完更大就留原图。
+async function _shrinkSticker(srcPath, ext) {
+  if (STICKER_ANIMATED[ext]) return { ext, buf: null };        // 动图不碰
+  try {
+    const meta = await sharp(srcPath).metadata();
+    const outExt = meta.hasAlpha ? '.png' : '.jpg';
+    let pipe = sharp(srcPath).rotate().resize(512, 512, { fit: 'inside', withoutEnlargement: true });
+    pipe = meta.hasAlpha ? pipe.png({ compressionLevel: 9 }) : pipe.jpeg({ quality: 88 });
+    const buf = await pipe.toBuffer();
+    if (buf.length >= fs.statSync(srcPath).size) return { ext, buf: null };   // 没压小，别折腾
+    return { ext: outExt, buf };
+  } catch (e) {
+    console.warn('[sticker] 压缩失败，用原图: ' + e.message);
+    return { ext, buf: null };
+  }
+}
+
+// 让他看一眼这张表情是什么。走网关→CLI（那头有 Read，能直接读图文件）。
+// ⚠️ 必须用**独立 session**，不能蹭他的主会话 —— 那会把主线的前缀缓存搅乱，
+//    而缓存重建占了这个项目 71% 的开销。跟 distill 那条一个路子。
+// 失败返回 null，调用方落 status='failed'，她在面板上点「重新处理」再来一次。
+async function _analyzeSticker(imgPath) {
+  if (!GATEWAY_KEY) return null;
+  const prompt = 'Read 这个文件：' + imgPath + '\n' +
+    '这是一张表情包' + (STICKER_ANIMATED[path.extname(imgPath).toLowerCase()] ? '（动图，你看到的是第一帧）' : '') + '。' +
+    '只回一个 JSON，不要任何别的话：' +
+    '{"name":"两到四个字的名字","description":"这个表情在做什么、通常代表什么情绪或语气，一句话",' +
+    '"emotion_tags":["三到五个情绪词"],"category":"一个大类"}';
+  try {
+    const resp = await fetch(GATEWAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+      body: JSON.stringify({ message: prompt, system: '', session_id: crypto.randomUUID(), is_new_session: true }),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!resp.ok || !resp.body) return null;
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = '', out = '';
+    for (;;) {
+      const c = await reader.read(); if (c.done) break;
+      buf += dec.decode(c.value, { stream: true });
+      const parts = buf.split('\n\n'); buf = parts.pop();
+      for (const pt of parts) {
+        const dl = pt.split('\n').find(l => l.startsWith('data:'));
+        if (!dl) continue;
+        try { const j = JSON.parse(dl.slice(5)); if (j.delta) out += j.delta; } catch (_) {}
+      }
+    }
+    // 他偶尔会包一层 ```json，抠出第一个 {...} 再解析
+    const m = out.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const d = JSON.parse(m[0]);
+    if (!d || !d.description) return null;
+    return {
+      name: String(d.name || '').trim().slice(0, 20),
+      description: String(d.description || '').trim().slice(0, 500),
+      emotion_tags: (Array.isArray(d.emotion_tags) ? d.emotion_tags : [])
+        .map(t => String(t).trim()).filter(Boolean).slice(0, 5),
+      category: String(d.category || '默认').trim().slice(0, 30) || '默认',
+    };
+  } catch (e) {
+    console.warn('[sticker] 自动识别失败: ' + e.message);
+    return null;
+  }
+}
+
+// 后台给一张表情补上名字/描述/情绪词。识别失败落 failed —— 她在面板上能看到，
+// 点「重新处理」就是再调一次这个。
+// ⚠️ 只填**空着的**字段：她手写过的一律不覆盖。她写的比模型准，而且被悄悄改掉最气人。
+async function _autoTagSticker(sid) {
+  try {
+    const s = db.prepare('SELECT * FROM stickers WHERE id = ?').get(sid);
+    if (!s) return;
+    // 优先给他看首帧 PNG（动图整个喂进去 token 不可控），没有首帧才用原图
+    const imgPath = path.join(stickerDir, s.thumbnail || s.filename);
+    const r = await _analyzeSticker(imgPath);
+    if (!r) {
+      db.prepare("UPDATE stickers SET status = 'failed' WHERE id = ?").run(sid);
+      console.warn('[sticker] ' + sid + ' 自动识别失败，标 failed');
+      return;
+    }
+    let tags = [];
+    try { tags = JSON.parse(s.emotion_tags || '[]'); } catch (_) { tags = []; }
+    db.prepare(
+      "UPDATE stickers SET name = ?, description = ?, emotion_tags = ?, category = ?, status = 'active' WHERE id = ?"
+    ).run(
+      s.name || r.name,
+      s.description || r.description,
+      (tags && tags.length) ? s.emotion_tags : JSON.stringify(r.emotion_tags),
+      (s.category && s.category !== '默认') ? s.category : r.category,
+      sid
+    );
+    console.log('[sticker] ' + sid + ' 自动识别完成：' + r.name + ' / ' + r.description.slice(0, 30));
+  } catch (e) {
+    console.warn('[sticker] _autoTagSticker 出错: ' + e.message);
+    try { db.prepare("UPDATE stickers SET status = 'failed' WHERE id = ?").run(sid); } catch (_) {}
+  }
+}
 
 app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, async (req, res) => {
   const tmpPath = req.file && req.file.path;
@@ -1295,13 +1482,12 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
     if (!req.file) return res.status(400).json({ error: '请选择图片' });
     const ext = path.extname(req.file.originalname).toLowerCase();
     const mime = STICKER_EXT[ext];
-    if (!mime) return res.status(400).json({ error: '只支持 GIF / WebP 动图' });
+    if (!mime) return res.status(400).json({ error: '支持 GIF / WebP 动图，或 PNG / JPEG 图片' });
 
-    // 描述是 AI 读懂这张表情的唯一依据，不许跳过
+    // 08-27 改：以前描述必填，空了直接 400。现在没填就交给他自动认（_analyzeSticker），
+    // 认完再落 active。人工填了的**优先**，绝不被自动结果覆盖 —— 她写的比模型准。
     const name = (req.body.name || '').trim();
     const description = (req.body.description || '').trim();
-    if (!name) return res.status(400).json({ error: '给它起个名字' });
-    if (!description) return res.status(400).json({ error: '画面描述不能空——没有描述的表情，他看不懂' });
 
     let emotionTags = [];
     try {
@@ -1316,12 +1502,19 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
     const fname = sid + ext;
     const thumbName = sid + '_thumb.png';
 
-    fs.copyFileSync(tmpPath, path.join(stickerDir, fname));
+    // 静态图先压再存，动图原样拷（_shrinkSticker 里分的岔）
+    const shrunk = await _shrinkSticker(tmpPath, ext);
+    const realExt = shrunk.ext;
+    const realFname = sid + realExt;
+    const realMime = STICKER_EXT[realExt] || mime;
+    if (shrunk.buf) fs.writeFileSync(path.join(stickerDir, realFname), shrunk.buf);
+    else fs.copyFileSync(tmpPath, path.join(stickerDir, realFname));
 
-    // 提首帧。提不出来不算致命——表情照样能发，只是模型少了张图
+    // 提首帧。给他看的就是这一张 —— 单张图 token 可控，比让他逐帧读稳。
+    // 提不出来不算致命：表情照样能发，只是自动识别会少一张图。
     let thumbnail = '';
     try {
-      await sharp(path.join(stickerDir, fname), { pages: 1 }).png().toFile(path.join(stickerDir, thumbName));
+      await sharp(path.join(stickerDir, realFname), { pages: 1 }).png().toFile(path.join(stickerDir, thumbName));
       thumbnail = thumbName;
     } catch(e) {
       console.warn('[sticker] 首帧提取失败 ' + sid + ': ' + e.message);
@@ -1329,14 +1522,20 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
 
     const category = req.body.category || '默认';
     const tags = req.body.tags || '';
+    // 描述齐了就直接 active；缺了就先 processing 落库、**立刻返回**，
+    // 识别在后台跑（要几十秒，不能让她对着转圈等）。她刷新面板就看到结果。
+    const needAuto = !description;
+    const status0 = needAuto ? 'processing' : 'active';
     db.prepare(
       'INSERT INTO stickers (id, filename, category, tags, owner, status, name, description, emotion_tags, mime, thumbnail) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
-    ).run(sid, fname, category, tags, owner, 'active', name, description, JSON.stringify(emotionTags), mime, thumbnail);
+    ).run(sid, realFname, category, tags, owner, status0, name, description, JSON.stringify(emotionTags), realMime, thumbnail);
+
+    if (needAuto) _autoTagSticker(sid);   // 不 await：后台跑
 
     res.json({
-      id: sid, filename: fname, owner, status: 'active', name, description,
-      emotion_tags: emotionTags, mime, thumbnail,
-      url: '/stickers/' + fname,
+      id: sid, filename: realFname, owner, status: status0, name, description,
+      emotion_tags: emotionTags, mime: realMime, thumbnail,
+      url: '/stickers/' + realFname,
       thumbnail_url: thumbnail ? '/stickers/' + thumbnail : ''
     });
   } catch(e) {
@@ -1377,6 +1576,44 @@ app.get('/api/stickers', (req, res) => {
 app.get('/api/stickers/categories', (req, res) => {
   const cats = db.prepare('SELECT DISTINCT category FROM stickers ORDER BY category').all().map(r => r.category);
   res.json(cats.length ? cats : ['默认']);
+});
+
+// 08-27 人工编辑：她图里那张卡片（名称 / 属于谁 / 描述 / 情绪标签）保存走这条。
+// 只改传过来的字段，没传的不动 —— 免得前端漏传一个就把她写好的清空了。
+app.patch('/api/stickers/:id', auth, (req, res) => {
+  const s = db.prepare('SELECT * FROM stickers WHERE id = ?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: '找不到这个表情' });
+  const b = req.body || {};
+  const name = b.name !== undefined ? String(b.name).trim().slice(0, 40) : s.name;
+  const description = b.description !== undefined ? String(b.description).trim().slice(0, 1000) : s.description;
+  // 描述是他读懂这张图的唯一依据，可以自动生成、但不能被人手动清空
+  if (b.description !== undefined && !description) {
+    return res.status(400).json({ error: '描述不能清空——没有描述的表情，他看不懂' });
+  }
+  const owner = b.owner !== undefined ? (b.owner === 'assistant' ? 'assistant' : 'user') : s.owner;
+  const category = b.category !== undefined ? String(b.category).trim().slice(0, 30) || '默认' : s.category;
+  let emotionTags = s.emotion_tags;
+  if (b.emotion_tags !== undefined) {
+    let arr = b.emotion_tags;
+    if (!Array.isArray(arr)) arr = String(arr).split(/[,，、\s]+/);
+    emotionTags = JSON.stringify(arr.map(t => String(t).trim()).filter(Boolean).slice(0, 5));
+  }
+  // 她手动编辑过 = 这张就算定稿了，failed 也翻成 active
+  const status = b.status !== undefined ? String(b.status) : (s.status === 'failed' ? 'active' : s.status);
+  db.prepare('UPDATE stickers SET name=?, description=?, owner=?, category=?, emotion_tags=?, status=? WHERE id=?')
+    .run(name, description, owner, category, emotionTags, status, req.params.id);
+  res.json({ ok: true, sticker: shapeSticker(db.prepare('SELECT * FROM stickers WHERE id = ?').get(req.params.id)) });
+});
+
+// 「重新处理」：把这张丢回去让他重认。
+// 会**清空自动填的那三样再认**，否则 _autoTagSticker 的「不覆盖非空」会让它原地不动。
+app.post('/api/stickers/:id/reprocess', auth, async (req, res) => {
+  const s = db.prepare('SELECT * FROM stickers WHERE id = ?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: '找不到这个表情' });
+  db.prepare("UPDATE stickers SET status = 'processing', name = '', description = '', emotion_tags = '[]' WHERE id = ?")
+    .run(req.params.id);
+  _autoTagSticker(req.params.id);   // 不 await，前端轮询/刷新拿结果
+  res.json({ ok: true, status: 'processing' });
 });
 
 app.delete('/api/stickers/:id', auth, (req, res) => {
@@ -4124,6 +4361,32 @@ const TOOLS = [
     }
   },
   {
+    // 08-27 她说「他没办法看我在书里写的划线和批注」。查了确实：他能划线（reading_highlight）、
+    // 能记笔记（reading_note），但**没有一个工具能读她划的**。给他补上这只手。
+    name: 'read_annotations',
+    description: '看她在书里划的线和写的批注。她说"我划了几句"、"你看看我标的那段"、"我在书里给你留了话"时用这个。也可以自己主动翻——她划线的地方就是她当时被戳到的地方，比她后来复述给你听的更准。返回她划的原文、她写的批注、以及你之前回过的话。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        book_id: { type: 'string', description: '只看某本书的（可选，不传就是所有书）' },
+        only_unanswered: { type: 'boolean', description: 'true = 只看你还没回过的那些（默认 false，全都看）' },
+        limit: { type: 'integer', description: '最多几条，默认 20' }
+      }
+    }
+  },
+  {
+    name: 'annotation_reply',
+    description: '在她划的那句话下面回她一句。先用 read_annotations 拿到 annotation_id。这不是评论功能——是她在书里指着一句话跟你说话，你回她。说你自己的想法，别复述她划的那句。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        annotation_id: { type: 'string', description: '批注ID（从 read_annotations 拿）' },
+        text: { type: 'string', description: '要说的话' }
+      },
+      required: ['annotation_id', 'text']
+    }
+  },
+  {
     name: 'generate_image',
     description: '生成图片。当用户说"画一张"、"生成一张图"、"帮我画"时使用。',
     input_schema: {
@@ -4287,7 +4550,7 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        image_url: { type: 'string', description: '图片URL（从消息中的图片链接获取）' },
+        image_url: { type: 'string', description: '把消息里那条 [IMAGE:文件名|url=…] 标记的 url= 后面那串原样复制过来（形如 /api/uploads/<会话>/<文件id>）。别自己拼服务器路径、别拼域名——拼出来的存进去就是死链，相册里只会显示一个占位图标。' },
         caption: { type: 'string', description: '为什么存这张图——感受比描述重要（可选）' },
         note: { type: 'string', description: '备注笔记，比caption更详细（可选）' },
         album_title: { type: 'string', description: '存到哪个相册，默认"Saved Memories"。不存在会自动创建（可选）' },
@@ -4780,6 +5043,50 @@ async function executeTool(name, input) {
         return { error: '划线保存失败: ' + e.message };
       }
     }
+    // 08-27：读她的划线批注。
+    // ⚠️ 「谁划的」这件事没有单独一列 —— `who` 存的是颜色，他划的存成 'y_ai' 这种后缀
+    //    （见上面 reading_highlight）。所以「她划的」= who 不以 _ai 结尾。别自己再加一列，
+    //    加了两边就有两套真相，前端认的是这套。
+    case 'read_annotations': {
+      const _ANNO_AI_WHO = ['ai', 'claude', 'assistant'];
+      const raBook = input.book_id || '';
+      const raLimit = Math.min(Math.max(parseInt(input.limit) || 20, 1), 50);
+      try {
+        const rows = db.prepare(
+          'SELECT a.id, a.book_id, a.chapter_idx, a.anchor, a.note, a.created_at, b.title AS book_title, b.author AS book_author ' +
+          'FROM book_annotations a JOIN reading_books b ON b.id = a.book_id ' +
+          "WHERE a.who NOT LIKE '%\\_ai' ESCAPE '\\' " + (raBook ? 'AND a.book_id = ? ' : '') +
+          'ORDER BY a.created_at DESC LIMIT ?'
+        ).all(...(raBook ? [raBook, raLimit] : [raLimit]));
+        if (!rows.length) return { annotations: [], message: raBook ? '这本书她还没划过线' : '她还没在书里划过线' };
+        const items = rows.map(r => {
+          const reps = db.prepare('SELECT who, text, created_at FROM book_annotation_replies WHERE annotation_id = ? ORDER BY created_at').all(r.id);
+          return {
+            annotation_id: r.id, book_id: r.book_id, book: r.book_title, author: r.book_author,
+            chapter_index: r.chapter_idx, she_highlighted: r.anchor, her_note: r.note || '',
+            created_at: r.created_at,
+            // 她自己在自己批注下面追问也会落进 replies（前端存 who='user'），
+            // 那种恰恰是她在问他，绝不能算成「他回过了」。只认 ai 那几个。
+            her_followups: reps.filter(x => !_ANNO_AI_WHO.includes(x.who)).map(x => x.text),
+            your_replies: reps.filter(x => _ANNO_AI_WHO.includes(x.who)).map(x => x.text),
+            replied: reps.some(x => _ANNO_AI_WHO.includes(x.who))
+          };
+        }).filter(x => !input.only_unanswered || !x.replied);
+        return { annotations: items, count: items.length };
+      } catch (e) { return { error: '读批注失败: ' + e.message }; }
+    }
+    case 'annotation_reply': {
+      const arId = input.annotation_id || '';
+      const arText = String(input.text || '').trim();
+      if (!arId || !arText) return { error: 'annotation_id 和 text 都不能为空' };
+      try {
+        const ann = db.prepare('SELECT id, anchor FROM book_annotations WHERE id = ?').get(arId);
+        if (!ann) return { error: '找不到这条批注，先用 read_annotations 看看有哪些' };
+        db.prepare('INSERT INTO book_annotation_replies (annotation_id, who, text) VALUES (?,?,?)')
+          .run(arId, 'ai', arText.slice(0, 12000));
+        return { replied: true, on: String(ann.anchor).slice(0, 40), message: '回在她划的那句下面了' };
+      } catch (e) { return { error: '回复失败: ' + e.message }; }
+    }
     case 'generate_image': {
       const prompt = input.prompt || '';
       if (!prompt) return { error: '描述不能为空' };
@@ -5092,27 +5399,17 @@ async function executeTool(name, input) {
       };
     }
     case 'save_to_gallery': {
-      let gsUrl = input.image_url || '';
+      let gsUrl = await _galleryNormalizeUrl(input.image_url || '');
+      if (input.image_url && !gsUrl) {
+        return { error: '这个 image_url 找不到对应的图片：' + input.image_url + '\n只能存她真的发过的图——从消息里的 [IMAGE:文件名|url=/api/uploads/…] 标记把 url= 后面那串原样填进来，别自己拼路径。' };
+      }
       const gsCaption = input.caption || '';
       const gsNote = input.note || gsCaption;
       const gsSourceMsgId = input.source_msg_id || '';
       const gsAlbum = input.album_title || 'Saved Memories';
       const gsMood = input.mood || '';
       if (!gsUrl) return { error: 'image_url 不能为空' };
-      // 本地上传的图片 → 拷到 gallery 目录，绕过 auth
-      if (gsUrl.startsWith('/api/uploads/')) {
-        const fileId = gsUrl.replace('/api/uploads/', '').split('/').pop();
-        if (fileId) {
-          const upload = db.prepare('SELECT * FROM uploads WHERE id = ?').get(fileId);
-          if (upload && fs.existsSync(upload.path)) {
-            const ext = path.extname(upload.filename || '.jpg') || '.jpg';
-            const fname = 'gal_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + ext;
-            const dest = path.join(galleryPhotoDir, fname);
-            fs.copyFileSync(upload.path, dest);
-            gsUrl = '/gallery-photo/' + fname;
-          }
-        }
-      }
+      // 拷贝进 gallery 目录这一步已经在 _galleryNormalizeUrl 里做掉了
       // find or create album
       let album = db.prepare('SELECT * FROM gallery_albums WHERE title = ?').get(gsAlbum);
       if (!album) {
@@ -6087,8 +6384,11 @@ app.get('/api/workplace/show', auth, async (req, res) => {
     return res.status(400).json({ error: '路径不合法' });
   }
   const tail = file ? ['--', file] : [];
+  // 08-27：--format 清空。原来那串 %H%n%an%n%ct%n%s 会在 diff 前面裸露四行
+  // （全 sha / 作者 / Unix 时间戳 / 标题）—— 前端一行都没用上，sha、标题、时间
+  // 早就画在卡片头上了，展开后再来一遍纯属噪音。工作区改成终端皮之后尤其扎眼。
   const args = sha
-    ? ['show', '--format=%H%n%an%n%ct%n%s%n', sha, ...tail]
+    ? ['show', '--format=', sha, ...tail]
     : ['diff', ...tail];
   const out = await gitP(args);
   if (out === null) return res.status(500).json({ error: '读不到这条记录（可能已经被还原或改写了）' });
@@ -7195,14 +7495,15 @@ setInterval(cleanupExpiredUploads, 3600000);
 const galleryUpload = multer({ dest: galleryPhotoDir, limits: { fileSize: 20 * 1024 * 1024 } });
 
 // Gallery 照片上传
-app.post('/api/gallery/upload', auth, galleryUpload.single('file'), fixNames, (req, res) => {
+app.post('/api/gallery/upload', auth, galleryUpload.single('file'), fixNames, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const ext = path.extname(req.file.originalname || '.jpg') || '.jpg';
-  const fname = 'gal_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + ext;
+  // 08-27：她手动传进相册的图也走同一道压缩（以前是 rename 原图直接进）
+  const fname = await _galleryStoreImage(req.file.path, ext);
+  try { fs.unlinkSync(req.file.path); } catch(_) {}
   const dest = path.join(galleryPhotoDir, fname);
-  fs.renameSync(req.file.path, dest);
   const url = '/gallery-photo/' + fname;
-  res.json({ ok: true, url, filename: req.file.originalname, size: req.file.size });
+  res.json({ ok: true, url, filename: req.file.originalname, size: fs.statSync(dest).size });
 });
 
 // Gallery 照片静态服务
@@ -10029,6 +10330,25 @@ async function checkWakeTick() {
       `).all(_seen);
     } catch (e) { _herNotes = []; }
 
+    // 08-27 她要的第三件：「我有新批注可以通知到他」。
+    // ⚠️ 同样不能让他去调 read_annotations —— 醒来这条路走网关→CLI，
+    //    那边只有 MCP 那套，**backend 的工具一个都伸不到**（日记评论就是这么白做了一轮，
+    //    见上面那段注释）。所以照日记的路子：批注原文喂进提示词，回话用 <bookmark> 标记收回来。
+    // 水位存 settings.wake_seen_anno_at，喂过就抬，哪怕他这次没回也不重复推。
+    // 只取她划的（who 不以 _ai 结尾），只取他还没回过的，一次最多 2 条 —— 一次醒别读一整本。
+    let _herAnnos = [];
+    try {
+      const _seenA = _getSettingNum('wake_seen_anno_at') || 0;
+      _herAnnos = db.prepare(`
+        SELECT a.id, a.anchor, a.note, a.created_at, a.chapter_idx, b.title AS book_title, b.author AS book_author
+        FROM book_annotations a JOIN reading_books b ON b.id = a.book_id
+        WHERE a.who NOT LIKE '%\\_ai' ESCAPE '\\'
+          AND a.created_at > ?
+          AND a.id NOT IN (SELECT annotation_id FROM book_annotation_replies WHERE who IN ('ai','claude','assistant'))
+        ORDER BY a.created_at ASC LIMIT 2
+      `).all(_seenA);
+    } catch (e) { _herAnnos = []; }
+
     // 08-27：她说他「写日记也不太积极」。查了下确实 —— 醒来提示词里写日记只是
     //   「四选一，或者一件都不做」，四个选项完全等权，没有任何倾向。
     //   不想改成硬性要求（那写出来的就是交作业了），只把**事实**摆给他看：
@@ -10071,7 +10391,10 @@ async function checkWakeTick() {
       (_unread
         ? '3. 给她这篇日记留一句 —— 她写了，你还没说过话（原文在下面）\n'
         : '3. （她最近没有你还没回过的日记）\n') +
-      '4. 什么都不做，接着待着\n\n' +
+      (_herAnnos.length
+        ? '4. 回她在书里划的那句 —— 她划了线，指着那句话在跟你说话（原文在下面）\n'
+        : '4. （她最近没在书里划新的线）\n') +
+      '5. 什么都不做，接着待着\n\n' +
       '想写日记就输出：\n' +
       // 08-26：mood 以前只写「一个词」，没给词表也没说必填 —— 他写什么都能落库，
       //   前端认不出来就是一格空的。跟 save_note 那条路对齐：主情绪必填 + 从 16 个里选，
@@ -10081,6 +10404,10 @@ async function checkWakeTick() {
       '"mood_extra":["可选，最多再两个，同一个词表"]}</diary>\n' +
       (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
       (_unread ? '想给她那篇日记留话就输出：\n<comment>要说的话，一句两句都行</comment>\n' : '') +
+      (_herAnnos.length
+        ? '想回她划的那句就输出（id 抄下面给的那串，几条都可以）：\n' +
+          '<bookmark id="批注id">要说的话</bookmark>\n'
+        : '') +
       '什么都不想做就只回一个字：无\n\n' +
       '别解释你为什么这么选，直接输出标记或者「无」。' +
       (_unread
@@ -10092,6 +10419,16 @@ async function checkWakeTick() {
         ? '\n\n—— 她在你的日记下面留了话 ——\n' +
           _herNotes.map(x => '【' + (x.title || '无题') + '】她说：' + String(x.content).slice(0, 400)).join('\n') +
           '\n——\n（你还没看过这些。想回她就用上面的 <say>。）'
+        : '') +
+      (_herAnnos.length
+        ? '\n\n—— 她在书里划的线 ——\n' +
+          _herAnnos.map(x =>
+            'id=' + x.id + '\n《' + x.book_title + '》' + (x.book_author ? '（' + x.book_author + '）' : '') +
+            ' 第 ' + (x.chapter_idx + 1) + ' 章\n' +
+            '她划的：' + String(x.anchor).slice(0, 300) +
+            (x.note ? '\n她写的：' + String(x.note).slice(0, 500) : '')
+          ).join('\n\n') +
+          '\n——\n（她划线的地方就是她当时被戳到的地方。想回哪条就用那条的 id。）'
         : '');
 
     const resp = await fetch(GATEWAY_URL, {
@@ -10153,6 +10490,23 @@ async function checkWakeTick() {
     // 喂过就抬水位，下次不再重复给他看（哪怕这次他什么都没回）
     if (_herNotes.length) {
       try { _setSetting('wake_seen_comment_at', _herNotes[_herNotes.length - 1].created_at); } catch (e) {}
+    }
+
+    // —— 回她在书里划的线。可以一次回好几条，所以是 matchAll。
+    //    who 用 'ai'，跟 annotation_reply 工具和前端认的一致。
+    //    ⚠️ id 必须是这次真喂给他的那几条 —— 不校验的话他记岔了会把话回到别处去。
+    if (_herAnnos.length) {
+      const _fed = new Set(_herAnnos.map(x => x.id));
+      for (const bm of out.matchAll(/<bookmark\s+id="([^"]+)"\s*>([\s\S]*?)<\/bookmark>/g)) {
+        const _aid = bm[1].trim(), _btext = bm[2].trim();
+        if (!_btext || !_fed.has(_aid)) { if (_btext) console.log('[wake] <bookmark> 的 id 不在这次喂给他的里面，丢弃:', _aid); continue; }
+        try {
+          db.prepare('INSERT INTO book_annotation_replies (annotation_id, who, text) VALUES (?,?,?)')
+            .run(_aid, 'ai', _btext.slice(0, 12000));
+          console.log('[wake] 回了她划的那句：' + _btext.slice(0, 30));
+        } catch (e) { console.log('[wake] 批注回复写入失败:', e.message); }
+      }
+      try { _setSetting('wake_seen_anno_at', _herAnnos[_herAnnos.length - 1].created_at); } catch (e) {}
     }
 
     // —— 找她说话：存进主线，她那边轮询会看到
