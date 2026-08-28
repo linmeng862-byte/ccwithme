@@ -4,6 +4,48 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🔎 08-28（下午）· Memory 面板加 Recall 视图，**并撤掉 Archive**
+
+### 先说撤掉的那个
+
+原计划是把 `wander` 剩下的 6 个 mode 都接上。**挨个实测之后一个都没接**，
+而且把已经在的 `Archive` 也撤了 —— 它一直是空的：
+
+| mode | 实测 | 为什么 |
+|---|---|---|
+| `flotsam` | ✅ 有内容 | 随机漂上来的旧记忆 |
+| `unresolved` | ✅ 有内容 | 悬置未了的事 |
+| `archive` / `letter` / `inner` | **空** | 服务端 `hold` 的 kind 枚举里**压根没有这三个** —— 他没有手写，永远不会有 |
+| `writing` / `window` | **空** | 他**有手**（kind 枚举里有，Chat-C 也露了），但一条没写过 |
+| `trails` | 要带 query | 同题折痕时间线，另说 |
+
+**别为了"tab 多一点"把空的接上来**，那是个空转的浏览器（跟 A4 那个空转渲染器一个道理）。
+哪天他真开始写 `writing`/`window` 了，把那两个加回 `memory.js` 顶上那张表就行。
+
+### Recall 视图
+
+`POST /api/memory/recall` + `memory.js` 的 Recall tab。
+
+- 跟 trace 的区别：**trace 是「找」**（关键词全文搜，命中就列）；
+  **recall 是「勾」**（引擎打分选出来的那几条，还告诉你为什么是这几条）。
+  那个 `why` 才是这个视图存在的理由 —— 能看见「他为什么会想起这件事」。
+  界面上把 `query / salience / recency / neglect / unfinished` 画成横条。
+- **POST 不是 GET**：她的检索词走 body，不进访问日志（跟 B5/A3 同一个道理）。
+- 她是**故意**在查，所以**原样发她打的字，不抽词** ——
+  抽词是给「每轮不由自主」那条路做的（她没打算检索，是被勾起来）。
+- `endpoint` 用 `chatc:memory-panel`，**不带 `probe:` 前缀**（是她本人，不是探针）。
+  但「她翻他的记忆本」算不算「他上次在场」，是 Nocturne 那头白名单的设计问题，留给写白名单的人定。
+
+### 顺手修的两个老毛病
+
+- **输入框每敲一个字就打一次接口**（`oninput` 直连）。加了 300ms 防抖。
+- **`_renderMemoryShell()` 每次搜索都重建整个 innerHTML** → 输入框重新生成 →
+  焦点和光标位置全没，光标被踢回开头，根本没法连续输入。
+  改成**只在视图真的换了**的时候才重建（`_renderShellIfViewChanged`），
+  搜索词存在 `_memorySearchTerm` 里、重建时填回去。
+
+---
+
 ## 🩹 08-28（下午）· 前端 Memory 面板一直是空的 —— `resp.json()` 用错了
 
 **症状**：前端 Memory 面板（`memoryPanel` / `static/js/memory.js`，那是 **Nocturne 浏览器**，

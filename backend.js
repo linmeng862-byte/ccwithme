@@ -4137,13 +4137,20 @@ function _recallTerms(text) {
 // 当天下午 A3 上线了（master d9608b4，实测 200），那条退路就该拆 ——
 // 留着它就是留着一条**会把她的钩子写进访问日志 / 代理日志 / Zeabur 平台日志**的路，
 // 而那正是整个 B5 要躲的东西。宁可这一轮不浮，也不走 URL。
-async function _recallFetch(terms) {
-  var body = { query: terms.join(' '), endpoint: RECALL_ENDPOINT, limit: RECALL_LIMIT };
+// opts 给「她在 Memory 面板里主动查」那条路用（endpoint 和条数都不一样）。
+// 聊天那条路不传，走上面那三个常量。
+async function _recallFetch(terms, opts) {
+  opts = opts || {};
+  var body = {
+    query: Array.isArray(terms) ? terms.join(' ') : String(terms || ''),
+    endpoint: opts.endpoint || RECALL_ENDPOINT,
+    limit: opts.limit || RECALL_LIMIT,
+  };
   var url = NOCTURNE_URL + '/api/recall';
   var headers = Object.assign({ 'Content-Type': 'application/json' }, _nocturneAuth(url));
   var r = await fetch(url, {
     method: 'POST', headers, body: JSON.stringify(body),
-    signal: AbortSignal.timeout(RECALL_TIMEOUT_MS),
+    signal: AbortSignal.timeout(opts.timeout || RECALL_TIMEOUT_MS),
   });
   if (!r.ok) return null;
   var ct = r.headers.get('content-type') || '';
@@ -8139,6 +8146,30 @@ app.get('/api/memory/wander', auth, async (req, res) => {
   const mode = req.query.mode || 'flotsam';
   const result = await _mcpCall('wander', { mode, limit: 15 });
   res.json({ ok: true, text: result });
+});
+
+// 她在 Memory 面板里主动查一句话，看会勾起什么。
+// 跟 trace 的区别：trace 是关键词全文搜（找），这个是**打过分的选择**（勾），
+// 会连 why 一起给出来 —— 「为什么是这条浮上来」才是这个视图存在的理由。
+//
+// ⚠️ 用 POST 不用 GET：她的检索词走 body，不进访问日志 / 代理日志 / 平台日志。
+//    跟聊天那条路同一个道理（施工单 B5/A3）。
+//
+// ⚠️ endpoint 用 `chatc:memory-panel`，**不带 `probe:` 前缀** —— 这是她本人，不是探针。
+//    但它到底该不该算「他上次在场」，是 Nocturne 那头白名单说了算的设计问题：
+//    她翻他的记忆本，跟她跟他说话，是不是同一件事？留给写白名单的人定。
+app.post('/api/memory/recall', auth, async (req, res) => {
+  const q = String((req.body && req.body.query) || '').trim();
+  if (!q) return res.json({ ok: true, items: [] });
+  try {
+    // 她是**故意**在查，所以原样发她打的字，不抽词 ——
+    // 抽词是给「每轮不由自主」那条路做的（她没打算检索，是被勾起来）。
+    const data = await _recallFetch(q, { endpoint: 'chatc:memory-panel', limit: 12, timeout: 12000 });
+    if (!data || typeof data === 'string') return res.json({ ok: true, items: [], text: data || '' });
+    res.json({ ok: true, items: data.items || [], time: data.time || null, mode: data.mode || '' });
+  } catch (e) {
+    res.json({ ok: false, error: String(e.message || e) });
+  }
 });
 
 // === 心井 Mind API ===
