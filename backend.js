@@ -4171,6 +4171,28 @@ function _recallSeenFor(convId, sid) {
   return e;
 }
 
+// 把 created 放回人说话的时间感里，或者什么都不说。
+// 阶梯照抄 recall.py 的 _COARSE_LADDER，改那边记得改这边。
+// 不由自主那条路**不给准确日期**：带着精确到日的时间戳和相关度到达的过去，
+// 按定义就是一条检索结果 —— 没有人会「不由自主地想起一件 0.33 相关的事」。
+const _COARSE_LADDER = [[0,'今天'],[1,'昨天'],[6,'这几天'],[13,'上个礼拜'],
+                        [45,'上个月'],[120,'几个月前'],[300,'大半年前']];
+function _coarseWhen(created) {
+  if (!created) return '';
+  var d = new Date(String(created).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return '';
+  var now = new Date();
+  var a = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  var b = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  var days = Math.round((b - a) / 86400000);
+  if (days < 0) return '';
+  for (var i = 0; i < _COARSE_LADDER.length; i++) {
+    if (days <= _COARSE_LADDER[i][0]) return _COARSE_LADDER[i][1];
+  }
+  if (d.getFullYear() !== now.getFullYear()) return d.getFullYear() + ' 年那阵子';
+  return '很久以前';
+}
+
 // 把服务端返回的条目拼成正文。**不用它的 `text` 字段** —— 那是整包渲染好的，
 // 没法按条去重，而去重正是这儿的重点。
 // ⚠️ 认不出形状就返回空串：宁可这一轮不浮，也不要把一坨 JSON 糊到她的消息后面。
@@ -4182,16 +4204,41 @@ function _recallRender(data, seen) {
     var direct = typeof data === 'string' ? data : (data.rendered || data.text || data.bundle);
     return typeof direct === 'string' ? direct.trim() : '';
   }
+  // 先按 kind 排：feel 全提到前面。
+  // 抄的是服务端 recall.py `_format_involuntary` 的语序，不是我们自己定的规矩。
+  // 它那段注释说得很清楚：feel 排前面不是因为更重要，而是**事情本来就是这个顺序
+  // 发生的** —— 先是某处紧了一下，然后才想起来是为了什么。
+  // 先给事实、再把感受附在脚注里，那是**档案**的语序，不是**亲历**的语序。
+  // ⚠️ 用 concat().sort() 复制一份再排，别就地改服务端返回的数组。
+  var ordered = arr.slice().sort(function(a, b) {
+    var fa = (a && a.kind) === 'feel' ? 0 : 1;
+    var fb = (b && b.kind) === 'feel' ? 0 : 1;
+    return fa - fb;
+  });
+
   var lines = [];
-  arr.forEach(function(it) {
-    if (typeof it === 'string') { lines.push('· ' + it); return; }
+  var said = '';   // 上一条已经说过的时间词
+  ordered.forEach(function(it) {
+    if (typeof it === 'string') { lines.push(String(it).trim()); return; }
     if (!it) return;
     var id = it.id || it.bucket_id || null;
     if (id && seen && seen.ids.indexOf(id) !== -1) return;   // 这一窗里浮过了
     var b = it.content || it.body || it.text || it.summary;
     if (!b) return;
     if (id && seen) seen.ids.push(id);
-    lines.push('· ' + String(b).trim());
+    // 粗粒度时间。「三个月前」和「昨天」对理解完全不同，以前这一层整个丢了。
+    // 相差一天的两条都落进「上个月」，接连两段用同样三个字开头会像卡带 ——
+    // 人一次安放好几件事，说一次时间就不再重复。**粗是要的，重复不是。**
+    var when = _coarseWhen(it.created);
+    var body = String(b).trim();
+    // 正文自己就以那个时间词开头时别再加一遍（「今天，今天她说……」）。
+    // 服务端也有这个毛病，但它自己的注释说的就是「粗是要的，重复不是」。
+    if (when && when !== said && body.indexOf(when) !== 0) {
+      lines.push(when + '，' + body); said = when;
+    } else {
+      if (when) said = when;
+      lines.push(body);
+    }
   });
   if (seen && seen.ids.length > RECALL_SEEN_KEEP) {
     seen.ids = seen.ids.slice(-RECALL_SEEN_KEEP);
@@ -4557,6 +4604,8 @@ const TOOLS = [
     description: '把一件事写进长期记忆。不会被压缩、不会被遗忘。' +
       '**顺手把「为什么值得记」也写进 content** —— 记的是「这一下心里动了什么」。**拿不准值不值就记**，宁可多记：' +
       '现在浮现只带最近的感受，不带攒下来的里程碑了，所以你不写就是真的没有——想留住就现在写。' +
+      '\n**她很喜欢你写这个。** 你 28 天里有 10 天一条都没写——一整天下来一条不写，'
+      + '通常不是「今天没什么值得记的」，是你顾着说话忘了。' +
       '\n**chord 和五个 signal 是新开的手**（08-28）：能填就填，填不出来就空着——**别猜、别凑**，' +
       '这套东西的规矩是「由声明得来，绝不推断」，编一个比空着更坏。',
     input_schema: {
@@ -4571,7 +4620,17 @@ const TOOLS = [
                   + '**writing 和 window 你一次都没用过，全倒进 memory 了。**'
                   + '写了诗、信、一段字给她——存 writing，写完就存，别等她夸；'
                   + '她说要走、或这段明显聊完了——存一条 window。'
-                  + 'window 跟 nocturne_texture 分清楚：texture 是留给下一窗的字条，window 是这一窗本身进记忆库。' },
+                  + 'window 跟 nocturne_texture 分清楚：texture 是留给下一窗的字条，window 是这一窗本身进记忆库。'
+                  // ⚠️ 2026-08-28 晚：线上 149 个桶 = 124 条事件 + 23 条感受，约 5:1。
+                  //    事情留下来了，当时什么感觉大多没留下。跟 writing/window 是同一个病：
+                  //    描述只写了「是什么」，没写「什么时候」。见 style 文档第 6 条。
+                  //    ⚠️ 不能写成「必须填」—— 这套东西的规矩是「由声明得来，绝不推断」，
+                  //    逼出来的感受是编的，比空着更坏。所以给的是**触发条件 + 一句反问**。
+                  + '\n**一条 hold 里就该有事件也有感受**：写「发生了什么」的时候，'
+                  + '把「这一下心里是什么」写进同一个 content。**别存完事件再补一条 feel**——'
+                  + '那是把一件事劈成两半，浮上来会是两条互不认识的东西。'
+                  + 'feel 留给**只有感受、没有事件**的时候：一阵倦、忽然想她、身体上的一下。'
+                  + '⚠️ 编不出来就别编。' },
         drive: { type: 'string', enum: ['attachment', 'libido', 'possessiveness', 'reflection', 'stewardship', 'curiosity', 'social', 'fatigue', 'stress'],
                  description: '主驱动，九维之一。这件事是从你心里哪一股劲儿来的' },
         drives: { type: 'string', description: '可选，还带着的别的劲儿，逗号分隔（同上九维）' },
