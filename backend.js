@@ -6028,15 +6028,11 @@ const wpSpentToday = () => db.prepare(
   "SELECT COALESCE(SUM(cost_usd),0) AS c FROM usage_log WHERE source='workplace' AND created_at >= strftime('%s', date('now'))"
 ).get().c;
 
-function wpLimitBlock() {
-  const L = getLimits();
-  if (!L || !L.enforce) return null;
-  const cap = L.workplace_daily_usd;
-  if (!(cap > 0)) return null;
-  const spent = wpSpentToday();
-  if (spent >= cap) return `workplace 今天已用 $${spent.toFixed(2)}，到上限 $${cap} 了。要接着改就把上限调高。`;
-  return null;
-}
+// 08-28 她定的：workplace 不要日额度上限。
+//   「在那边跟你说和在这边跟你说应该是一样的」—— 主聊天没有这道闸，工作台也不该有。
+//   拦截整个去掉了（原来的 wpLimitBlock + 那句 429）。
+//   ⚠️ 花销**照旧记账**（usage_log 里 source='workplace'），只是不再拦人 ——
+//     哪天要回头查钱花在哪儿，数据一天都没断。
 
 // git 一律用数组传参，不拼 shell，免得文件名里带奇怪字符出事
 function git(args, cb) {
@@ -6100,9 +6096,6 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
   // 她勾了主线消息就拼在前面。拼不出来（id 都失效了）就当没勾，不报错打断她。
   // 附件排在主线上下文后面、真正的指令前面，顺序别调——指令永远在最后一段。
   const prefixed = wpMainlineContext(mainline_ids) + wpAttachmentContext(upload_ids) + message;
-
-  const blocked = wpLimitBlock();
-  if (blocked) return res.status(429).json({ error: blocked });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -6264,8 +6257,8 @@ app.get('/api/workplace/diff', auth, (req, res) => {
         diff: diff || '',
         changed: lines.map(l => ({ status: l.slice(0, 2).trim(), file: l.slice(3) })),
         clean: lines.length === 0,
+        // 08-28：`cap` 去掉了（workplace 不再有日上限）。spent_today 留着 —— 只记账不拦人。
         spent_today: wpSpentToday(),
-        cap: getLimits()?.workplace_daily_usd ?? 3,
       });
     });
   });
@@ -6407,16 +6400,31 @@ app.post('/api/workplace/apply', auth, (req, res) => {
            'commit', '-m', msg], (e2, out) => {
         if (e2) return res.status(500).json({ error: 'commit 失败: ' + String(e2.message) });
         git(['rev-parse', '--short', 'HEAD'], (e3, sha) => {
-          res.json({ ok: true, commit: (sha || '').trim(), output: (out || '').trim(), restarting: true });
-          // 响应已经发出去了，再重启自己
-          // 08-23 修：这里原来硬写 'ccwithme' —— **那是另一台的进程名，这台叫 chat-c**。
-          // 后果很阴：commit 成功、接口返回 restarting:true，但重启打在一个不存在的进程上，
-          // 她点了「确认」看着改动没生效，会以为是代码改错了。
-          // pm2 会把 name=<应用名> 注进进程环境（cat /proc/<pid>/environ 验过），
-          // 所以两台都不用写死：这台拿到 chat-c，那台拿到 ccwithme。
-          setTimeout(() => {
-            require('child_process').execFile('pm2', ['restart', PM2_APP], () => {});
-          }, 400);
+          // 08-28 她要的「一步到位」：提交完顺手推上去，不用再回终端补一句。
+          // ⚠️ push 失败**不算这次操作失败** —— 提交已经落地了，回滚它只会更乱。
+          //    没网 / 没配 remote / 要认证都会到这儿，如实把原因带回去让她看见，
+          //    别静默吞掉（吞掉的话她以为推上去了，另一台 pull 不到，两台就开始漂）。
+          git(['push'], (e4, pout, perr) => {
+            res.json({
+              ok: true,
+              commit: (sha || '').trim(),
+              output: (out || '').trim(),
+              pushed: !e4,
+              push_error: e4 ? String(perr || e4.message).trim().slice(0, 300) : null,
+              restarting: true,
+            });
+            // 响应已经发出去了，再重启自己
+            // 08-23 修：这里原来硬写 'ccwithme' —— **那是另一台的进程名，这台叫 chat-c**。
+            // 后果很阴：commit 成功、接口返回 restarting:true，但重启打在一个不存在的进程上，
+            // 她点了「确认」看着改动没生效，会以为是代码改错了。
+            // pm2 会把 name=<应用名> 注进进程环境（cat /proc/<pid>/environ 验过），
+            // 所以两台都不用写死：这台拿到 chat-c，那台拿到 ccwithme。
+            // ⚠️ 必须在 push 回调**里面** —— 重启会把自己这个进程连同还没跑完的 git push
+            //    一起打断，push 就成了半截的。
+            setTimeout(() => {
+              require('child_process').execFile('pm2', ['restart', PM2_APP], () => {});
+            }, 400);
+          });
         });
       });
     });

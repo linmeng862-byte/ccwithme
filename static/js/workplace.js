@@ -59,6 +59,22 @@
     }).join('');
   }
 
+  // 两页那套样式：横向滚动条藏掉（滑起来才像翻页，不像一个能拖的条），
+  // 加一个呼吸的小点表示「他正在跑」。只注一次，重复开面板不重复注。
+  function _wpInjectStyle() {
+    if (document.getElementById('wp-pages-style')) return;
+    var s = document.createElement('style');
+    s.id = 'wp-pages-style';
+    s.textContent =
+      '.wp-pages{scrollbar-width:none;-ms-overflow-style:none}' +
+      '.wp-pages::-webkit-scrollbar{display:none}' +
+      '@keyframes wp-dot-breathe{0%,100%{opacity:.35;transform:scale(1)}50%{opacity:1;transform:scale(1.5)}}' +
+      '.wp-dot-live{animation:wp-dot-breathe 1.3s ease-in-out infinite;background:var(--accent)!important}' +
+      // 她系统开了「减弱动效」就别闪，直接停在亮着的状态
+      '@media (prefers-reduced-motion:reduce){.wp-dot-live{animation:none;opacity:1!important}}';
+    document.head.appendChild(s);
+  }
+
   var CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><polyline points="20 6 9 17 4 12"/></svg>';
 
   window.renderWorkplaceSheet = function () {
@@ -68,13 +84,16 @@
     // sheet-content 那边有 padding !important，这里得同样加重才压得住
     c.style.cssText = 'display:flex;flex-direction:column;height:100%;padding:0!important;overflow:hidden';
 
-    // ── 顶：额度条 ──
-    var meter = h('div', 'flex:none;padding:8px 14px;font:12px var(--font-sans);color:var(--text-faint);border-bottom:1px solid var(--bg-sunken)', '额度加载中…');
-    c.append(meter);
+    // 08-28 额度条撤了。她说「在那边跟你说和在这边跟你说应该是一样的」——
+    // 主聊天没有日上限，工作台也不该有。后端那道 429 一起去掉了（wpLimitBlock）。
+    // 花销照旧记在 usage_log 里（source='workplace'），只是不再拦人。
 
-    // ── 中：左边对话流，右边工作区 ──
-    // 窄屏（手机 / iOS webview）一次只显示一个，靠上面那排分段切；
-    // 宽屏两列并排，分段行自己收起来。她主要在手机上看，所以窄屏是默认形态。
+    // ── 中：两个页面，左右滑 ──
+    // 08-28 她说上面那两个大按钮「很奇怪」，要「把 workplace 做成两个页面」。
+    // 所以分段按钮整个撤掉，改成横向 scroll-snap 的两页 + 顶上两个小点。
+    //   第 1 页 对话   —— 唯一有输入框的地方
+    //   第 2 页 工作区 —— 没有输入框，纯看他在干什么
+    // 宽屏（>=980px）仍然并排两列，那时点和滑都不需要。
     var MONO = 'ui-monospace,SFMono-Regular,Menlo,monospace';
     // 08-27 她给了张 Claude Code 在 Mac 终端里的截图：「工作区就是我在那边跟在真的终端显示差不多的」。
     // 所以工作区整块改成终端窗口 —— 固定的标题栏（红黄绿三颗）+ 下面一条深色的流。
@@ -82,36 +101,33 @@
     //    颜色用暖黑不用纯黑，跟她 app 那套米色调放在一起才不打架。
     var T_BG = '#1F1E1D', T_BAR = '#2B2926', T_LINE = '#3A3733',
         T_TXT = '#DCD7CF', T_DIM = '#857F76', T_GREEN = '#6BAF7B', T_ORANGE = '#D97757';
-    var tabRowTop = h('div', 'flex:none;display:flex;gap:6px;padding:8px 14px 0');
-    var tabChat = h('button', '', '对话');
-    // 08-27 她要「工作区那个入口用终端窗口的图标」。icons 表里新加的 terminal
-    // （外框 + 标题栏三个圆点），走 currentColor，选中/未选中自动跟着 tab 的字色走。
-    // icon() 万一没加载就只剩文字，别让 tab 变成空按钮。
-    var tabWs = h('button', '', '');
-    if (typeof icon === 'function') {
-      var _ti = h('span', 'display:inline-flex;width:15px;height:15px;flex:none');
-      _ti.innerHTML = icon('terminal');
-      var _tsvg = _ti.querySelector('svg');
-      if (_tsvg) { _tsvg.style.width = '100%'; _tsvg.style.height = '100%'; }
-      tabWs.append(_ti);
-    }
-    tabWs.append(h('span', '', '工作区'));
-    function tabCss(on) {
-      return 'flex:1;padding:7px;border-radius:11px;cursor:pointer;font:600 13px var(--font-sans);' +
-        'display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid ' +
-        (on ? 'var(--accent)' : 'var(--border)') + ';background:' +
-        (on ? 'var(--accent)' : 'var(--bg-surface)') + ';color:' +
-        (on ? 'var(--accent-fg)' : 'var(--text-secondary)');
-    }
-    tabRowTop.append(tabChat, tabWs);
-    c.append(tabRowTop);
+    // 页码条：两个小点 + 当前页名。工作区那一页在跑活的时候，第二个点会呼吸 ——
+    // 她停在对话页也能一眼看出「他在动」。
+    _wpInjectStyle();
+    var pager = h('div', 'flex:none;display:flex;align-items:center;justify-content:center;gap:10px;padding:9px 14px 7px');
+    var pgName = h('div', 'font:600 13px var(--font-sans);color:var(--text-secondary);min-width:44px;text-align:right', '对话');
+    var dotWrap = h('div', 'display:flex;gap:7px;align-items:center');
+    var dotEls = ['对话', '工作区'].map(function (_, i) {
+      var d = h('button', 'width:7px;height:7px;padding:0;border:none;border-radius:50%;cursor:pointer;background:var(--text-faint);opacity:.3;transition:opacity .18s');
+      d.setAttribute('aria-label', '第 ' + (i + 1) + ' 页');
+      d.onclick = function () { goPage(i); };
+      dotWrap.append(d);
+      return d;
+    });
+    pager.append(pgName, dotWrap, h('div', 'min-width:44px'));
+    c.append(pager);
 
-    var main = h('div', 'flex:1;display:flex;min-height:0;overflow:hidden');
+    // 横向滑动容器。scroll-snap 让它一页一页停住，不会卡在两页中间。
+    var main = h('div', 'flex:1;display:flex;min-height:0;overflow-x:auto;overflow-y:hidden;' +
+      'scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch');
+    main.className = 'wp-pages';
     c.append(main);
 
+    var pgChat = h('div', 'flex:none;width:100%;min-width:0;display:flex;flex-direction:column;overflow:hidden;scroll-snap-align:start');
     var flow = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px');
+    pgChat.append(flow);
     // 终端窗口：wsPane 自己不滚（标题栏要钉住），滚的是里面的 wsBody。
-    var wsPane = h('div', 'flex:1;min-width:0;display:none;flex-direction:column;overflow:hidden;background:' + T_BG);
+    var wsPane = h('div', 'flex:none;width:100%;min-width:0;display:flex;flex-direction:column;overflow:hidden;scroll-snap-align:start;background:' + T_BG);
     var wsBar = h('div', 'flex:none;display:flex;align-items:center;gap:7px;padding:8px 11px;background:' + T_BAR + ';border-bottom:1px solid ' + T_LINE);
     ['#FF5F57', '#FEBC2E', '#28C840'].forEach(function (col) {
       wsBar.append(h('div', 'width:11px;height:11px;border-radius:50%;flex:none;background:' + col));
@@ -119,37 +135,64 @@
     wsBar.append(h('div', 'flex:1;text-align:center;font:11px ' + MONO + ';color:' + T_DIM + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap', 'workplace — 最近的记录'));
     var wsReload = h('button', 'flex:none;padding:2px 9px;border:1px solid ' + T_LINE + ';border-radius:7px;background:transparent;color:' + T_DIM + ';font:11px ' + MONO + ';cursor:pointer', '刷新');
     wsBar.append(wsReload);
-    var wsBody = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:8px 0;font:12px/1.6 ' + MONO);
-    wsPane.append(wsBar, wsBody);
-    main.append(flow, wsPane);
+    // 待提交条：钉在终端窗口顶上，没有待提交的改动时整条收起来。
+    // 这是她要的那个闭环 —— 「在那里你可以直接改然后 push 嘛」。
+    // ⚠️ push 这一下**是她点的**，不是他自己跑的：审核层里 git push/commit 仍然全拦着
+    //    （permission-hook.py 的 FORBIDDEN_PAT），工作台的他改得了文件、推不了代码。
+    //    按钮走后端 /api/workplace/apply，那条路是 auth 过的。
+    var wsPend = h('div', 'display:none;flex:none;align-items:center;gap:9px;padding:9px 11px;background:' + T_BAR + ';border-bottom:1px solid ' + T_LINE);
+    var wsPendTxt = h('div', 'flex:1;min-width:0;font:11px/1.45 ' + MONO + ';color:' + T_TXT + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+    var wsPendBtn = h('button', 'flex:none;padding:5px 11px;border:none;border-radius:8px;background:' + T_GREEN + ';color:#10231A;font:600 11px ' + MONO + ';cursor:pointer', '提交并推送');
+    wsPend.append(wsPendTxt, wsPendBtn);
 
-    // 宽屏并排 / 窄屏切换。matchMedia 而不是只在打开时量一次 ——
+    var wsBody = h('div', 'flex:1;min-width:0;overflow-y:auto;padding:8px 0;font:12px/1.6 ' + MONO);
+    wsPane.append(wsBar, wsPend, wsBody);
+    main.append(pgChat, wsPane);
+
+    // 宽屏并排 / 窄屏两页。matchMedia 而不是只在打开时量一次 ——
     // 手机横竖屏来回转、iPad 分屏拖宽窄，都会跨过这条线。
     var wide = window.matchMedia('(min-width: 980px)');
-    var wsTab = false;          // 窄屏时当前停在哪一边
-    function syncPanes() {
+    var PAGE_CHAT = 0, PAGE_WS = 1;      // 页序号只在这儿写一次，别到处散 0/1
+    var curPage = PAGE_CHAT;
+    function goPage(i) {
+      if (wide.matches) return;
+      main.scrollTo({ left: i * main.clientWidth, behavior: 'smooth' });
+    }
+    function syncPager() {
       if (wide.matches) {
-        tabRowTop.style.display = 'none';
-        flow.style.display = 'flex';
-        wsPane.style.display = 'flex';
+        // 并排：两页各占一半，关掉 snap，页码条没意义就藏起来
+        pager.style.display = 'none';
+        main.style.scrollSnapType = 'none';
+        pgChat.style.width = '50%';
+        wsPane.style.width = '50%';
         wsPane.style.borderLeft = '1px solid var(--bg-sunken)';
       } else {
-        tabRowTop.style.display = 'flex';
+        pager.style.display = 'flex';
+        main.style.scrollSnapType = 'x mandatory';
+        pgChat.style.width = '100%';
+        wsPane.style.width = '100%';
         wsPane.style.borderLeft = '';
-        flow.style.display = wsTab ? 'none' : 'flex';
-        wsPane.style.display = wsTab ? 'flex' : 'none';
       }
-      tabChat.style.cssText = tabCss(!wsTab);
-      tabWs.style.cssText = tabCss(wsTab);
+      pgName.textContent = curPage === PAGE_WS ? '工作区' : '对话';
+      dotEls.forEach(function (d, i) {
+        d.style.opacity = (i === curPage ? '1' : '.3');
+        d.style.background = (i === curPage ? 'var(--accent)' : 'var(--text-faint)');
+      });
+      // 「工作区不要输入框」—— 滑到第 2 页就把整条输入区收掉。
+      dock.style.display = (wide.matches || curPage === PAGE_CHAT) ? '' : 'none';
     }
+    // 滑到哪一页了。onscroll 每帧都响，只在整页翻过去时才做事。
+    main.addEventListener('scroll', function () {
+      if (wide.matches || !main.clientWidth) return;
+      var p = Math.round(main.scrollLeft / main.clientWidth);
+      if (p === curPage) return;
+      curPage = p;
+      syncPager();
+      if (curPage === PAGE_WS && !wsLoaded) loadActivity();   // 第一次滑过去才拉，别开面板就多打一枪
+    }, { passive: true });
     // addEventListener 在旧 Safari 的 MediaQueryList 上没有，兜一下 addListener
-    if (wide.addEventListener) wide.addEventListener('change', syncPanes);
-    else if (wide.addListener) wide.addListener(syncPanes);
-    tabChat.onclick = function () { wsTab = false; syncPanes(); };
-    tabWs.onclick = function () {
-      wsTab = true; syncPanes();
-      if (!wsLoaded) loadActivity();      // 第一次切过去才拉，别开面板就多打一枪
-    };
+    if (wide.addEventListener) wide.addEventListener('change', syncPager);
+    else if (wide.addListener) wide.addListener(syncPager);
 
     // ══ 工作区 ══════════════════════════════════════════════════════════
     // 「这个仓库最近发生了什么」。跟对话流里那张终端卡片**不是一回事**，
@@ -297,7 +340,89 @@
     // 否则「待确认」那张卡还挂在上面，看着像没提交成功。
     function wsRefreshIfLoaded() { if (wsLoaded) loadActivity(); }
 
-    syncPanes();
+    // ══ 工作区：这一轮实时跑的那段 ══════════════════════════════════════
+    // 「同一条流的两头」：上面是正在跑的这一轮，下面是最近的记录（loadActivity 铺的）。
+    // 故意不做成两块各自维护的面板 —— 那样两边内容会对不上，是这个项目栽过的老毛病。
+    var liveSec = null;
+    function liveLine(text, color) {
+      if (!liveSec) {
+        liveSec = h('div', 'flex:none;border-bottom:1px solid ' + T_LINE + ';padding:4px 0 8px;margin-bottom:4px');
+        liveSec.append(h('div', 'padding:2px 12px 4px;font:11px ' + MONO + ';color:' + T_DIM, '── 这一轮 ──'));
+        wsBody.insertBefore(liveSec, wsBody.firstChild);
+      }
+      var row = h('div', 'padding:1px 12px;font:12px/1.6 ' + MONO + ';color:' + (color || T_TXT) + ';word-break:break-all;white-space:pre-wrap', text);
+      liveSec.append(row);
+      // 只在她正看着工作区时才滚，不然会把她翻到一半的历史拽走。
+      // 一轮里这个函数会被调几十次（每个工具一次），每次都读 scrollHeight 再写 scrollTop
+      // 等于每条都强制一次重排 —— 攒到下一帧只滚一次。
+      if (curPage === PAGE_WS || wide.matches) scheduleScroll();
+      return row;
+    }
+    var _scrollPending = false;
+    function scheduleScroll() {
+      if (_scrollPending) return;
+      _scrollPending = true;
+      requestAnimationFrame(function () {
+        _scrollPending = false;
+        wsBody.scrollTop = wsBody.scrollHeight;
+      });
+    }
+    function liveReset() {
+      if (liveSec) { liveSec.remove(); liveSec = null; }
+    }
+    // 在跑的时候第二个点呼吸一下，她停在对话页也知道他在动
+    function setRunning(on) {
+      dotEls[PAGE_WS].classList[on ? 'add' : 'remove']('wp-dot-live');
+    }
+
+    // ══ 提交并推送 ═══════════════════════════════════════════════════════
+    // 08-28 她定的「一步到位」：提交完直接推，不用再回终端补一句。
+    // 对话流那张 diff 卡和工作区顶上的待提交条**共用这一个函数** ——
+    // 同一件事在两个地方各写一遍，迟早漂成两个行为，这个项目栽过。
+    function commitAndPush(msg, cb) {
+      fetch('/api/workplace/apply', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ message: msg }),
+      }).then(function (r) { return r.json(); })
+        .then(function (d) { if (!d.ok) throw new Error(d.error || '提交失败'); cb(null, d); })
+        .catch(function (e) { cb(e); });
+    }
+    // ⚠️ push 失败时**提交是成功的**，话要说清楚 —— 笼统报一句「失败」，
+    //    她会以为改动没了，跑去重做一遍。
+    function applyResultText(d) {
+      return d.pushed
+        ? ('已提交 ' + d.commit + ' 并推送，服务重启中…')
+        : ('已提交 ' + d.commit + '，但没推上去：' + (d.push_error || '未知原因') +
+           '（提交还在本地，回终端 git push 就行）');
+    }
+
+    // 待提交条：有改动才露出来
+    function syncPending(d) {
+      var changed = (d && d.changed) || [];
+      wsPend.style.display = (d && !d.clean && changed.length) ? 'flex' : 'none';
+      if (!changed.length) return;
+      var files = changed.map(function (x) { return x.file; });
+      wsPendTxt.textContent = changed.length + ' 个文件待提交 · ' +
+        files.slice(0, 3).join(' ') + (files.length > 3 ? ' …' : '');
+    }
+    wsPendBtn.onclick = function () {
+      var m = prompt('这次改动写句说明（会写进 git 提交记录）', 'workplace: ');
+      if (m === null) return;
+      wsPendBtn.textContent = '提交中…'; wsPendBtn.style.opacity = '.6';
+      commitAndPush(m, function (err, d) {
+        wsPendBtn.textContent = '提交并推送'; wsPendBtn.style.opacity = '1';
+        if (err) { toast(err.message); return; }
+        toast(applyResultText(d));
+        liveLine('$ git commit && git push', T_DIM);
+        liveLine(applyResultText(d), d.pushed ? T_GREEN : T_ORANGE);
+        wsPend.style.display = 'none';
+        setTimeout(wsRefreshIfLoaded, 6200);
+      });
+    };
+
+    // ⚠️ syncPager() 不在这儿调 —— 它要设置输入区（dock）显不显示，而 dock 还没建。
+    //    唯一那一次调用在这个函数末尾、dock append 完之后。
 
     function toBottom() { flow.scrollTop = flow.scrollHeight; }
 
@@ -414,7 +539,7 @@
       hdr.onclick = toggle;
 
       var acts = h('div', 'display:flex;gap:8px;padding:11px 14px 13px');
-      var apply = h('button', 'flex:1;padding:9px;border:none;border-radius:11px;background:#1a7f37;color:#fff;font:600 13px var(--font-sans);cursor:pointer', '确认生效并重启');
+      var apply = h('button', 'flex:1;padding:9px;border:none;border-radius:11px;background:#1a7f37;color:#fff;font:600 13px var(--font-sans);cursor:pointer', '提交并推送');
       var reject = h('button', 'padding:9px 13px;border:1px solid #cf222e;border-radius:11px;background:transparent;color:#cf222e;font:600 13px var(--font-sans);cursor:pointer', '一键还原');
       acts.append(apply, reject);
       card.append(acts);
@@ -423,20 +548,18 @@
         var m = prompt('这次改动写句说明（会写进 git 提交记录）', 'workplace: ');
         if (m === null) return;
         apply.textContent = '提交中…'; apply.style.opacity = '.6';
-        fetch('/api/workplace/apply', {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ message: m }),
-        }).then(function (r) { return r.json(); }).then(function (d2) {
-          if (!d2.ok) { toast(d2.error || '提交失败'); apply.textContent = '确认生效并重启'; apply.style.opacity = '1'; return; }
-          toast('已提交 ' + d2.commit + '，正在重启…');
+        commitAndPush(m, function (err, d2) {
+          if (err) {
+            toast('失败: ' + err.message);
+            apply.textContent = '提交并推送'; apply.style.opacity = '1';
+            return;
+          }
+          toast(applyResultText(d2));
           acts.remove();
-          card.append(h('div', 'padding:11px 14px;font:12px var(--font-sans);color:#1a7f37', '已提交 ' + d2.commit + '，服务重启中…'));
+          card.append(h('div', 'padding:11px 14px;font:12px var(--font-sans);color:' + (d2.pushed ? '#1a7f37' : '#B85C38'),
+            applyResultText(d2)));
           setTimeout(loadDiff, 6000);
           setTimeout(wsRefreshIfLoaded, 6200);
-        }).catch(function (e) {
-          toast('失败: ' + e.message);
-          apply.textContent = '确认生效并重启'; apply.style.opacity = '1';
         });
       };
 
@@ -645,7 +768,7 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (d.error) { toast(d.error); return; }
-          meter.textContent = 'workplace 今天已用 $' + Number(d.spent_today || 0).toFixed(3) + ' / 上限 $' + d.cap;
+          syncPending(d);
           if (d.clean) return;             // 没改动就不塞卡片，省得刷屏
           convo.push({ who: 'diff', diff: d, ops: ops || [] });
           diffCard(d, ops);
@@ -665,6 +788,10 @@
       if (!msg && !_upIds.length && !ids.length) return;
       if (!msg) msg = _upIds.length ? '看看我发给你的文件。' : '看看我挑的这几条。';
       wpBusy = true; send.textContent = '…'; send.style.opacity = '.6';
+      // 工作区那一页跟着这一轮实时刷。每轮从头开始 —— 上一轮的留着只会跟
+      // 下面「最近的记录」重复，那些历史那边本来就有。
+      liveReset(); setRunning(true);
+      liveLine('> ' + msg, T_GREEN);
 
       convo.push({ who: 'her', text: msg });
       bubbleHer(msg);
@@ -710,9 +837,15 @@
                 try { inp = JSON.stringify(j.input).slice(0, 70); } catch (e) {}
                 himRec.tools.push({ name: j.name, input: inp });
                 toolLine(him.wrap, j.name, inp);
+                // 工作区那一页要的就是这个：他读了哪个文件、改了什么、跑了什么。
+                liveLine('· ' + j.name + ' ' + inp);
               }
-              else if (ev === 'error') { himRec.text += '\n⚠️ ' + (j.message || '') + '\n'; him.body.textContent = himRec.text; }
-              else if (ev === 'usage') meter.textContent = '本次 $' + Number(j.cost_usd || 0).toFixed(4);
+              else if (ev === 'error') {
+                himRec.text += '\n⚠️ ' + (j.message || '') + '\n';
+                him.body.textContent = himRec.text;
+                liveLine('!! ' + (j.message || ''), '#FF8A80');
+              }
+              else if (ev === 'usage') liveLine('# 本次 $' + Number(j.cost_usd || 0).toFixed(4), T_DIM);
             });
             return pump();
           });
@@ -722,6 +855,7 @@
         him.body.textContent = himRec.text;
       }).finally(function () {
         wpBusy = false; send.textContent = '↑'; send.style.opacity = '1';
+        setRunning(false);
         if (!himRec.text) { himRec.text = '（他没说话，直接改了）'; him.body.textContent = himRec.text; }
         // 带过一次就清掉：会话是 --resume 的，他已经记住了，再带一遍是白花钱
         if (ids.length) { picked = {}; syncMlCount(); mlLoaded = false; if (mlOpen) loadMainline(); }
@@ -756,11 +890,13 @@
       });
     };
 
-    // 开面板先把额度和现有改动同步一次
+    // dock 建完了，这时候才能按当前页决定输入框显不显示
+    syncPager();
+
+    // 开面板先把「有没有待提交的改动」同步一次
     fetch('/api/workplace/diff', { headers: authHeaders() })
       .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (d && !d.error) meter.textContent = 'workplace 今天已用 $' + Number(d.spent_today || 0).toFixed(3) + ' / 上限 $' + d.cap;
-      }).catch(function () {});
+      .then(function (d) { if (d && !d.error) syncPending(d); })
+      .catch(function () {});
   };
 })();

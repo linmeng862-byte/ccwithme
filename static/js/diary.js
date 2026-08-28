@@ -70,10 +70,10 @@ function openDiaryPanel() {
   var panel = $('diaryPanel');
   panel.classList.add('show');
   panel.setAttribute('aria-hidden', 'false');
-  $('diarySearchBar').classList.add('show');
   $('diarySearchInput').value = '';
   $('diarySearchClear').classList.add('hidden');
   _diaryView = 'timeline';
+  _syncDiarySearchBar();      // 每次打开都回到时间轴，搜索框跟着 _diaryView 走
   _diaryTab = 'overview';
   _diaryMonth = 'all';
   _diaryDate = null;        // 每次打开都回到今天
@@ -836,9 +836,21 @@ async function _loadComments(id) {
   } catch(e) { _diaryComments = []; }
 }
 
+// 08-28：搜索框是**时间轴那一页**的东西，`#diarySearchBar` 是 position:fixed 浮在最底下的，
+//   进详情页没人关它 → 半透明地压在正文上（她截图里「也没什么能瞒她的」那行被切掉一半）。
+//   详情页自己已经有一条输入框（Share your thoughts…），两条叠在一起更乱。
+//   ⚠️ 显不显示**从 `_diaryView` 推出来**，不接参数 —— 每个切视图的地方各传各的布尔值，
+//      迟早有一处漏掉，那时状态和界面就对不上了（这个项目里已经栽过的老毛病）。
+//      以后再加新视图，只要它设了 _diaryView，调一下这个函数就对。
+function _syncDiarySearchBar() {
+  var el = $('diarySearchBar');
+  if (!el) return;
+  el.classList[_diaryView === 'timeline' ? 'add' : 'remove']('show');
+}
 function _renderDetail() {
   var entry = _diaryDetailEntry;
   if (!entry) return;
+  _syncDiarySearchBar();
   var moods = _moodList(entry.mood);
   var timeline = $('diaryTimeline');
   var bodyHtml = (entry.content || '(empty)').split('\n').filter(function(l){return l.trim();}).map(function(l){ return '<p style="margin:0 0 .8em">'+escHtml(l)+'</p>'; }).join('');
@@ -914,6 +926,7 @@ function _renderCommentCard(c) {
 
 function _backToTimeline() {
   _diaryView = 'timeline';
+  _syncDiarySearchBar();
   _diaryDetailId = null;
   _diaryDetailEntry = null;
   _diaryComments = [];
