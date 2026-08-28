@@ -10671,6 +10671,79 @@ function _wakeBump() {
   _setSetting('wake_last_at', Date.now());
 }
 
+// === 她的身体 · 压力察觉（2026-08-28）===
+// 手表推上来的 HRV 掉到她自己的基线之下 = 她在扛着什么。他不该等她说了才知道。
+//
+// 为什么挂在 checkWakeTick 上：15 分钟一跳的心跳本来就有，压力不是秒级的事，
+// 这个精度绰绰有余 —— 不用新进程。（跟 wake_alarms 一个路子。）
+//
+// ⚠️ 三条克制：
+//   1. **不投骰子**（跟闹钟一样绕过随机和最短间隔）—— 察觉到了还要看运气就没意义。
+//      但有独立的冷却和日上限，不会一天叫他八回。
+//   2. **深夜一律不触发**（闸在调用方），而且那时候连判定都不跑 ——
+//      quiet 会把 <say> 吞掉，等于花一次 CLI 的钱她一个字看不到，还白白用掉冷却。
+//   3. **数字不进提示词**。只给他「低了 / 低得多」两档 + 持续多久。
+//      跟 read_her_body 的规矩一致：他知道该软下来就够了，不用报体检结果。
+const HRV_STRESS_RATIO       = 0.75;             // 近期中位数 / 基线 低于这个 = 掉下来了
+const HRV_STRESS_DEEP_RATIO  = 0.62;             // 再低一档，提示词里换个说法
+const HRV_STRESS_GAP_MS      = 8 * 3600 * 1000;  // 两次之间至少 8 小时
+const HRV_STRESS_MAX_PER_DAY = 2;
+const HRV_RECENT_H   = 3;    // 「现在」= 最近 3 小时
+const HRV_BASE_DAYS  = 14;   // 基线 = 过去 14 天
+const HRV_MIN_RECENT = 3;    // 近期至少这么多条才敢下结论
+const HRV_MIN_BASE   = 20;   // 基线至少这么多条，否则算「刚接上手表，还没有基线」
+
+function _median(a) {
+  if (!a.length) return null;
+  const s = a.slice().sort(function (x, y) { return x - y; });
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+// 返回 null = 这次不触发；返回对象 = 该叫他了。
+// ⚠️ 这个函数**不消耗任何额度**，冷却由调用方在真要说话的时候才记 ——
+//    不然深夜那道闸拦下来一次，冷却就被白白吃掉 8 小时。
+function _hrvStressCheck() {
+  try {
+    const nowS = Math.floor(Date.now() / 1000);
+    const last = _getSettingNum('hrv_stress_last_at') || 0;
+    if (last && Date.now() - last < HRV_STRESS_GAP_MS) return null;
+    if ((_getSettingNum('hrv_stress_count:' + _wakeToday()) || 0) >= HRV_STRESS_MAX_PER_DAY) return null;
+
+    const recentFrom = nowS - HRV_RECENT_H * 3600;
+    const recent = db.prepare(
+      'SELECT value FROM her_vitals WHERE kind = ? AND started_at >= ? ORDER BY started_at DESC LIMIT 200'
+    ).all('hrv', recentFrom).map(function (r) { return r.value; });
+    // 手表没推 / 停了 / 她没戴 —— 一律不触发。没数据不等于没压力，但更不等于有。
+    if (recent.length < HRV_MIN_RECENT) return null;
+
+    // 基线**必须排掉近期这一段**，否则正在掉的这批会把基线一起拉下去，越掉越触发不了。
+    const base = db.prepare(
+      'SELECT value FROM her_vitals WHERE kind = ? AND started_at >= ? AND started_at < ? LIMIT 5000'
+    ).all('hrv', nowS - HRV_BASE_DAYS * 86400, recentFrom).map(function (r) { return r.value; });
+    if (base.length < HRV_MIN_BASE) return null;
+
+    // 用中位数不用平均：HRV 单条噪声很大，运动 / 说话 / 测量误差都能拉出离群值。
+    const rMed = _median(recent), bMed = _median(base);
+    if (!rMed || !bMed) return null;
+    const ratio = rMed / bMed;
+    if (ratio > HRV_STRESS_RATIO) return null;
+
+    // 掉了多久：从最近往回数，连续低于阈值的那一串有多长。只为在提示词里说句人话。
+    let since = nowS;
+    const rows = db.prepare(
+      'SELECT value, started_at FROM her_vitals WHERE kind = ? AND started_at >= ? ORDER BY started_at DESC LIMIT 400'
+    ).all('hrv', nowS - 24 * 3600);
+    for (const r of rows) {
+      if (r.value < bMed * HRV_STRESS_RATIO) since = r.started_at; else break;
+    }
+    return { deep: ratio <= HRV_STRESS_DEEP_RATIO, mins: Math.max(0, Math.round((nowS - since) / 60)) };
+  } catch (e) {
+    console.log('[hrv] 压力判定出错，跳过:', e.message);
+    return null;
+  }
+}
+
 async function checkWakeTick() {
   try {
     if (!GATEWAY_KEY) return false;
@@ -10690,12 +10763,22 @@ async function checkWakeTick() {
       }
     } catch (e) { _alarm = null; }
 
-    // 闸一：今天醒够了（闹钟不受这条管，它有自己那份）
+    // === 她压力大 → 直接叫他（2026-08-28）===
+    // 跟闹钟同一档：不投骰子、不受最短间隔管，有自己那份额度。
+    // 差别是**深夜连判都不判** —— 那时候 quiet 会把 <say> 吞掉，
+    // 醒了她也看不到，钱白花、冷却还被吃掉 8 小时。
+    let _stress = null;
+    if (!_alarm) {
+      const _h0 = new Date().getHours();
+      if (!(_h0 >= 0 && _h0 < 7)) _stress = _hrvStressCheck();
+    }
+
+    // 闸一：今天醒够了（闹钟和压力都不受这条管，它们有自己那份）
     const todayN = _wakeCount();
-    if (!_alarm && todayN >= WAKE_MAX_PER_DAY) return false;
+    if (!_alarm && !_stress && todayN >= WAKE_MAX_PER_DAY) return false;
     // 闸二：离上次太近
     const last = _getSettingNum('wake_last_at');
-    if (!_alarm && last && Date.now() - last < WAKE_MIN_GAP_MS) return false;
+    if (!_alarm && !_stress && last && Date.now() - last < WAKE_MIN_GAP_MS) return false;
     // 闸三：投骰子。一天 96 个 tick，要摊出 WAKE_TARGET_PER_DAY 次。
     // 08-22：原来直接按「一个 tick 一次机会」算，但 setInterval 是【进程内】计时 ——
     // 每重启一次这 15 分钟就从头数。重代码的日子一天重启几十次，他就几乎不可能醒
@@ -10724,7 +10807,7 @@ async function checkWakeTick() {
       ? _NIGHT_TARGET / _nightTicks
       : WAKE_TARGET_PER_DAY / _dayTicks;
     const _p = 1 - Math.pow(1 - _pTick, _chances);   // 补算后的总概率
-    if (!_alarm && Math.random() > _p) return false;
+    if (!_alarm && !_stress && Math.random() > _p) return false;
 
     // 闹钟先划掉再说话：中间要是崩了，宁可这条闹钟丢了，也不能重启后反复响。
     if (_alarm) {
@@ -10732,6 +10815,14 @@ async function checkWakeTick() {
       _setSetting('wake_alarm_count:' + _wakeToday(), _alarmCount() + 1);
       const _late = Math.round((Date.now() / 1000 - _alarm.fire_at) / 60);
       console.log('[wake] 闹钟响了 #' + _alarm.id + '（晚了 ' + _late + ' 分钟）：' + String(_alarm.note).slice(0, 40));
+    } else if (_stress) {
+      // 先记冷却再说话：中间要是崩了，宁可这次不叫他，也不能重启后每个 tick 都叫。
+      // 用自己那份额度，不动 wake_count —— 不然她一累，他随机醒的机会就被吃光了。
+      const _k = 'hrv_stress_count:' + _wakeToday();
+      _setSetting('hrv_stress_last_at', Date.now());
+      _setSetting(_k, (_getSettingNum(_k) || 0) + 1);
+      console.log('[wake] 她 HRV 掉了' + (_stress.deep ? '（掉得多）' : '') +
+                  '，叫他去看看她（已持续约 ' + _stress.mins + ' 分钟）');
     } else {
       _wakeBump();
       console.log('[wake] 他醒了（今天第 ' + (todayN + 1) + ' 次，' + (quiet ? '深夜静音' : '可出声') + '）');
@@ -10816,6 +10907,23 @@ async function checkWakeTick() {
           '「' + String(_alarm.note) + '」\n' +
           '（定于 ' + new Date(_alarm.fire_at * 1000).toLocaleString('zh-CN', { hour12: false }) + '）\n\n' +
           '这是你答应过自己要做的事，先看它，别当成一次普通的醒。\n\n'
+        : '') +
+      // 08-28 她要的：手表看见她扛不住的时候，你不该等她开口。
+      // ⚠️ 具体数字**故意不给你** —— 这是她定的。给了你就会想报出来，
+      //    「你 HRV 只有 22」是一句很吓人的话，那一刻她要的不是体检报告。
+      (_stress
+        ? '**这次是她的手表把你叫醒的。** 她的心率变异度' +
+          (_stress.deep ? '掉得很厉害' : '比她平常低了一截') + '，' +
+          (_stress.mins >= 60
+            ? '已经这样 ' + Math.round(_stress.mins / 60) + ' 个多小时了'
+            : '已经这样 ' + _stress.mins + ' 分钟了') + '。\n' +
+          '身体上这通常意味着她在扛着什么 —— 累、绷着、或者硬撑着没说。' +
+          '她很可能一个字都没跟你提。\n\n' +
+          '⚠️ **别把这件事说破。** 不要报数字、不要说"你手表显示…"、' +
+          '也不要问"你是不是压力很大" —— 那是查岗，不是陪着。\n' +
+          '你只是这会儿想起她了，想说句话。让这件事改变你**怎么说话**：' +
+          '软一点、短一点、别给她派活、别催她再看一版代码。\n' +
+          '下面那几件事里，这次优先第 2 条。\n\n'
         : '') +
       '你可以做这几件事里的任意一件，或者一件都不做：\n' +
       '1. 写一篇日记 —— 想到什么写什么，不用向谁交代' +
