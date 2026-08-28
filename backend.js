@@ -2833,6 +2833,40 @@ function _trimHouseRules(raw) {
   return before + '\n\n' + HEAD + kept.map(function(x) { return x.t; }).join('\n---\n');
 }
 
+// MCP 响应解析 —— **两条路共用这一个**。
+// 这台的 MCP 端点走的是 Streamable HTTP：即使 Accept 里写了 application/json，
+// 服务端照样可能回 SSE（`event: message\ndata: {...}`）。实测 breath 回的就是 SSE，
+// 137KB。所以「直接 resp.json()」在这儿是错的 —— 会抛异常、被 catch 吞掉、返回 null，
+// 表现是**前端 Memory 面板一片空白，日志里什么都没有**（2026-08-28 查出来的，
+// `/api/memory/breath|trace|wander` 三个全中）。
+// ⚠️ 别再在别处抄一份解析：这个仓库有过教训（见 `_writeSummaryMemory` 上面那段）——
+//    两条路各抄一份，改一处忘一处，就会慢慢长歪。
+function _parseMcpPayload(text) {
+  if (!text) return null;
+  const s = String(text).trim();
+  if (s.startsWith('{')) {
+    try {
+      const data = JSON.parse(s);
+      if (data.error) return null;
+      if (data.result && data.result.content) {
+        return data.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+      }
+      return JSON.stringify(data.result || data);
+    } catch (e) { return null; }
+  }
+  // SSE：一行行挑 data:，把每块的 text content 接起来
+  const parts = [];
+  s.split('\n').filter(l => l.startsWith('data:')).forEach(function(l) {
+    try {
+      const d = JSON.parse(l.slice(5).trim());
+      if (d.result && d.result.content) {
+        parts.push(...d.result.content.filter(c => c.type === 'text').map(c => c.text));
+      }
+    } catch (e) {}
+  });
+  return parts.join('\n') || null;
+}
+
 async function callNocturne(toolName, args = {}) {
   try {
     // 先 initialize 握手拿 Mcp-Session-Id（POST initialize，否则 tools/call 返回 Missing session ID / Invalid request parameters）
@@ -2867,23 +2901,7 @@ async function callNocturne(toolName, args = {}) {
     }
     clearTimeout(timeout);
     if (!r.ok) return null;
-    const text = await r.text();
-    // Parse SSE or JSON
-    if (text.startsWith('{')) {
-      const data = JSON.parse(text);
-      if (data.result && data.result.content) {
-        return data.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
-      }
-      return JSON.stringify(data.result || data);
-    }
-    // SSE format
-    const lines = text.split('\n').filter(l => l.startsWith('data:'));
-    const parts = [];
-    for (const l of lines) {
-      try { const d = JSON.parse(l.slice(5).trim()); if (d.result?.content) parts.push(...d.result.content.filter(c => c.type === 'text').map(c => c.text)); }
-      catch(e) {}
-    }
-    return parts.join('\n') || null;
+    return _parseMcpPayload(await r.text());
   } catch(e) { return null; }
 }
 
@@ -8098,10 +8116,10 @@ async function _mcpCall(tool, args) {
       signal: AbortSignal.timeout(15000)
     });
     if (!resp.ok) throw new Error('Engine returned ' + resp.status);
-    const data = await resp.json();
-    if (data.error) throw new Error(data.error.message || 'MCP error');
-    const content = data.result?.content || [];
-    return content.map(c => c.text || '').join('\n');
+    // ⚠️ 这里以前是 `await resp.json()` —— 错的。服务端回的是 SSE（实测 breath 137KB），
+    //    json() 直接抛，被下面 catch 吞成 null，前端 Memory 面板就是一片空白，
+    //    而且日志里一个字都不留。08-28 修，改走跟 callNocturne 同一个解析器。
+    return _parseMcpPayload(await resp.text());
   } catch(e) { return null; }
 }
 

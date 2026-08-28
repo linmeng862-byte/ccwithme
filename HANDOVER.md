@@ -4,6 +4,37 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🩹 08-28（下午）· 前端 Memory 面板一直是空的 —— `resp.json()` 用错了
+
+**症状**：前端 Memory 面板（`memoryPanel` / `static/js/memory.js`，那是 **Nocturne 浏览器**，
+不是本地 Mind）breath 点开一片空白。日志里**一个字都没有**。
+
+**真因**：`backend.js` 的 `_mcpCall()` 里是 `await resp.json()`。
+但这台的 MCP 端点走 Streamable HTTP —— **即使 Accept 里写了 `application/json`，
+服务端照样回 SSE**（`event: message\ndata: {...}`）。实测 breath 回的就是 SSE。
+于是 `json()` 抛异常 → 被函数最外层 catch 吞掉 → `return null` → 前端空白、日志无声。
+`/api/memory/breath|trace|wander` **三个全中**，坏了不知道多久。
+
+**修法**：抽出 `_parseMcpPayload(text)`，`callNocturne()`（本来就有 SSE 解析）和
+`_mcpCall()` **共用这一个**。⚠️ 别再在别处抄第三份 —— 这个仓库有过教训
+（见 `_writeSummaryMemory` 上面那段：两条写入路径最后要落到同一个解析器）。
+
+### 顺便查清楚的几件事（都是实测）
+
+- `breath` 正文 **31080 字符**，其中 `=== House Rules ===` 段占 **96%**（29793 字符）。
+  聊天路径用 `_trimHouseRules()` 剪掉它是对的（省每轮前缀钱）；
+  **但前端 Memory 面板故意不剪** —— 那是她翻记忆的地方，不是喂给他的上下文。
+- `wander` 服务端支持 **9 个 mode**：
+  `flotsam / archive / letter / writing / window / unresolved / inner / trails / trace`。
+  **前端只露了 3 个**（flotsam / archive / unresolved），另外 6 个还没接。
+  - `flotsam` = 随机漂上来的旧记忆（实测有内容）
+  - `archive` = **服务端目前就是空的**（返回「没有 archive 条目」），不是前端的锅
+  - `unresolved` = 悬置未了的事（实测 1 条）
+  - `trace` 这个 mode 要带 `query`；`trails` 是同题折痕时间线
+- Memory 面板还**没有 recall 视图**。今天接的 `/api/recall` 正好能喂它。
+
+---
+
 ## 🔀 08-28（下午）· Mind 和 Nocturne 撞车 → 留 Nocturne
 
 两边会记同一件事（两边的工具描述都在催他记），于是同一句话可能把同一件事的
