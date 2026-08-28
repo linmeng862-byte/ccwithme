@@ -4045,6 +4045,16 @@ function mindBreath(query) {
 // 所以抽词不是为隐私做的妥协，它本来就更准。
 const RECALL_TIMEOUT_MS = 4000;
 const RECALL_MAX_TERMS = 5;
+// ⚠️⚠️ 下面三个是**上下文预算**，不是随手写的数。08-28 实测出来的账：
+//   `/api/recall` 默认吐 7 条、约 3200 字符。而这段是挂在**她每条消息后面**的，
+//   网关走 `--resume`，历史每轮重放 —— **这 3200 字不是用完就扔，是永久堆在上下文里**。
+//   一轮 ≈ 2400 token，堆到 96 轮 ≈ 23 万 token。
+//   那正好推翻了这个仓库里写了很久的假设「96 轮才 4 万 token，轮换永远先于压缩」——
+//   不管住的话，压缩会真的开始发生，而压掉的恰好是记忆。
+// 三道闸门：向那头要少一点（limit）、已经浮过的不再浮（seen）、最后硬截（max chars）。
+const RECALL_LIMIT = 3;          // 服务端认这个参数，实测 7 -> 3
+const RECALL_MAX_CHARS = 1200;   // 最后一道，防服务端换实现
+const RECALL_SEEN_KEEP = 40;     // 每个会话记住最近浮过的多少条 id
 // `/api/recall` 现在（A1 之后）是**证明只读**的：那个 handler 里不出现 `record_touch`，
 // A3 那个提交加了测试锁住这件事。所以这条链路**不写账本** —— 要等接上
 // `/api/recall/confirm` 才开始记，那时候 A1/A2 早就在了。
@@ -4110,7 +4120,7 @@ function _recallTerms(text) {
 // 留着它就是留着一条**会把她的钩子写进访问日志 / 代理日志 / Zeabur 平台日志**的路，
 // 而那正是整个 B5 要躲的东西。宁可这一轮不浮，也不走 URL。
 async function _recallFetch(terms) {
-  var body = { query: terms.join(' '), endpoint: RECALL_ENDPOINT };
+  var body = { query: terms.join(' '), endpoint: RECALL_ENDPOINT, limit: RECALL_LIMIT };
   var url = NOCTURNE_URL + '/api/recall';
   var headers = Object.assign({ 'Content-Type': 'application/json' }, _nocturneAuth(url));
   var r = await fetch(url, {
@@ -4123,36 +4133,61 @@ async function _recallFetch(terms) {
   return await r.json();
 }
 
-// 服务端返回什么形状还没定死（施工单 A3 会顺手动它），所以这里认几种常见的，
-// 认不出来就当没捞到 —— **宁可这一轮不浮，也不要把一坨 JSON 糊到她的消息后面**。
-function _recallText(data) {
+// 会话内去重：同一条 CLI 会话里已经浮过的条目，不再浮第二遍。
+// **这是三道闸门里省得最多的一道** —— 实测相邻两轮的 7 条里会重合 2 条，
+// 而堆积是累加的：同一条记忆浮十遍，就在上下文里躺十份。
+// 生命周期故意跟 **CLI 会话**绑（不是 convId）：换窗之后上下文本来就清空了，
+// 那时候重新浮一遍是对的，不是浪费。
+const _recallSeen = new Map();   // convId -> { sid, ids: [] }
+
+function _recallSeenFor(convId, sid) {
+  var e = _recallSeen.get(convId);
+  if (!e || e.sid !== sid) { e = { sid: sid, ids: [] }; _recallSeen.set(convId, e); }
+  return e;
+}
+
+// 把服务端返回的条目拼成正文。**不用它的 `text` 字段** —— 那是整包渲染好的，
+// 没法按条去重，而去重正是这儿的重点。
+// ⚠️ 认不出形状就返回空串：宁可这一轮不浮，也不要把一坨 JSON 糊到她的消息后面。
+function _recallRender(data, seen) {
   if (!data) return '';
-  if (typeof data === 'string') return data.trim();
-  var direct = data.rendered || data.text || data.bundle || data.recall;
-  if (typeof direct === 'string') return direct.trim();
   var arr = Array.isArray(data) ? data : (data.items || data.results || data.buckets);
-  if (Array.isArray(arr)) {
-    return arr.map(function(it) {
-      if (typeof it === 'string') return '· ' + it;
-      var b = it && (it.content || it.body || it.text || it.summary);
-      return b ? '· ' + String(b) : '';
-    }).filter(Boolean).join('\n').trim();
+  if (!Array.isArray(arr)) {
+    // 退路：万一哪天服务端只给整包文本，那就整包用，去重这一层自动失效（但不会崩）。
+    var direct = typeof data === 'string' ? data : (data.rendered || data.text || data.bundle);
+    return typeof direct === 'string' ? direct.trim() : '';
   }
-  return '';
+  var lines = [];
+  arr.forEach(function(it) {
+    if (typeof it === 'string') { lines.push('· ' + it); return; }
+    if (!it) return;
+    var id = it.id || it.bucket_id || null;
+    if (id && seen && seen.ids.indexOf(id) !== -1) return;   // 这一窗里浮过了
+    var b = it.content || it.body || it.text || it.summary;
+    if (!b) return;
+    if (id && seen) seen.ids.push(id);
+    lines.push('· ' + String(b).trim());
+  });
+  if (seen && seen.ids.length > RECALL_SEEN_KEEP) {
+    seen.ids = seen.ids.slice(-RECALL_SEEN_KEEP);
+  }
+  return lines.join('\n').trim();
 }
 
 // 对外：拼成【勾起来的】段。任何一步出错都返回空串 —— 这条链路**绝不能拦住她说话**。
-async function nocturneRecall(query) {
+async function nocturneRecall(query, convId, cliSid) {
   try {
     var terms = _recallTerms(query);
     // 门槛：要么两个词，要么一个够长的词。凑不出就别去打扰它 ——
     // 「嗯」「哈哈」「？」这种一轮里没有任何可以被勾起来的东西。
     if (!terms.length) return '';
     if (terms.length < 2 && terms[0].length < 3) return '';
-    var text = _recallText(await _recallFetch(terms));
+    var seen = convId ? _recallSeenFor(convId, cliSid || '') : null;
+    var text = _recallRender(await _recallFetch(terms), seen);
+    // 全被去重掉了 = 这一句勾起来的都是这一窗里已经浮过的。**那就不浮**，
+    // 不是失败，是正常的一轮。
     if (!text) return '';
-    // 上限兜一下：recall 只选 7 条，正常不会大，但服务端换了实现就说不准了。
-    if (text.length > 4000) text = text.slice(0, 4000) + '…';
+    if (text.length > RECALL_MAX_CHARS) text = text.slice(0, RECALL_MAX_CHARS) + '…';
     return '\n\n[被这句话勾起来的]\n' + text +
       '\n（这些是旧事，不是她现在说的话。想起来了就想起来了，别硬往回话里塞。）';
   } catch (e) { return ''; }
@@ -5886,7 +5921,7 @@ app.post('/api/chat', auth, async (req, res) => {
   //    让这一个来回跟它们并行掉，摊到这一轮头上基本是零。
   //    ⚠️ 一定要挂个 .catch：这里不 await，漏一个 rejection 会打崩进程。
   const recallPromise = NO_ENGINE ? Promise.resolve('')
-    : nocturneRecall(message).catch(function() { return ''; });
+    : nocturneRecall(message, convId, cliRow?.[_sidCol] || '').catch(function() { return ''; });
 
 
   // 尝试获取当前会话关联的 project instructions
