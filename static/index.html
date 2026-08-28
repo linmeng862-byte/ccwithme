@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787548403">
+<link rel="stylesheet" href="/css/home.css?v=1787932800">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -1723,7 +1723,10 @@ function _renderVoiceCards(row){
     playBtn.setAttribute("onclick","_toggleVoicePlay(this)");
     var barsWrap=document.createElement("div");barsWrap.style.cssText="flex:1;min-width:0";
     var bars=document.createElement("div");bars.style.cssText="display:flex;align-items:flex-end;gap:2px;height:20px";
-    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement("span");b.style.cssText="width:2px;height:"+(h*1.4)+"px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55";bars.appendChild(b)});
+    // --i 是柱子的序号，CSS 拿它算 animation-delay，做出一道从左往右跑的波纹。
+    // ⚠️ 必须写进 style 属性（而不是 JS 里设 dataset）—— 这整块最后是 outerHTML
+    //    序列化塞回去的，自定义属性活得下来，但 .dataset 那种设法活不过序列化。
+    [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h,i){var b=document.createElement("span");b.className="vbar";b.style.cssText="--i:"+i+";width:2px;height:"+(h*1.4)+"px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55";bars.appendChild(b)});
     barsWrap.appendChild(bars);
     var durSpan=document.createElement("span");durSpan.style.cssText="font:400 11px/1 var(--font-sans);color:var(--text-time);flex:none";durSpan.textContent=dur;
     // 转文字：一个小小的灰色箭头，不写字
@@ -1828,8 +1831,11 @@ function _voiceCardEl(id,dur,body){
   playBtn.addEventListener('click',function(){if(this.getAttribute('data-url'))_toggleVoicePlay(this)});
   var barsWrap=document.createElement('div');barsWrap.style.cssText='flex:1;min-width:0';
   var bars=document.createElement('div');bars.style.cssText='display:flex;align-items:flex-end;gap:2px;height:20px';
-  [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h){var b=document.createElement('span');
-    b.style.cssText='width:2px;height:'+(h*1.4)+'px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55';bars.appendChild(b)});
+  // 跟 _renderVoiceCards 那边同一套：--i 给 CSS 算相位，波纹从左往右跑。
+  // 这条路是 DOM 直接 append 的，不过序列化，但写法保持一致，改一处不会漏另一处。
+  [3,6,4,8,5,7,4,6,5,3,7,5,4,6,3].forEach(function(h,i){var b=document.createElement('span');
+    b.className='vbar';
+    b.style.cssText='--i:'+i+';width:2px;height:'+(h*1.4)+'px;background:var(--text-time);border-radius:1px;flex:none;opacity:.55';bars.appendChild(b)});
   barsWrap.appendChild(bars);
   var durSpan=document.createElement('span');durSpan.className='voice-dur';
   durSpan.style.cssText='font:400 11px/1 var(--font-sans);color:var(--text-time);flex:none';
@@ -1929,12 +1935,21 @@ function _renderCallVoiceCards(row){
 // 语音播放
 var _currentVoiceAudio=null;
 function _toggleVoicePlay(btn){var url=btn.getAttribute('data-url');var _VP_SVG='<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><polygon points="6,3 20,12 6,21"/></svg>';var _VS_SVG='<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><rect x="5" y="3" width="5" height="18" rx="1"/><rect x="14" y="3" width="5" height="18" rx="1"/></svg>';
-  if(_currentVoiceAudio){_currentVoiceAudio.pause();_currentVoiceAudio=null;document.querySelectorAll('.voice-play-btn').forEach(function(b){b.innerHTML=_VP_SVG})}
-  if(btn._playing){btn._playing=false;btn.innerHTML=_VP_SVG;return}
-  var audio=new Audio(url);btn._playing=true;btn.innerHTML=_VS_SVG;_currentVoiceAudio=audio;
-  audio.onended=function(){btn._playing=false;btn.innerHTML=_VP_SVG;_currentVoiceAudio=null};
-  audio.onerror=function(){btn._playing=false;btn.innerHTML=_VP_SVG;toast('播放失败')};
-  audio.play();
+  // 波纹（2026-08-28）：柱子平时是静的，放的时候才起伏。
+  // ⚠️ 收藏抽屉里那条只有一颗播放键、没有 .voice-msg 外壳 —— closest 会返回 null，
+  //    所以每次都得判一下，不能直接 .classList。
+  function _wave(b,on){var w=b&&b.closest?b.closest('.voice-msg'):null;if(w)w.classList.toggle('is-playing',!!on)}
+  // 停别人的时候要把别人的波纹也停掉。图标已经在遍历里重置了，波纹跟着一起走，
+  // 否则会出现「两条都在动，但只有一条真在响」。
+  if(_currentVoiceAudio){_currentVoiceAudio.pause();_currentVoiceAudio=null;document.querySelectorAll('.voice-play-btn').forEach(function(b){b.innerHTML=_VP_SVG;_wave(b,false)})}
+  if(btn._playing){btn._playing=false;btn.innerHTML=_VP_SVG;_wave(btn,false);return}
+  var audio=new Audio(url);btn._playing=true;btn.innerHTML=_VS_SVG;_wave(btn,true);_currentVoiceAudio=audio;
+  audio.onended=function(){btn._playing=false;btn.innerHTML=_VP_SVG;_wave(btn,false);_currentVoiceAudio=null};
+  audio.onerror=function(){btn._playing=false;btn.innerHTML=_VP_SVG;_wave(btn,false);toast('播放失败')};
+  // play() 可能被浏览器拒（自动播放策略 / 文件 404 前的 decode 失败）。
+  // 不接住的话按钮会一直卡在暂停图标 + 波纹一直动，看着像在放其实没有。
+  var _p=audio.play();
+  if(_p&&_p.catch)_p.catch(function(){btn._playing=false;btn.innerHTML=_VP_SVG;_wave(btn,false);if(_currentVoiceAudio===audio)_currentVoiceAudio=null});
 }
 // 语音转文字。后端在把消息交给他的时候其实已经识别过一次并缓存了，
 // 所以这里点下去多数是直接命中缓存，不额外花钱。

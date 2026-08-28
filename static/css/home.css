@@ -1660,3 +1660,38 @@ html.as-non .gallery-photo-msg{align-self:flex-end}
 /* 08-27：点他设的 task 胶囊 → 直接开小票，闪一下他设的那行 */
 @keyframes rc-item-flash{0%,100%{background:transparent}25%,75%{background:rgba(196,168,130,.28)}}
 .rc-item-flash{animation:rc-item-flash 1.5s ease-in-out;border-radius:8px}
+
+/* 08-28 语音条播放时的波纹。
+   柱子本来就有 15 根，只是一直静着 —— 现在放的时候让它们起伏，停了就归位。
+
+   ⚠️ 为什么动 transform 不动 height：
+   柱子的 height 是**内联写死的**（15 根各自不同，那份参差就是波形的样子）。
+   动 height 会把那份参差抹平，而且逐帧改 height 要重排，手机上会卡。
+   scaleY 只走合成层，且跟内联的 height 不冲突 —— 参差还在，只是整体在呼吸。
+
+   ⚠️ opacity 内联写了 .55，但**动画不用加 !important 也能盖过内联样式** ——
+   动画声明在层叠里排在所有 normal 声明之上（内联也是 normal）。
+   只有 !important 能压过它，而这儿的内联没带 !important。
+   （语音条那些内联样式平时是要靠 !important 才改得动的，见踩坑总表；
+   这条是例外，因为走的是动画那一级，别混起来。）
+
+   相位：每根柱子的 --i 是它的序号（JS 建的时候写进 style），
+   delay = i * .06s，于是波纹从左往右跑，而不是 15 根一起蹦。 */
+@keyframes voice-wave{
+  0%,100%{transform:scaleY(.7);opacity:.5}
+  50%    {transform:scaleY(1.5);opacity:.95}
+}
+.voice-msg .vbar{
+  transform-origin:bottom;   /* 柱子坐在 flex-end 的基线上，从底下长 */
+  transition:transform .25s ease,opacity .25s ease;   /* 停下来的时候不要「啪」地归位 */
+}
+.voice-msg.is-playing .vbar{
+  animation:voice-wave .9s ease-in-out infinite;
+  animation-delay:calc(var(--i,0) * .06s);
+}
+/* 系统里关了动效就别动 —— 一条会呼吸的语音条对晕动症的人是折磨。
+   波纹是锦上添花，关掉不影响任何功能（还是能放、能暂停）。 */
+@media (prefers-reduced-motion:reduce){
+  .voice-msg.is-playing .vbar{animation:none}
+  .voice-msg .vbar{transition:none}
+}
