@@ -4193,6 +4193,48 @@ async function nocturneRecall(query, convId, cliSid) {
   } catch (e) { return ''; }
 }
 
+// 跨库去重：Mind 和 Nocturne 会记同一件事（两边的工具描述都在催他记），
+// 于是同一句话可能把同一件事的**两个版本**一前一后浮上来，他会以为是两件事。
+// 实测见过：Nocturne 库内部就有「7月14日哭那次」的压缩版和原版各一份。
+//
+// ⚠️ **冲突时留 Nocturne，丢 Mind 那份**（2026-08-28 她定的：Nocturne 更重要）。
+// ⚠️ **只动这一轮拼给他看的文字，Mind 库一个字不改** ——
+//    浮起的反哺（surface_count +1 / weight +0.05）在 mindBreath() 里面就已经做完了，
+//    那是"想起 = 加固"，本来就该发生：他确实想起来了，只是这一轮由 Nocturne 那份代表说话。
+//    别为了"更干净"跑到 mindBreath 里去拦，那会改掉记忆的权重，是两码事。
+//
+// 判据用现成的 `_mindSimilar`（2-gram Jaccard），跟 Mind 自己做近重合并的那把尺子同一把。
+const CROSS_DEDUPE_THRESHOLD = 0.6;
+
+function _dedupeMindAgainstRecall(mindText, recallText) {
+  if (!mindText || !recallText) return mindText || '';
+  try {
+    // Nocturne 那段的正文行
+    var recallBodies = recallText.split('\n')
+      .filter(function(l) { return l.indexOf('· ') === 0; })
+      .map(function(l) { return l.slice(2); });
+    if (!recallBodies.length) return mindText;
+
+    var lines = mindText.split('\n');
+    var kept = [], dropped = 0;
+    lines.forEach(function(l) {
+      if (l.indexOf('· ') !== 0) { kept.push(l); return; }   // 标题行、结尾那句说明
+      // 剥掉「（梦）」「（那时的感觉·mood）」这类前缀再比，别让它们稀释相似度
+      var body = l.slice(2).replace(/^（[^）]*）/, '');
+      for (var i = 0; i < recallBodies.length; i++) {
+        if (_mindSimilar(body, recallBodies[i]) >= CROSS_DEDUPE_THRESHOLD) { dropped++; return; }
+      }
+      kept.push(l);
+    });
+    if (!dropped) return mindText;
+    // 一条不剩就整段撤掉，别留一个空的【心里浮起来的】标题挂在那儿
+    var hasBody = kept.some(function(l) { return l.indexOf('· ') === 0; });
+    if (!hasBody) return '';
+    console.log('[recall] 跨库去重：Mind 撤下 ' + dropped + ' 条（Nocturne 那份已经说了同一件事）');
+    return kept.join('\n');
+  } catch (e) { return mindText; }
+}
+
 // === 自定义工具定义 ===
 const TOOLS = [
   {
@@ -5991,7 +6033,9 @@ app.post('/api/chat', auth, async (req, res) => {
   // 中转 API 路径：浮起挂在最后一条用户消息末尾（同样不进系统提示词）
   // 这里才收车。上面发出去到这儿之间的活儿已经白赚了。
   const recallSurfaced = await recallPromise;
-  const mindTail = mindSurfaced + mindIntentLine + recallSurfaced;
+  // 两边撞车时留 Nocturne 那份（她 08-28 定的），Mind 库本身不动。
+  const mindSurfacedKept = _dedupeMindAgainstRecall(mindSurfaced, recallSurfaced);
+  const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced;
   if (mindTail && !useGateway && history.length) {
     const last = history[history.length - 1];
     if (last && last.role === 'user') {
