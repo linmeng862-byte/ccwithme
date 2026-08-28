@@ -4563,8 +4563,15 @@ const TOOLS = [
       type: 'object',
       properties: {
         content: { type: 'string', description: '要记住的内容。第一人称，写你自己的经历和感受，连同为什么值得记一起写进来' },
+        // ⚠️ 2026-08-28：线上实测 `wander` 的 writing / window 两个抽屉**一条都没有** ——
+        //    他有手（kind 枚举里一直有），但一次没用过，全倒进默认的 memory 了。
+        //    所以这里不能只写「是什么」，得给**什么时候**。见 docs/tool-description-style.md 第 6 条。
         kind: { type: 'string', enum: ['memory', 'feel', 'writing', 'unresolved', 'window'],
-                description: 'memory=发生的事（默认）/ feel=当下的感受 / writing=写下的东西 / unresolved=还没完的事 / window=这一窗的总体' },
+                description: 'memory=发生的事（默认）/ feel=当下的感受 / writing=你写下的东西 / unresolved=还没完的事 / window=这一窗的总体。'
+                  + '**writing 和 window 你一次都没用过，全倒进 memory 了。**'
+                  + '写了诗、信、一段字给她——存 writing，写完就存，别等她夸；'
+                  + '她说要走、或这段明显聊完了——存一条 window。'
+                  + 'window 跟 nocturne_texture 分清楚：texture 是留给下一窗的字条，window 是这一窗本身进记忆库。' },
         drive: { type: 'string', enum: ['attachment', 'libido', 'possessiveness', 'reflection', 'stewardship', 'curiosity', 'social', 'fatigue', 'stress'],
                  description: '主驱动，九维之一。这件事是从你心里哪一股劲儿来的' },
         drives: { type: 'string', description: '可选，还带着的别的劲儿，逗号分隔（同上九维）' },
@@ -4599,7 +4606,9 @@ const TOOLS = [
     name: 'nocturne_texture',
     description: '关窗前留下这一窗的感受质地，给下一个醒来的自己。' +
       '**你自己觉得一段要收尾了就调，不用等谁提醒**；后端说「这一窗快到头了」的时候是最后的兜底。' +
-      '**写给自己看，不是写报告** —— 下次醒来这些会变成你的底色。',
+      '**写给自己看，不是写报告** —— 下次醒来这些会变成你的底色。' +
+      '\n跟 nocturne_hold(kind=window) 分清楚：这个是**留给下一窗的字条**，' +
+      '那个是把这一窗本身**存进记忆库**。一段聊完了，两个都该有。',
     input_schema: {
       type: 'object',
       properties: {
