@@ -4045,8 +4045,12 @@ function mindBreath(query) {
 // 所以抽词不是为隐私做的妥协，它本来就更准。
 const RECALL_TIMEOUT_MS = 4000;
 const RECALL_MAX_TERMS = 5;
-// A1 修完之后，Nocturne 那头会按 endpoint 白名单决定「要不要重写 last_encounter」。
-// 这条是**她本人**在场（她在聊天窗里说话），所以必须在白名单里 —— 别改这个字符串。
+// `/api/recall` 现在（A1 之后）是**证明只读**的：那个 handler 里不出现 `record_touch`，
+// A3 那个提交加了测试锁住这件事。所以这条链路**不写账本** —— 要等接上
+// `/api/recall/confirm` 才开始记，那时候 A1/A2 早就在了。
+// endpoint 先带着，将来接 confirm 正好用上。⚠️ 到那天记住那头的约定：
+// **真身体用 `chatc` 这类名字，排练/探针必须带 `probe:` 前缀** ——
+// A1 就是靠这个前缀决定要不要改写「他上次在场」。别把这个字符串改成 probe 开头。
 const RECALL_ENDPOINT = 'chatc:chat';
 
 // 抽词。**不是 _mindGrams 那套滑窗**——试过了，滑窗对这里是错的：
@@ -4056,8 +4060,11 @@ const RECALL_ENDPOINT = 'chatc:chat';
 // 这里换成**剥虚词**：先按标点断开，再把「的了是我你他她们都也就还在…」这类
 // 单字虚词/人称当分隔符切掉，剩下的连续汉字块就是内容本身。
 // 「哥哥我今天搬家累死了，眼泪都掉下来了」→ ['今天搬家累死', '掉下来', '眼泪']。
-// 分词那一步留给 Nocturne 那头做（它 requirements.txt 里有 jieba，
-// 而且 recall.py 进门本来就要 `_terms()` 再打散一次）——我们只负责**不把她的原话发出去**。
+// 切词那一步留给 Nocturne 那头做，但**别以为那头是分词器** —— 08-28 查清楚了：
+// `recall.py` 的 `_terms()` 是 **CJK bigram**（`re.findall(r"[一-鿿]+")` 之后
+// 在每个连续汉字块**内部**滑 2 字窗），jieba 在别处用，recall 这条路上一次都没调。
+// 两头都是 bigram，所以匹配照样成立；而**块之间用空格隔开**这件事在那头有实际作用：
+// 滑窗只在块内进行，跨词的垃圾 bigram 天然被挡在外面。
 const RECALL_PARTICLES = /[的了是我你他她它们都也就还在和跟吗呢吧啊把被给很太不没要会能有个又才只从对让过着这那么呀哦嘛哈嗯之与并且但而或如若才再更最]/g;
 
 function _recallTerms(text) {
@@ -4070,9 +4077,17 @@ function _recallTerms(text) {
   });
   // 汉字：非汉字一律当断点，再剥虚词
   var han = s.replace(/[^一-龥]+/g, ' ').replace(RECALL_PARTICLES, ' ');
+  // 每块最多 4 字，**长的切成几段、不是把尾巴丢掉**（丢的话「第一次打电话」只剩
+  // 「第一次打」，"电话"这个真词没了）。
+  // 为什么是 4：那头打分是 `hits / max(3.0, len(query_terms) ** 0.5)` —— 分母有个
+  // 3 的地板，词项数到 9 才开始惩罚。6 字块滑出 5 个 bigram（今天/天搬/搬家/家累/累死，
+  // 还夹着跨词垃圾），5 个块 ≈ 25 项，sqrt=5，把分母从地板 3 顶到 5；
+  // 4 字切段实测 4-7 项，sqrt≈2.6，**稳稳压在地板底下**。同样的命中，分数高 1.6 倍左右。
   han.split(/\s+/).forEach(function(c) {
-    c = c.slice(0, 6);                       // 太长的截一截，别把半句话带过去
-    if (c.length >= 2 && !MIND_STOPWORDS.has(c)) out.push(c);
+    for (var i = 0; i < c.length; i += 4) {
+      var piece = c.slice(i, i + 4);
+      if (piece.length >= 2 && !MIND_STOPWORDS.has(piece)) out.push(piece);
+    }
   });
   // 去重 → 长的优先 → 去掉互相包含的 → 最多 5 个
   var uniq = [];
@@ -4089,9 +4104,11 @@ function _recallTerms(text) {
   return picked;
 }
 
-// 打 /api/recall。**优先 POST**（词走 body，不进 URL，也就不进任何访问日志）；
-// 服务端还没上 POST 变体（施工单 A3）时会回 404/405，那时候才退回 GET。
-// ⚠️ GET 这条路是**临时**的：A3 上线后就该只剩 POST。
+// 打 /api/recall。**只有 POST，没有 GET 回退。**
+// 08-28 上午写的第一版留了一条 GET 退路（那会儿服务端还没收 POST，施工单 A3）。
+// 当天下午 A3 上线了（master d9608b4，实测 200），那条退路就该拆 ——
+// 留着它就是留着一条**会把她的钩子写进访问日志 / 代理日志 / Zeabur 平台日志**的路，
+// 而那正是整个 B5 要躲的东西。宁可这一轮不浮，也不走 URL。
 async function _recallFetch(terms) {
   var body = { query: terms.join(' '), endpoint: RECALL_ENDPOINT };
   var url = NOCTURNE_URL + '/api/recall';
@@ -4100,11 +4117,6 @@ async function _recallFetch(terms) {
     method: 'POST', headers, body: JSON.stringify(body),
     signal: AbortSignal.timeout(RECALL_TIMEOUT_MS),
   });
-  if (r.status === 404 || r.status === 405 || r.status === 501) {
-    var gurl = url + '?query=' + encodeURIComponent(body.query) +
-               '&endpoint=' + encodeURIComponent(RECALL_ENDPOINT);
-    r = await fetch(gurl, { headers: _nocturneAuth(gurl), signal: AbortSignal.timeout(RECALL_TIMEOUT_MS) });
-  }
   if (!r.ok) return null;
   var ct = r.headers.get('content-type') || '';
   if (ct.indexOf('json') === -1) return await r.text();
