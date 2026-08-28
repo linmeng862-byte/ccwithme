@@ -4,6 +4,56 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🌊 08-28（中午）· 不由自主的召回 · 接线（施工单 B 段）
+
+按 `/root/outbox/worklist-recall-wiring-20260828.md` 做的 **B 段（Chat-C 侧）**。
+只动 `backend.js`，`node --check` 过了，`pm2 restart ccwithme` 起来了，回环 200。
+备份 `backups/backend.js.20260828-122417-before-recall-wiring`。
+
+**A 段（Nocturne 侧）一个字没动，还欠着** —— 施工单说顺序不能反，我知道。
+所以下面 B4 那条**每轮都会往 `recall_journal` 记一笔**：A1（探针污染
+`last_encounter`）和 A2（breath 被记成 DELIBERATE）没修之前，这是在拿 96 倍的速度
+往账本里灌**方向偏了的**原料，而磨损建在这本账上，灌进去的错不可逆。
+→ **要么先去把 A1/A2 做掉，要么先把 B4 那行关掉**（见下面「怎么关」）。
+
+### 做了什么
+
+| | 是什么 | 在哪 |
+|---|---|---|
+| B1 | 手写 `.env` 装载器（没 dotenv 也装不了，二十行够用），不覆盖已有 env | `backend.js` 开头 |
+| B2 | `_nocturneAuth()` 提交了（按 **origin 全等**判断，防 `core.zeabur.app.evil.com`） | 原来就写好的那段 |
+| B3 | `nowhere` 的 pick 漏掉主工具，补 `n === 'nowhere'` | `EXTRA_MCP` |
+| B4 | **每轮 recall**：并行发车，`mindTail` 处收车 | `nocturneRecall()` |
+| B5 | 抽词，不发原话 | `_recallTerms()` |
+| B6 | 压缩信号 → 下一轮补 breath（**接收端而已，见下**） | `cli_compacted:<convId>` |
+| B7 | `[distill]` 日志脱敏，只留字数 | `_writeSummaryMemory` |
+| B8 | `nocturne_hold` 补 `chord` + 五个 signal + `drives`，schema 和转发都加了 | `TOOLS` + 执行处 |
+
+### 三件下一个人一定会踩的
+
+1. **B1 要真的生效，得有 `.env`。** 现在仓库里没有那个文件（gitignore 第 3 行盖着）。
+   她得自己写一行 `OMBRE_API_TOKEN=...` 进 `/opt/ccwithme/.env` 再 restart。
+   **在那之前对 Nocturne 还是全 401**，B4 每轮都会静默失败（返回空串，不会拦住她说话）。
+2. **B6 现在收不到信号。** `cc-gateway` 的 `relay()` 只转 stream_event/assistant/user/result，
+   CLI 的 `{type:'system', subtype:'compact_boundary'}` 被整个丢掉。
+   那头要补一行 `send({ compact: true })`。**cc-gateway 是仓库外的 Private 仓库，
+   工程模式改不到**，得她那边加。接收端已经放好了，加完当天生效。
+3. **B5 的抽词换过一次实现。** 第一版复用 `_mindGrams`（2/3 字滑窗）——**是错的**：
+   滑出来的是「哥哥我」「哥我今」这种位置碎片，不是词。现在改成**剥虚词**：
+   标点断句 + 把「的了是我你他她们都也就还在…」当分隔符，剩下的汉字块就是内容。
+   分词留给 Nocturne（它有 jieba）。别再改回滑窗。
+
+### 怎么关 B4（不用回滚）
+
+`backend.js` 里 `const recallPromise = ...` 那两行，把右边换成 `Promise.resolve('')`。
+其余七条都是独立的，关掉 B4 不影响它们。
+
+### 还欠着（施工单原文里的）
+
+- **A 段全部**（A1/A2 🔴 最急，A3 POST 变体，A5 wear 喂 select；A4 已确认前提不成立，
+  要等 B8 的覆盖率起来再说）。
+- **C 段两件要她定的**：清不清探针在账本里留下的痕迹、重复的种子记忆。
+
 ## 🕰️ 08-27（傍晚）· workplace 工作区（未竟第 5 条）
 
 **改了 `backend.js` + `static/js/workplace.js`。`index.html` 一个字没动**（铁律 3 正好绕开）。

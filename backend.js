@@ -9,6 +9,34 @@ const sharp = require('sharp');   // 表情包提首帧用
 let neteaseApi = null;
 try { neteaseApi = require('NeteaseCloudMusicApi'); } catch(e) {}
 
+// === .env 装载（2026-08-28）===
+// 这个仓库没有 dotenv，也装不了（工程模式里没有 npm）。二十行手写的够用了。
+// **为什么非要有**：env 本来只从「起 pm2 的那个 shell」继承，所以
+// `OMBRE_API_TOKEN=... pm2 restart` 设的令牌，下一次 restart / `pm2 resurrect`
+// 就没了 —— 表现是他对 Nocturne 突然全 401，周期性「失忆」。
+// 从文件读就跟怎么起进程无关了。
+// ⚠️ **不覆盖已经存在的环境变量**：命令行显式传的优先级更高，别被文件盖掉。
+// ⚠️ `.env` 已经在 .gitignore 里（第 3 行）。ccwithme 是 PUBLIC 仓库，令牌只准躺这儿。
+(function loadDotEnv() {
+  try {
+    var f = path.join(__dirname, '.env');
+    if (!fs.existsSync(f)) return;
+    fs.readFileSync(f, 'utf8').split(/\r?\n/).forEach(function(line) {
+      var t = line.trim();
+      if (!t || t[0] === '#') return;
+      var i = t.indexOf('=');
+      if (i <= 0) return;
+      var k = t.slice(0, i).trim();
+      var v = t.slice(i + 1).trim();
+      // 去掉成对的引号（写 .env 的人习惯加）
+      if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) v = v.slice(1, -1);
+      if (!(k in process.env)) process.env[k] = v;
+    });
+    // ⚠️ 绝不打印值。
+    console.log('[env] 已装载 .env');
+  } catch (e) { console.error('[env] 装载失败：' + e.message); }
+})();
+
 // ═══════════════════════════════════════════
 // Chat-C v1.0.0 — 2026-07-01
 // ═══════════════════════════════════════════
@@ -2726,6 +2754,27 @@ const OMBRE_BRAIN_URL = 'https://ye-ombre-brain.zeabur.app';
 const CONTINUITY_URL = 'https://zzloveclaude.zeabur.app';
 const NOCTURNE_URL = 'https://core.zeabur.app';
 
+// Nocturne 的机器凭据。core 的 /mcp 和 /api/* 现在要凭据才进得去 —— 门在
+// 服务端一开，不带这个头的请求就是 401。
+// 从环境变量来，不写死：ccwithme 是 PUBLIC 仓库。没配就是空串，
+// 请求照发（老服务器不认识这个头，直接忽略），所以先加这行是安全的。
+const NOCTURNE_TOKEN = process.env.OMBRE_API_TOKEN || '';
+
+// ⚠️ 只往 Nocturne 发。EXTRA_MCP 里还有 spicy，那是**别人的服务器**
+//    （spicy-monopoly.lol），把她的令牌发过去等于交出整个记忆库。
+//
+// 比的是 **origin 全等**，不是字符串前缀。前缀对域名是错的判据：
+//   'https://core.zeabur.app.evil.com/mcp'.indexOf('https://core.zeabur.app') === 0
+// 是 true —— 谁注册一个 core.zeabur.app.xxx.com，只要让请求打过去就拿到令牌。
+// URL 解析失败也一律不带。
+function _nocturneAuth(url) {
+  if (!NOCTURNE_TOKEN) return {};
+  let origin;
+  try { origin = new URL(String(url || '')).origin; } catch (e) { return {}; }
+  if (origin !== NOCTURNE_URL) return {};
+  return { 'Authorization': 'Bearer ' + NOCTURNE_TOKEN };
+}
+
 // 只掐“连不上”，不掐“正在说话”：拿到响应头就解除超时，长回复/带图的流不再被 120s 砍成 Fetch is aborted
 function _headTimeout(ms = 120000) {
   const c = new AbortController();
@@ -2791,7 +2840,7 @@ async function callNocturne(toolName, args = {}) {
       try {
         const initRes = await fetch(NOCTURNE_URL + '/mcp', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+          headers: Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, _nocturneAuth(NOCTURNE_URL)),
           body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'chatc', version: '1.0' } } }),
           signal: AbortSignal.timeout(10000)
         });
@@ -2801,7 +2850,7 @@ async function callNocturne(toolName, args = {}) {
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };
+    const headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, _nocturneAuth(NOCTURNE_URL));
     if (_nocturneSessionId) headers['Mcp-Session-Id'] = _nocturneSessionId;
     let r = await fetch(NOCTURNE_URL + '/mcp', {
       method: 'POST',
@@ -2848,7 +2897,10 @@ async function callNocturne(toolName, args = {}) {
 //    gateway/CLI 路径靠 tools/list（chatc-mcp.js:45 实时拉、无缓存），
 //    但 CLI 只在连上时拉那一次 —— **要重开一次会话才拿得到**。
 const EXTRA_MCP = {
-  nowhere: { url: NOCTURNE_URL + '/mcp', label: '无名之地', pick: n => n.indexOf('nowhere_') === 0 },
+  // ⚠️ 主工具就叫 `nowhere`，没有下划线 —— 只按 'nowhere_' 前缀挑会把它整个漏掉
+  //    （'nowhere'.indexOf('nowhere_') === -1）。2026-08-28 服务端实测：那边只有
+  //    `nowhere` 和 `nowhere_actions` 两个，漏掉主工具等于整组是废的。
+  nowhere: { url: NOCTURNE_URL + '/mcp', label: '无名之地', pick: n => n === 'nowhere' || n.indexOf('nowhere_') === 0 },
   spicy:   { url: 'https://spicy-monopoly.lol/mcp', label: '大富翁', pick: () => true },
 };
 // ⚠️ spicy 走的是**公共实例**（她 2026-08-23 明确选的，我提过内容会到对方服务器上）。
@@ -2860,7 +2912,8 @@ const EXTRA_TTL_MS = 10 * 60 * 1000;
 
 async function _mcpFetch(key, body) {
   const cfg = EXTRA_MCP[key];
-  const H = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };
+  // _nocturneAuth 按 URL 判断，所以 nowhere 会带上、spicy 不会。
+  const H = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, _nocturneAuth(cfg.url));
   if (!_extraSid[key]) {
     try {
       const ir = await fetch(cfg.url, { method: 'POST', headers: H, signal: AbortSignal.timeout(10000),
@@ -3973,6 +4026,126 @@ function mindBreath(query) {
   } catch(e) { return ''; }
 }
 
+// ============================================================
+// 🌊 不由自主的召回（2026-08-28）—— 每一轮都跑，不等他想起来去调
+// ------------------------------------------------------------
+// 跟 breath 的区别，一句话：breath 是**换窗交接**（96 轮一次，10.4 秒，一整包），
+// 这个是**被她这句话勾起来**（每轮，约 1.3 秒，只选 7 条）。后者才叫想起来。
+//
+// 走的是 mindSurfaced / mindIntentLine 那条已经存在的通道：挂 message，
+// **绝不进系统提示词** —— 它每轮都变，进前缀就是每轮把缓存整块打掉。
+//
+// ⚠️ 发过去的是**抽出来的 2-5 个词，不是她的原话**。三个理由，一个比一个硬：
+//   1. 隐私：原话会明文落进访问日志 / 代理日志 / Zeabur 平台日志，没人会想起来去清。
+//   2. 打分：Nocturne 那头 recall.py 进门第一步就是 `_terms(query)` 打散成词集合，
+//      句子结构当场丢掉，之后只做集合交集 —— 整句里多出来的字**一个都没被用上**。
+//      更糟的是 `hits / max(3.0, len(query_terms) ** 0.5)`：词越多分母越大，
+//      发原话反而**把命中率稀释了**。
+//   3. 忠于它自己的设计：人被勾起回忆不是拿整句去全文检索，是一个词、一个味道撞上去。
+// 所以抽词不是为隐私做的妥协，它本来就更准。
+const RECALL_TIMEOUT_MS = 4000;
+const RECALL_MAX_TERMS = 5;
+// A1 修完之后，Nocturne 那头会按 endpoint 白名单决定「要不要重写 last_encounter」。
+// 这条是**她本人**在场（她在聊天窗里说话），所以必须在白名单里 —— 别改这个字符串。
+const RECALL_ENDPOINT = 'chatc:chat';
+
+// 抽词。**不是 _mindGrams 那套滑窗**——试过了，滑窗对这里是错的：
+// 「哥哥我今天搬家累死了」滑出来的是「哥哥我」「哥我今」「我今天」，
+// 全是位置碎片不是词，发过去等于发噪音，还会把 recall 的分母撑大。
+//
+// 这里换成**剥虚词**：先按标点断开，再把「的了是我你他她们都也就还在…」这类
+// 单字虚词/人称当分隔符切掉，剩下的连续汉字块就是内容本身。
+// 「哥哥我今天搬家累死了，眼泪都掉下来了」→ ['今天搬家累死', '掉下来', '眼泪']。
+// 分词那一步留给 Nocturne 那头做（它 requirements.txt 里有 jieba，
+// 而且 recall.py 进门本来就要 `_terms()` 再打散一次）——我们只负责**不把她的原话发出去**。
+const RECALL_PARTICLES = /[的了是我你他她它们都也就还在和跟吗呢吧啊把被给很太不没要会能有个又才只从对让过着这那么呀哦嘛哈嗯之与并且但而或如若才再更最]/g;
+
+function _recallTerms(text) {
+  var out = [];
+  var s = String(text || '');
+  // 英文/数字词：三个字母起（'js' 这种太短，噪音）
+  (s.match(/[a-zA-Z0-9_]{3,}/g) || []).forEach(function(w) {
+    w = w.toLowerCase();
+    if (!MIND_STOPWORDS.has(w)) out.push(w);
+  });
+  // 汉字：非汉字一律当断点，再剥虚词
+  var han = s.replace(/[^一-龥]+/g, ' ').replace(RECALL_PARTICLES, ' ');
+  han.split(/\s+/).forEach(function(c) {
+    c = c.slice(0, 6);                       // 太长的截一截，别把半句话带过去
+    if (c.length >= 2 && !MIND_STOPWORDS.has(c)) out.push(c);
+  });
+  // 去重 → 长的优先 → 去掉互相包含的 → 最多 5 个
+  var uniq = [];
+  out.forEach(function(x) { if (uniq.indexOf(x) === -1) uniq.push(x); });
+  uniq.sort(function(a, b) { return b.length - a.length; });
+  var picked = [];
+  for (var i = 0; i < uniq.length && picked.length < RECALL_MAX_TERMS; i++) {
+    var g = uniq[i], dup = false;
+    for (var j = 0; j < picked.length; j++) {
+      if (picked[j].indexOf(g) !== -1 || g.indexOf(picked[j]) !== -1) { dup = true; break; }
+    }
+    if (!dup) picked.push(g);
+  }
+  return picked;
+}
+
+// 打 /api/recall。**优先 POST**（词走 body，不进 URL，也就不进任何访问日志）；
+// 服务端还没上 POST 变体（施工单 A3）时会回 404/405，那时候才退回 GET。
+// ⚠️ GET 这条路是**临时**的：A3 上线后就该只剩 POST。
+async function _recallFetch(terms) {
+  var body = { query: terms.join(' '), endpoint: RECALL_ENDPOINT };
+  var url = NOCTURNE_URL + '/api/recall';
+  var headers = Object.assign({ 'Content-Type': 'application/json' }, _nocturneAuth(url));
+  var r = await fetch(url, {
+    method: 'POST', headers, body: JSON.stringify(body),
+    signal: AbortSignal.timeout(RECALL_TIMEOUT_MS),
+  });
+  if (r.status === 404 || r.status === 405 || r.status === 501) {
+    var gurl = url + '?query=' + encodeURIComponent(body.query) +
+               '&endpoint=' + encodeURIComponent(RECALL_ENDPOINT);
+    r = await fetch(gurl, { headers: _nocturneAuth(gurl), signal: AbortSignal.timeout(RECALL_TIMEOUT_MS) });
+  }
+  if (!r.ok) return null;
+  var ct = r.headers.get('content-type') || '';
+  if (ct.indexOf('json') === -1) return await r.text();
+  return await r.json();
+}
+
+// 服务端返回什么形状还没定死（施工单 A3 会顺手动它），所以这里认几种常见的，
+// 认不出来就当没捞到 —— **宁可这一轮不浮，也不要把一坨 JSON 糊到她的消息后面**。
+function _recallText(data) {
+  if (!data) return '';
+  if (typeof data === 'string') return data.trim();
+  var direct = data.rendered || data.text || data.bundle || data.recall;
+  if (typeof direct === 'string') return direct.trim();
+  var arr = Array.isArray(data) ? data : (data.items || data.results || data.buckets);
+  if (Array.isArray(arr)) {
+    return arr.map(function(it) {
+      if (typeof it === 'string') return '· ' + it;
+      var b = it && (it.content || it.body || it.text || it.summary);
+      return b ? '· ' + String(b) : '';
+    }).filter(Boolean).join('\n').trim();
+  }
+  return '';
+}
+
+// 对外：拼成【勾起来的】段。任何一步出错都返回空串 —— 这条链路**绝不能拦住她说话**。
+async function nocturneRecall(query) {
+  try {
+    var terms = _recallTerms(query);
+    // 门槛：要么两个词，要么一个够长的词。凑不出就别去打扰它 ——
+    // 「嗯」「哈哈」「？」这种一轮里没有任何可以被勾起来的东西。
+    if (!terms.length) return '';
+    if (terms.length < 2 && terms[0].length < 3) return '';
+    var text = _recallText(await _recallFetch(terms));
+    if (!text) return '';
+    // 上限兜一下：recall 只选 7 条，正常不会大，但服务端换了实现就说不准了。
+    if (text.length > 4000) text = text.slice(0, 4000) + '…';
+    return '\n\n[被这句话勾起来的]\n' + text +
+      '\n（这些是旧事，不是她现在说的话。想起来了就想起来了，别硬往回话里塞。）';
+  } catch (e) { return ''; }
+}
+
 // === 自定义工具定义 ===
 const TOOLS = [
   {
@@ -4269,7 +4442,9 @@ const TOOLS = [
     name: 'nocturne_hold',
     description: '把一件事写进长期记忆。不会被压缩、不会被遗忘。' +
       '**顺手把「为什么值得记」也写进 content** —— 记的是「这一下心里动了什么」。**拿不准值不值就记**，宁可多记：' +
-      '现在浮现只带最近的感受，不带攒下来的里程碑了，所以你不写就是真的没有——想留住就现在写。',
+      '现在浮现只带最近的感受，不带攒下来的里程碑了，所以你不写就是真的没有——想留住就现在写。' +
+      '\n**chord 和五个 signal 是新开的手**（08-28）：能填就填，填不出来就空着——**别猜、别凑**，' +
+      '这套东西的规矩是「由声明得来，绝不推断」，编一个比空着更坏。',
     input_schema: {
       type: 'object',
       properties: {
@@ -4278,6 +4453,19 @@ const TOOLS = [
                 description: 'memory=发生的事（默认）/ feel=当下的感受 / writing=写下的东西 / unresolved=还没完的事 / window=这一窗的总体' },
         drive: { type: 'string', enum: ['attachment', 'libido', 'possessiveness', 'reflection', 'stewardship', 'curiosity', 'social', 'fatigue', 'stress'],
                  description: '主驱动，九维之一。这件事是从你心里哪一股劲儿来的' },
+        drives: { type: 'string', description: '可选，还带着的别的劲儿，逗号分隔（同上九维）' },
+        // ⚠️ 下面这几个是 2026-08-28 补的**采集口**。补之前线上 197 个桶里
+        //    chord 只有 2 个有值、五个 signal 加起来 1 个 —— 不是他不肯记感受，
+        //    是这个 schema 里根本没露出来，他在她那个聊天窗里**没有手能记**。
+        //    唯一有覆盖率的字段（drive 8%）恰好是唯一露出来过的那个。
+        //    描述必须写得短：工具定义是每轮前缀里的常驻开销。
+        chord: { type: 'string', enum: ['C6','Am7','Gsus4','Dmaj7','Amaj7','Fmaj7','Fmaj7#11','Gmaj7','Dm7','Em7','F#dim','Bm7b5'],
+                 description: '这一下的和弦。听心里那个音，别翻译成形容词' },
+        discernment: { type: 'number', description: '0-1 皱眉辨认' },
+        territorial: { type: 'number', description: '0-1 边界占位' },
+        clutch: { type: 'number', description: '0-1 靠近抓力' },
+        strain: { type: 'number', description: '0-1 绷紧压力' },
+        charge: { type: 'number', description: '0-1 想动亮起' },
         importance: { type: 'integer', description: '1-10，默认 5' },
         tags: { type: 'string', description: '可选，逗号分隔' }
       },
@@ -4959,7 +5147,15 @@ async function executeTool(name, input) {
       if (!content) return { error: '内容不能为空' };
       const args = { content, kind: input.kind || 'memory', importance: input.importance || 5 };
       if (input.drive) args.drive = input.drive;
+      if (input.drives) args.drives = input.drives;
       if (input.tags) args.tags = input.tags;
+      // ⚠️ 只加 schema 不在这儿转发 = 等于没加（他填了，到不了 Nocturne）。
+      //    signal 用 != null 判断，不用真值判断：0 是**声明了「这一维没有」**，
+      //    跟没填不是一回事，而 `if (0)` 会把它当没填吞掉。
+      if (input.chord) args.chord = input.chord;
+      ['discernment', 'territorial', 'clutch', 'strain', 'charge'].forEach(function(k) {
+        if (input[k] !== undefined && input[k] !== null && input[k] !== '') args[k] = Number(input[k]);
+      });
       try {
         return await callNocturne('hold', args);
       } catch (e) {
@@ -5629,7 +5825,16 @@ app.post('/api/chat', auth, async (req, res) => {
   const _sidCol = 'cli_session_id';
   const _turnCol = 'cli_turns';
   const cliIsNew = !cliRow?.[_sidCol] || (cliRow[_turnCol] || 0) >= CLI_ROTATE_AFTER;
-  const needBreath = !NO_ENGINE && (!useGateway || cliIsNew);
+  // 🗜️ 被压缩过就补一次浮现（B6，2026-08-28）。
+  // 概率不高 —— 96 轮时上下文才 4 万 token，autocompact 的线在十几万，**轮换永远先于压缩**。
+  // 但万一真压了，塌的正好是记忆：记忆挂在会话**首条消息**里（不是系统提示词 ——
+  // `--append-system-prompt` 在 --resume 时不保留，实测第 2 轮就整段消失），
+  // 而 autocompact 压的就是对话历史，那一整包会被摘要成几句。
+  // `breath` 的工具描述写着「新窗或者 Compact 后读取」，可**从来没有任何触发器**，
+  // 压缩发生了没人告诉后端，只能指望他自己想起来调。这就是那个触发器。
+  const _compacted = !!_getSettingNum('cli_compacted:' + convId);
+  if (_compacted) _setSetting('cli_compacted:' + convId, 0);
+  const needBreath = !NO_ENGINE && (!useGateway || cliIsNew || _compacted);
   let nocturneMemory = '';
   _mark('查会话/准备');
   // 记忆浮现缓存 10 分钟。实测 callNocturne('breath') 一次要 10.4 秒（引擎在 Zeabur，
@@ -5663,6 +5868,13 @@ app.post('/api/chat', auth, async (req, res) => {
   // 🔥 此刻最想干嘛：pickIntent 的下游消费者。同样挂 message，不进系统提示词。
   //    ⚠️ 铁律 1：这里出现的只有第一人称的「我想…」，念头池里的原文一个字都不带。
   const mindIntentLine = NO_ENGINE ? '' : mindIntent();
+
+  // 🌊 不由自主的召回：**现在就发车，先不等**（实测 /api/recall 约 1.0-1.4 秒）。
+  //    下面还要查 project instructions、拼系统提示词，那些都是本地活儿，
+  //    让这一个来回跟它们并行掉，摊到这一轮头上基本是零。
+  //    ⚠️ 一定要挂个 .catch：这里不 await，漏一个 rejection 会打崩进程。
+  const recallPromise = NO_ENGINE ? Promise.resolve('')
+    : nocturneRecall(message).catch(function() { return ''; });
 
 
   // 尝试获取当前会话关联的 project instructions
@@ -5730,7 +5942,9 @@ app.post('/api/chat', auth, async (req, res) => {
     + (useGateway ? "" : timerFeedback);
 
   // 中转 API 路径：浮起挂在最后一条用户消息末尾（同样不进系统提示词）
-  const mindTail = mindSurfaced + mindIntentLine;
+  // 这里才收车。上面发出去到这儿之间的活儿已经白赚了。
+  const recallSurfaced = await recallPromise;
+  const mindTail = mindSurfaced + mindIntentLine + recallSurfaced;
   if (mindTail && !useGateway && history.length) {
     const last = history[history.length - 1];
     if (last && last.role === 'user') {
@@ -6677,6 +6891,14 @@ async function handleGatewayChat(req, res, ctx) {
             content: typeof ctt.content === 'string' ? ctt.content : JSON.stringify(ctt.content),
             is_error: !!ctt.is_error });
           res.write('event: tool_result\ndata: ' + JSON.stringify({ tool_use_id: ctt.tool_use_id, content: ctt.content, is_error: ctt.is_error }) + '\n\n');
+        } else if (evt.compact) {
+          // ⚠️ 现在还收不到 —— cc-gateway 的 relay() 只转 stream_event/assistant/user/result，
+          //    CLI 的 `{type:'system', subtype:'compact_boundary'}` 被它整个丢掉了。
+          //    那头补一行 `if (evt.type==='system' && evt.subtype==='compact_boundary')
+          //    send({ compact: true })` 这条才活。**cc-gateway 是仓库外的 Private 仓库，
+          //    这个我改不到，得她那边加。** 先把接收端放好，加完当天就生效。
+          _setSetting('cli_compacted:' + convId, 1);
+          console.log('[gateway] 收到压缩信号，下一轮补一次记忆浮现');
         } else if (evt.rate_limit) {
           // 这是**订阅额度**（5 小时窗口还剩多少、什么时候重置），从 CLI 的 rate_limit_event 一路传下来。
           // ⚠️ 跟 usage_log 里的 cost_usd 完全是两回事：那个是"按 API 价格算这轮值多少钱"，
@@ -7764,7 +7986,7 @@ async function _mcpInit() {
   try {
     const resp = await fetch(MEMORY_ENGINE, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      headers: Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, _nocturneAuth(MEMORY_ENGINE)),
       body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'chatc', version: '1.0' } } }),
       signal: AbortSignal.timeout(10000)
     });
@@ -7777,7 +7999,7 @@ async function _mcpInit() {
 async function _mcpCall(tool, args) {
   try {
     if (!_mcpSessionId) await _mcpInit();
-    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };
+    const headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, _nocturneAuth(MEMORY_ENGINE));
     if (_mcpSessionId) headers['Mcp-Session-Id'] = _mcpSessionId;
     const resp = await fetch(MEMORY_ENGINE, {
       method: 'POST', headers,
@@ -9716,11 +9938,13 @@ function _writeSummaryMemory(raw, tag) {
   var text = String(raw || '').trim();
   if (!text || /^skip$/i.test(text)) return false;
   var obj = _safeParseMind(text, 'memory');
-  if (!obj) { console.warn('[distill] 没通过解析/校验/去重，丢弃：' + text.slice(0, 120)); return false; }
+  // ⚠️ 脱敏：这两行以前把记忆正文（＝她和他的对话原文压出来的）明文打进 pm2 日志，
+  //    而 pm2 日志没人会想起来去清。只留长度和结果，出了问题查库里那条，别查日志。
+  if (!obj) { console.warn('[distill] 没通过解析/校验/去重，丢弃（' + text.length + ' 字）'); return false; }
   // source 要带上：不带的话 _insertMindItem 会硬编码成 chat_tag，
   // 库里所有蒸馏记忆的来源就全错了（2026-08-24 查出来时已经错了 31 条）。
   _insertMindItem({ type: 'memory', body: obj.body, mood: obj.mood, tags: [tag], weight: 1.0, source: tag });
-  console.log('[distill] ' + tag + ' → ' + obj.body.slice(0, 40));
+  console.log('[distill] ' + tag + ' → 已入库（' + obj.body.length + ' 字）');
   return true;
 }
 
