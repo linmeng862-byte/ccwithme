@@ -255,6 +255,21 @@ function registerGuestRoutes(app, options) {
       const cap = session.maxMessages || limits.maxMessagesPerSession;
       if (userTurns >= cap) return { err: 429, msg: "Session message limit reached" };
 
+      // ─── 花钱闸门（ZZ 2026-08-29）───────────────────────────────────────
+      // 走 claude -p + 她的上下文之后，句数限额基本等于没有限额：
+      // 每句都是新进程、都要把整个窗口重付一次冷前缀，实测约 $0.15/句。
+      // 所以真正的闸门按**钱**算，用上一轮回传的真实 total_cost_usd 累加。
+      // 两道：这个客人花了多少、今天所有客人一共花了多少。
+      const spentSession = Number(session.costUsd) || 0;
+      if (spentSession >= limits.maxCostPerSession) {
+        return { err: 429, msg: "今天先聊到这儿吧。" };
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      if (!data.daily || data.daily.date !== today) data.daily = { date: today, costUsd: 0 };
+      if ((Number(data.daily.costUsd) || 0) >= limits.maxCostPerDay) {
+        return { err: 429, msg: "今天先聊到这儿吧。" };
+      }
+
       // Rate limit 2: per-token sliding window (max limits.maxPerMinute / 60s).
       const nowMs = Date.now();
       const recent = (chatRateLimit[token] || []).filter(t => nowMs - t < 60000);
@@ -266,6 +281,8 @@ function registerGuestRoutes(app, options) {
       return {
         sessionId: session.id,   // ZZ-PATCH ①: memorizeSession 收 id，不是 token
         guestName: session.guestName,
+        // ZZ 08-29: 客人自己那条分叉。第一句是 null → llm 去她的会话 fork 一份。
+        cliSessionId: session.cliSessionId || null,
         history: session.messages.map(m => ({ role: m.role, content: m.content }))
       };
     });
@@ -276,14 +293,24 @@ function registerGuestRoutes(app, options) {
     let reply;
     try {
       const system = await buildSystemPrompt(gate.guestName, userMessage);
-      reply = await llm({ system, transcript: gate.history });
+      // ZZ 08-29: 带 guest = 这是客人在聊，llm 那头要 fork / 记账 / 请她让路。
+      reply = await llm({
+        system, transcript: gate.history,
+        guest: { token, cliSessionId: gate.cliSessionId }
+      });
     } catch (e) {
       console.error("[guest] llm call failed:", e.message);
       return res.status(500).json({ error: "Failed to get response" });
     }
 
+    // ZZ 08-29: 客人路径的 llm 回的是 { text, cliSessionId, costUsd }，
+    // 内部调用（摘要）仍回字符串。两种都收，别让下游关心这个区别。
+    const out = (reply && typeof reply === "object")
+      ? reply
+      : { text: String(reply || ""), cliSessionId: null, costUsd: 0 };
+
     // ─── ZZ-PATCH ①（续）: 剥哨兵，决定这轮是不是最后一轮 ───
-    const { text: replyText, ended } = stripEndMark(reply);
+    const { text: replyText, ended } = stripEndMark(out.text);
     // 只写了个 <<结束>> 没说话的情况：给一句兜底，别让客人对着空气。
     const finalText = replyText || (ended ? "（他轻轻道了别。）" : replyText);
 
@@ -293,6 +320,19 @@ function registerGuestRoutes(app, options) {
       if (!session) return;
       session.messages.push({ role: "assistant", content: finalText, ts: new Date().toISOString() });
       if (ended) session.status = "closed";   // ZZ-PATCH ①
+
+      // ZZ 08-29: 记下客人自己那条分叉 —— 下一句 resume 它，而不是再从她的会话 fork。
+      // 第一句之后就固定了，客人永远回不到她的原会话。
+      if (out.cliSessionId && !session.cliSessionId) session.cliSessionId = out.cliSessionId;
+
+      // 真实花费入账：这个客人的 + 今天的总数。闸门在上面读这两个值。
+      const c = Number(out.costUsd) || 0;
+      if (c > 0) {
+        session.costUsd = (Number(session.costUsd) || 0) + c;
+        const today = new Date().toISOString().slice(0, 10);
+        if (!data.daily || data.daily.date !== today) data.daily = { date: today, costUsd: 0 };
+        data.daily.costUsd = (Number(data.daily.costUsd) || 0) + c;
+      }
     });
 
     // 摘要不挡返回，跟上游 close 路由一个写法：fire-and-forget。
@@ -383,9 +423,28 @@ function registerGuestRoutes(app, options) {
       messageCount: s.messages.length,
       userTurns: s.messages.filter(m => m.role === "user").length,
       maxMessages: s.maxMessages || limits.maxMessagesPerSession,
+      // ZZ 08-29: 走订阅之后她得看得见钱花在哪。仍然不返回 messages（见下面那条隐私注释）。
+      costUsd: Number(s.costUsd) || 0,
+      maxCostUsd: limits.maxCostPerSession,
       summary: s.summary
     }));
+    // ⚠️ 保持**数组**返回：线上前端（index.html 的会客厅面板）拿它 Array.isArray()，
+    //    改成对象它会静默显示「还没有人来过」。今日总额另开一个端点，见下。
     res.json(list);
+  });
+
+  // ZZ 08-29: 今天一共花了多少。走订阅之后这是她唯一看得见账的地方。
+  app.get("/api/guest/cost", adminAuth, async (req, res) => {
+    const data = await store.load();
+    const today = new Date().toISOString().slice(0, 10);
+    const spent = (data.daily && data.daily.date === today) ? Number(data.daily.costUsd) || 0 : 0;
+    res.json({
+      date: today,
+      todayCostUsd: Number(spent.toFixed(4)),
+      maxCostPerDay: limits.maxCostPerDay,
+      maxCostPerSession: limits.maxCostPerSession,
+      remainingUsd: Number(Math.max(0, limits.maxCostPerDay - spent).toFixed(4))
+    });
   });
 
   // Close a session (soft delete). Triggers the session-end summary.

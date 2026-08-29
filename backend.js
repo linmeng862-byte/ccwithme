@@ -6386,6 +6386,21 @@ app.post('/api/chat', auth, async (req, res) => {
 // === 订阅网关（本机 cc-gateway，走 claude login 订阅，通过 MCP 桥接 Chat-C 全部工具）===
 const GATEWAY_URL = 'http://127.0.0.1:9876/chat';
 const GATEWAY_KEY = process.env.GATEWAY_KEY || '';
+const GATEWAY_BASE = 'http://127.0.0.1:9876';
+
+// 告诉网关「这条会话我不用了，进程可以放掉」。
+// 08-29：网关原来只会因为「闲了 15 分钟 / MCP 变了 / 设置变了」放进程，
+//   **换会话不在其中** —— 实测同时在册 2 个，其中一个 backend 早就不发消息了，
+//   却还占着 264MB 干等超时。这台只有 2G，那是实打实的浪费。
+// fire-and-forget：放不掉最多是白占一会儿内存，绝不能挡住她这一轮的流。
+function dropGatewayProc(sid, why) {
+  if (!sid || !GATEWAY_KEY) return;
+  fetch(GATEWAY_BASE + '/drop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+    body: JSON.stringify({ session_id: sid, why: why || 'backend 换了会话' }),
+  }).catch(function() {});
+}
 
 // 给 cc-gateway 用的工具桥接：列出全部工具 / 执行工具
 // === usage 用量统计 ===
@@ -7402,6 +7417,11 @@ async function handleGatewayChat(req, res, ctx) {
         db.prepare("UPDATE sessions SET updated_at = strftime('%s','now'), " + sidCol + " = ?, " + turnCol + " = ?"
                    + (isNewSession ? ", cli_ctx_tokens = 0" : "") + " WHERE conv_id = ?")
           .run(sessionId, isNewSession ? 1 : cliTurns + 1, convId);
+        // 换了会话 → 旧那条的常驻进程再也不会被用到了，让网关立刻放掉，
+        // 别挂在那儿等 15 分钟超时。（08-29 那次同时在册 2 个就是这么来的。）
+        if (isNewSession && cliSessionId && cliSessionId !== sessionId) {
+          dropGatewayProc(cliSessionId, '换会话，旧的作废');
+        }
       } catch (e) { console.error('[gateway] 会话落库失败:', e.message); }
     };
     while (true) {
