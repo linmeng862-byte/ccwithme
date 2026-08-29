@@ -2772,6 +2772,23 @@ const _EFFORT_OPTS=[{key:'low',label:'Low',desc:'简单问题，快'},{key:'medi
 const _BACK_SVG='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
 // 让不让他自己上网查东西。08-24 起后端一直是开的，只是界面上看不见 —— 08-29 露出来。
 // 默认 true：读不到（老浏览器缓存、接口还没答）不能当成关，那样会让他突然不会搜了。
+// 会客厅占着他的时候，在输入框上方挂一行小字。08-29 加的：
+// 在这之前她只会觉得"这句怎么莫名其妙慢了 5 秒"，不知道是有客人在。
+// 不新开控件、不弹窗 —— 一行字，客人走了自己消失。
+function _guestNote(d){
+  var el=document.getElementById('guestBusyNote');
+  if(!d||d.kind!=='guest_busy'){if(el)el.remove();return}
+  if(!el){
+    el=document.createElement('div');el.id='guestBusyNote';
+    el.style.cssText='margin:0 auto 6px;max-width:var(--composer-max,760px);padding:6px 12px;'
+      +'font:12px/1.5 var(--font-sans);color:var(--text-faint);background:var(--bg-surface);'
+      +'border:1px dashed var(--bg-sunken);border-radius:10px;text-align:center';
+    var wrap=document.querySelector('.composer-wrap');
+    if(!wrap)return;
+    wrap.insertBefore(el,wrap.firstChild);
+  }
+  el.textContent=d.message||'会客厅有人在，他一会儿就回来';
+}
 let _webSearch=true;
 // 开关就是 + 菜单最底下那个 "Search the web"（早就画好了，08-29 之前只是没接线：
 // 原来的 onchange 里嵌了 \" —— HTML 属性里反斜杠不转义，属性在那儿就被截断了，
@@ -4303,7 +4320,7 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
     const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='',finished=false;
     const frame=f=>{let event='',data='';f.split('\n').forEach(line=>{if(line.startsWith('event:'))event=line.slice(6).trim();if(line.startsWith('data:'))data+=line.slice(5).trim()});if(!event||!data)return;const d=JSON.parse(data);if(event==='conversation'){state.convId=d.conversation_id;state.legacySessionId=null;localStorage.setItem('chat_conversation',state.convId);localStorage.removeItem('chat_session')}if(event==='thinking')msg.thinking(d.text||'');if(event==='delta')msg.text(d.text||'');if(event==='tool_use')msg.toolUse(d);if(event==='tool_result')msg.toolResult(d);if(event==='trace_summary')msg.traceSummary(d.text||'');if(event==='done'){state.convId=d.conversation_id||state.convId;localStorage.setItem('chat_conversation',state.convId);msg.finish();finished=true;if(d.usage)_showTokenUsage(d.usage)}if(event==='cmd'){if(d.type==='timer'){pollCommands()}else{var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',d.id);cap.setAttribute('data-cmd-type',d.type);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FBF7F0;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});var ci=d.type==='quiz'?'\u{1F4DD}':d.type==='task'?'\u{1F4CB}':'\u23F1\uFE0F';cap.innerHTML='<span>'+ci+'</span><span class="cmd-capsule-label">'+(d.type==='quiz'?'答题':escHtml(d.title||''))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';var bEl=msg.row.querySelector('.bubble');if(bEl)bEl.after(cap);else(msg.row.querySelector('.md')||msg.row).appendChild(cap)}}if(event==='sticker'){var si=document.createElement('img');si.src=assetUrl(d.url);si.className='msg-sticker';si.style.cssText='max-width:200px;max-height:200px;border-radius:12px;display:block';
       // 挂到气泡**外面** —— 表情不进气泡（后端也是单独存一条，刷新后渲染一致）
-      var _sb=msg.row&&msg.row.querySelector('.bubble');if(_sb&&_sb.parentNode)_sb.parentNode.appendChild(si);else md.appendChild(si)}if(event==='voice_replace'){var _vr=msg.row;if(_vr){var _vmd=_vr.querySelector('.md');if(_vmd){_vr.dataset.raw=d.content||'';renderMessage(_vmd,d.content||'');_renderVoiceCards(_vr)}}}if(event==='rate_limit'){_updateRateLimit(d)}if(event==='error'){msg.fail(d.message);finished=true}};
+      var _sb=msg.row&&msg.row.querySelector('.bubble');if(_sb&&_sb.parentNode)_sb.parentNode.appendChild(si);else md.appendChild(si)}if(event==='voice_replace'){var _vr=msg.row;if(_vr){var _vmd=_vr.querySelector('.md');if(_vmd){_vr.dataset.raw=d.content||'';renderMessage(_vmd,d.content||'');_renderVoiceCards(_vr)}}}if(event==='rate_limit'){_updateRateLimit(d)}if(event==='notice'){_guestNote(d)}if(event==='error'){msg.fail(d.message);finished=true}};
     while(true){const{value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});const parts=buffer.split(/\r?\n\r?\n/);buffer=parts.pop()||'';parts.forEach(frame);if(done)break}
     if(buffer.trim())frame(buffer);if(!finished)await recoverAfterBreak(msg,state.convId,'连接意外结束，请重试。')
   }catch(e){if(msg)msg.fail(e.message||'连接失败，请稍后重试。');else toast(e.message||'文件上传失败')}

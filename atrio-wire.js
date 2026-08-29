@@ -32,6 +32,15 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";   // 跟主线的他同款。想更�
 // 客人侧固定用它。跟上面那个 DEFAULT_MODEL 不是一回事 —— 那个是旧 SDK 路子用的。
 const GUEST_MODEL = "claude-sonnet-4-6";
 
+// 客人的进程正在跑吗。08-29：会客厅会请她的常驻让路，但**反过来没人管** ——
+// 客人占着 CLI 的时候她发消息，网关照样给她 spawn 一个新进程，两个 claude 同时在，
+// 正是这台 2G 扛不住的情况。backend 靠这个标志知道该等一下、也该告诉她一声。
+// 用时间戳而不是布尔：万一哪次异常没清掉，它自己会过期，不会把她永久卡住。
+let _guestBusyUntil = 0;
+function isGuestBusy() { return Date.now() < _guestBusyUntil; }
+function _markGuestBusy(ms) { _guestBusyUntil = Date.now() + ms; }
+function _clearGuestBusy() { _guestBusyUntil = 0; }
+
 // 他的家和他的 CLI 配置目录。**这个仓库跑在两台布局不同的机器上**，
 // 所以这里只放默认值，另一台用环境变量覆盖，别改代码。
 // NOCT_HOME 必须是他 CLAUDE.md 所在的目录：--resume 靠 cwd 定位项目，
@@ -281,6 +290,10 @@ function wireAtrio(app, opts) {
     }
 
     return runExclusive(async () => {
+      // 从"开始让路"到"这轮跑完"整段都算占用 —— 让路本身要等她说完，也可能等 45 秒。
+      // 上限 4 分钟（claudeP 自己 3 分钟超时），异常没清掉也会自己过期。
+      _markGuestBusy(4 * 60 * 1000);
+      try {
       const yielded = await yieldHerProcess();
       if (!yielded.yielded) console.log("[atrio] 她的进程没让开（" + yielded.why + "），照跑");
       const her = guest.cliSessionId ? null : herSessionId();
@@ -289,6 +302,7 @@ function wireAtrio(app, opts) {
       console.log("[atrio] 客人这轮 $" + r.costUsd.toFixed(4)
         + (guest.cliSessionId ? "（续分叉）" : "（新分叉 " + String(r.cliSessionId).slice(0, 8) + "）"));
       return r;
+      } finally { _clearGuestBusy(); }
     });
   }
 
@@ -369,4 +383,4 @@ function wireAtrio(app, opts) {
   console.log("[atrio] 会客厅已挂载：/visit/:token");
 }
 
-module.exports = { wireAtrio, _test: { makeRecall, tooPrivate } };
+module.exports = { wireAtrio, isGuestBusy, _test: { makeRecall, tooPrivate, askingAboutHer } };

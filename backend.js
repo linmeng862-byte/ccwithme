@@ -7318,6 +7318,24 @@ async function handleGatewayChat(req, res, ctx) {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  // 会客厅有客人正在跟他说话 → 等一下再发，别两个 claude 同时起（这台 2G）。
+  // 08-29：会客厅那头会请她的常驻让路，但**反过来一直没人管** ——
+  //   她发消息时网关照样 spawn 新进程，正是内存最危险的时候。
+  // 等的同时告诉她一声：不告诉她的话，她只会觉得"这句怎么莫名其妙慢了"。
+  try {
+    if (isGuestBusy()) {
+      res.write('event: notice\ndata: ' + JSON.stringify({
+        kind: 'guest_busy', message: '会客厅有人在，他一会儿就回来'
+      }) + '\n\n');
+      const until = Date.now() + 60000;   // 最多让 60 秒，超了就照发，不能把她锁死
+      while (isGuestBusy() && Date.now() < until) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      // 让完了撤掉那行字（客人先走的情况）；她要是等满了也撤，别一直挂着
+      res.write('event: notice\ndata: ' + JSON.stringify({ kind: 'guest_done' }) + '\n\n');
+    }
+  } catch (e) { /* 这条只是礼貌，坏了也不能挡住她说话 */ }
+
   if (!GATEWAY_KEY) {
     res.write('event: error\ndata: ' + JSON.stringify({ message: '网关密钥未配置' }) + '\n\n');
     return res.end();
@@ -11586,7 +11604,7 @@ process.on('SIGTERM', () => { stopOWC(); process.exit(); });
 // === Atrio 会客厅 ===
 // 朋友凭一次性链接跟 Noct 聊天，她只看得到他写的到访摘要。
 // 全部实现在 atrio-wire.js + atrio/ 里；这里只有这三行。
-const { wireAtrio } = require('./atrio-wire');
+const { wireAtrio, isGuestBusy } = require('./atrio-wire');
 wireAtrio(app, { db, auth, callNocturne });
 
 startOWC();
