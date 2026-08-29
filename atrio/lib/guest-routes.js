@@ -82,7 +82,9 @@ function findSession(data, token) {
 function registerGuestRoutes(app, options) {
   options = options || {};
 
-  const { adminAuth, systemPromptFile, memorizePromptFile, visitPage } = options;
+  // onForkDone(cliSessionId) -> bool：客人会话结束后回收那份 fork。
+  // 返回 true 表示真删掉了；返回 false / 抛错就留着，下一轮 sweep 再试。
+  const { adminAuth, systemPromptFile, memorizePromptFile, visitPage, onForkDone } = options;
 
   if (typeof adminAuth !== "function") {
     throw new Error("registerGuestRoutes: options.adminAuth (an express middleware) is required");
@@ -219,6 +221,28 @@ function registerGuestRoutes(app, options) {
     );
     for (const s of targets) {
       await memorizeSession(s.id).catch(e => console.error("[guest] sweep memorize error:", e.message));
+    }
+
+    // ZZ 08-29: 客人聊完了，把那份 fork 删掉。
+    // 为什么必须删：每份 fork 都是**她完整历史的一个副本**，散在磁盘上（根分区已 89%）。
+    // 客人会话一结束它就再没用了，留着只有两个作用：占地方、多一份她的历史在外面。
+    // 路径由调用方给（onForkDone），这个文件不该知道 CLI 的目录长什么样。
+    if (typeof onForkDone === "function") {
+      const stale = data.sessions.filter(s =>
+        s.cliSessionId && (s.status === "closed" || new Date(s.expiresAt).getTime() < now)
+      );
+      for (const s of stale) {
+        let ok = false;
+        try { ok = await onForkDone(s.cliSessionId); }
+        catch (e) { console.error("[guest] fork 清理失败:", e.message); }
+        // 只有真删掉了才清字段 —— 删失败就留着，下一轮 sweep 再试。
+        if (ok) {
+          await store.withSessions(d => {
+            const t = d.sessions.find(x => x.id === s.id);
+            if (t) { t.forkCleanedAt = new Date().toISOString(); t.cliSessionId = null; }
+          });
+        }
+      }
     }
   }
 
@@ -471,6 +495,14 @@ function registerGuestRoutes(app, options) {
     sweepEndedSessions().catch(e => console.error("[guest] sweep error:", e.message));
   }, 5 * 60 * 1000);
   if (typeof timer.unref === "function") timer.unref();
+
+  // ZZ 08-29: 启动后也扫一次。重启前结束的会话（和它们留下的 fork）
+  // 本来要干等 5 分钟才被清理 —— 那 5 分钟里她的历史副本一直躺在磁盘上。
+  // 延迟 10 秒是等 backend 自己先起完，别跟启动抢。
+  const boot = setTimeout(() => {
+    sweepEndedSessions().catch(e => console.error("[guest] boot sweep error:", e.message));
+  }, 10000);
+  if (typeof boot.unref === "function") boot.unref();
 }
 
 module.exports = { registerGuestRoutes };

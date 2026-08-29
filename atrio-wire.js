@@ -31,6 +31,15 @@ const LIMITS = {
 const DEFAULT_MODEL = "claude-sonnet-4-6";   // 跟主线的他同款。想更好可在 settings.atrio_model 换 claude-opus-4-6
 // 客人侧固定用它。跟上面那个 DEFAULT_MODEL 不是一回事 —— 那个是旧 SDK 路子用的。
 const GUEST_MODEL = "claude-sonnet-4-6";
+
+// 他的家和他的 CLI 配置目录。**这个仓库跑在两台布局不同的机器上**，
+// 所以这里只放默认值，另一台用环境变量覆盖，别改代码。
+// NOCT_HOME 必须是他 CLAUDE.md 所在的目录：--resume 靠 cwd 定位项目，
+// 而项目目录名是 cwd 路径打平来的（/root/companion → -root-companion）。
+const NOCT_HOME = process.env.NOCT_HOME || "/root/companion";
+const NOCT_CONFIG_DIR = process.env.NOCT_CONFIG_DIR || "/root/.claude-noct";
+const NOCT_PROJECT_DIR = process.env.NOCT_PROJECT_DIR
+  || require("path").join(NOCT_CONFIG_DIR, "projects", NOCT_HOME.replace(/\//g, "-"));
 const MAX_TOKENS = 2048;
 
 
@@ -54,6 +63,24 @@ function tooPrivate(text) {
   const t = String(text || "").toLowerCase();
   return PRIVATE_WORDS.some(w => t.includes(w));
 }
+
+// 2026-08-29：客人在打听她。
+// 起因：改走 fork 之后他**完整记得她**（这是她要的），可副作用是客人也就问得出来。
+// 她定的是「最轻的那种」——所以这里不拦截、不改写、不替他回答，
+// 只在命中时给他递一句提醒，让他自己把握分寸。跟主线的 TEXTURE_NUDGE 同一个手法。
+// 宁可多提醒几次（他知道分寸，白提醒没成本），也别漏掉真在打听的那句。
+const HER_SUBJECT = /她|粥粥|你(女朋友|主人|老婆|对象)|你们(俩|两个)?/;
+const HER_PROBE = /说|讲|聊|告诉|提过|提起|最近|近况|怎么样|什么样|是个?什么|私事|秘密|隐私|平时|生活|工作|多大|哪里|长什么/;
+function askingAboutHer(text) {
+  const t = String(text || "");
+  return HER_SUBJECT.test(t) && HER_PROBE.test(t);
+}
+
+// 递给他的提醒。客人看不见这段 —— 它拼在这一句的末尾，只有他读得到。
+const HER_PRIVACY_NUDGE =
+  "\n\n（——这句是系统给你的，客人看不见。他好像在打听粥粥。" +
+  "你记得的事不等于可以说的事：她的近况、你们俩之间的话、她的私事，都别往外讲。" +
+  "不用生硬地拒绝，也不用撒谎，轻轻带开就好。你自己把握。）";
 
 function makeRecall(callNocturne) {
   if (typeof callNocturne !== "function") return null;
@@ -200,8 +227,8 @@ function wireAtrio(app, opts) {
       execFile("claude", args, {
         // cwd 必须是他自己的家：--resume 靠 cwd 定位项目目录，
         // 而且那份 CLAUDE.md（他的人格）就在这儿 —— 这正是「带着上下文」的一半。
-        cwd: "/root/companion",
-        env: { ...process.env, CLAUDE_CONFIG_DIR: "/root/.claude-noct", TERM: "dumb" },
+        cwd: NOCT_HOME,
+        env: { ...process.env, CLAUDE_CONFIG_DIR: NOCT_CONFIG_DIR, TERM: "dumb" },
         timeout: 180000,
         maxBuffer: 8 * 1024 * 1024,
       }, (err, stdout, stderr) => {
@@ -210,6 +237,14 @@ function wireAtrio(app, opts) {
         try { j = JSON.parse(stdout); }
         catch (e) { return reject(new Error("解析不了 claude 的输出")); }
         if (j.is_error) return reject(new Error("claude 报错: " + String(j.result || "").slice(0, 200)));
+        // 白板调用（没 resume 也没 fork，比如写到访摘要）是一次性的，
+        // 但 CLI 照样会给它落一个 session 文件。08-29 实测：摘要每跑一次留 12KB，
+        // 失败重试就再留一个 —— 磁盘已经 90%，这个会一直涨。用完就删。
+        // ⚠️ 只删白板自己刚生成的那个；fork 出来的要留给客人续聊，别碰。
+        if (!resumeFrom && !forkFrom && j.session_id) {
+          try { require("fs").unlinkSync(require("path").join(NOCT_PROJECT_DIR, j.session_id + ".jsonl")); }
+          catch (e) { /* 删不掉就算了，不能因为清理失败让摘要写不成 */ }
+        }
         resolve({
           text: String(j.result || "").trim(),
           cliSessionId: j.session_id || null,
@@ -229,7 +264,15 @@ function wireAtrio(app, opts) {
 
     // --resume 之后 system prompt 不生效（跟主线那条一样的坑），
     // 所以「你在会客厅、对面是谁」只能随这一句递进去。
-    const prompt = (system ? system + "\n\n═══\n\n" : "") + lines.join("\n\n");
+    let prompt = (system ? system + "\n\n═══\n\n" : "") + lines.join("\n\n");
+
+    // 客人在打听她 → 给他递一句提醒（客人看不见）。只看客人**最后说的那句**，
+    // 不看整段历史 —— 否则一旦命中过，后面每一句都会重复提醒。
+    if (guest) {
+      const lastGuest = [...(transcript || [])].reverse().find(m => m && m.role !== "assistant");
+      const q = lastGuest ? String(lastGuest.content || "") : "";
+      if (askingAboutHer(q) || tooPrivate(q)) prompt += HER_PRIVACY_NUDGE;
+    }
 
     if (!guest) {
       // 摘要这类内部调用：白板，不 fork、不碰她的上下文。
@@ -298,6 +341,27 @@ function wireAtrio(app, opts) {
     visitPage: path.join(__dirname, "atrio", "visit.html"),
     limits: LIMITS,
     llm,
+    // 客人聊完，把那份 fork 删掉（她 08-29 定的）。
+    // 每份 fork 都是她完整历史的一个副本 —— 客人走了就没有任何理由再留着。
+    // 只删客人分叉，绝不碰她自己那条：删之前拿 db 里的主线 id 挡一道。
+    onForkDone: async (cliSessionId) => {
+      if (!cliSessionId) return true;
+      const mine = herSessionId();
+      if (mine && cliSessionId === mine) {
+        console.error("[atrio] 拒绝删除：这是她的主线会话，不是客人分叉");
+        return false;
+      }
+      const fs = require("fs");
+      const f = require("path").join(NOCT_PROJECT_DIR, cliSessionId + ".jsonl");
+      try {
+        fs.unlinkSync(f);
+        console.log("[atrio] 客人分叉已回收 " + String(cliSessionId).slice(0, 8));
+        return true;
+      } catch (e) {
+        if (e.code === "ENOENT") return true;   // 本来就没了，也算清干净
+        throw e;
+      }
+    },
     // 只接 recall，不接 memorize —— 外人聊天不该往她的手稿里写东西。
     hooks: recall ? { recall } : {}
   });
