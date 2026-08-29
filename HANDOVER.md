@@ -40,8 +40,8 @@ sweep 原来只有 5 分钟一次的定时器，重启前结束的会话要干�
 ### 路径提成常量了
 
 `NOCT_HOME` / `NOCT_CONFIG_DIR` / `NOCT_PROJECT_DIR`，env 可覆盖。
-**这个仓库跑在两台布局不同的机器上**，原来我在代码里硬编码了 `/root/companion`，
-另一台会直接坏掉。⚠️ `NOCT_HOME` 必须是他 CLAUDE.md 所在的目录 ——
+**这个仓库跑在两台布局不同的机器上**，原来我在代码里硬编码了他家目录的绝对路径，
+另一台会直接坏掉。真实路径见 `CLAUDE.local.md`。⚠️ `NOCT_HOME` 必须是他 CLAUDE.md 所在的目录 ——
 `--resume` 靠 cwd 定位项目，项目目录名是 cwd 路径打平来的。
 
 ### 一个没走的岔路，留个记录
