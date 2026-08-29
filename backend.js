@@ -160,6 +160,12 @@ db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('stt_base_url','
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('stt_api_key','')").run();
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('stt_model','whisper-large-v3-turbo')").run();
 
+// 让不让他自己上网查东西。08-24 起网关白名单里就有 WebSearch，但一直是写死的、
+// 界面上看不见也关不掉。08-29 改成开关：默认开着（本来就是开的，别因为加了开关反而变了）。
+// ⚠️ 这个开关会换掉 CLI 的 --allowedTools，而那是 spawn 时定死的参数 ——
+//    所以网关那头一改就要放掉常驻进程重开，成本跟切模型是同一笔冷启动。
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('web_search','1')").run();
+
 // 迁移：diary 从 date 主键 → id 自增（支持一天多条 + timeline）
 const diaryCols = db.prepare("PRAGMA table_info(diary)").all();
 const diaryHasId = diaryCols.some(c => c.name === 'id');
@@ -1842,6 +1848,19 @@ app.post('/api/settings', auth, (req, res) => {
   if (!key) return res.status(400).json({ error: 'key required' });
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value || '');
   res.json({ ok: true });
+});
+
+// === 让不让他上网查东西 =====================================================
+// 08-29：以前 WebSearch 写死在网关白名单里，她既看不见也关不掉。
+// 只有开 / 关一个布尔值，没有密钥，所以不用像 bark/minimax 那样藏内容。
+app.get('/api/settings/websearch', auth, (req, res) => {
+  res.json({ web_search: _webSearchOn() });
+});
+app.post('/api/settings/websearch', auth, (req, res) => {
+  const on = !!(req.body && req.body.web_search);
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('web_search', ?)").run(on ? '1' : '0');
+  // 老实告诉前端要花钱：改这个 = 下一句要重开常驻进程（--allowedTools 是 spawn 参数）。
+  res.json({ ok: true, web_search: on, cold_restart: true });
 });
 
 // 会客厅（Atrio）的 API key —— 独立密钥，跟主线订阅、跟 base_url/api_key 中转配置都无关。
@@ -7334,6 +7353,9 @@ async function handleGatewayChat(req, res, ctx) {
         //   ⚠️ 缓存按模型分开存，换模型 = 整块冷前缀重写，前端选单上标了价。
         model: _pickModel(req.body && req.body.model),
         effort: _pickEffort(req.body && req.body.effort),
+        // 08-29：搜索开关跟模型走同一条路。它决定网关给 CLI 的 --allowedTools，
+        //   跟模型一样是 spawn 时定死的，所以改了也要重开常驻进程。
+        web_search: _webSearchOn(),
         is_new_session: isNewSession, dev_mode: !!getLimits()?.dev_mode }),
     });
     if (!gwResp.ok || !gwResp.body) {
@@ -10427,6 +10449,11 @@ function _getSettingNum(k) {
 function _getSetting(k) {
   var r = db.prepare('SELECT value FROM settings WHERE key = ?').get(k);
   return r ? r.value : null;
+}
+// 网页搜索开关。**默认开** —— 这行以前不存在时他本来就能搜，
+// 读不到值（老库还没插过那行）不能当成「关」。只有明确写了 '0' 才是关。
+function _webSearchOn() {
+  return _getSetting('web_search') !== '0';
 }
 
 // 素材：对话摘录（每条截 80 字）+ 同期他自己写的 feel/memory

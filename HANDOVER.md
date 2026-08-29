@@ -4,6 +4,90 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## ✅ 08-29 晚 · 上面那条做完了 + 网页搜索露成开关
+
+**做完的是下面那条**（原文原样留着，别删 —— 诊断过程比结论有用）。三件事：
+
+**1. 网关真的读 model / effort 了**（`/opt/cc-gateway/server.js`）
+- 顶上加 `MODEL_WHITELIST` / `EFFORT_WHITELIST` + `pickModel()` / `pickEffort()`。
+  原来那句注释「网关再校一遍白名单」是**空头支票** —— 那个白名单压根不存在，
+  `/chat` 从来没解构过 `req.body.model`，spawn 时用的一直是文件顶上的 `MODEL` 常量。
+- `--effort` **CLI 确实有这个参数**（`claude --help` 查过：low/medium/high/xhigh/max），
+  但网关整个文件里以前一次都没出现过 —— effort 比 model 还惨，前端根本没连上过。
+  白名单只放 low/medium/high，跟前端 `_EFFORT_OPTS` 对齐。
+
+**2. 按她拍板的方案 2 换进程**（`getProc()` 顶上）
+- 进程对象上记 `model` / `effort` / `webSearch`，下一轮比对，不一样就 `dropProc` 重开。
+- 位置在 MCP mtime 那条判断**前面**，串成 `if / else if / else return exist`。
+- `dropProc` 之后往下走的是 `--resume sessionId`（`isNew` 仍是 false）—— **历史不丢**，
+  换的只是那个进程。
+- 降级路径 `runOnceTurn()` 也一起改了。不改的话「常驻挂了」那几句会偷偷换回默认模型，
+  而且是静默的，最难查。
+
+**3. 网页搜索从写死变成开关**（她要的）
+- 网关：`ALLOWED`/`DENIED` 拆成 `BASE_ALLOWED`/`BASE_DENIED` + `toolLists(webSearch)`。
+  ⚠️ **关掉不能只是「不放进 allowedTools」** —— 那只是取消免批准，工具本身还在，他照样调得动。
+  真要关必须显式塞进 `disallowedTools`。
+- 后端：`settings.web_search`（`INSERT OR IGNORE` 默认 `'1'`）、`_webSearchOn()`
+  （**只有明确 `'0'` 才是关** —— 老库没有这行时他本来就能搜，读不到不能当成关）、
+  `GET/POST /api/settings/websearch`（都过 `auth`，铁律 6），随每轮请求传 `web_search`。
+- 前端：开关放在**模型面板里**（`_renderMainPage` 末尾），不是语音配置那一坨。
+  理由：它跟模型 / Effort 是同一类东西 —— 都决定他下一句怎么想，也都要重开一次进程才生效。
+  复用 Extended 那套 `.extended-row` + `.toggle` 样式，没新增 CSS。
+
+**验到哪一步**（照实说）：
+- ✅ `node --check` 两个文件、两个 pm2 进程干净重启、内联 script 2 块 0 错
+- ✅ `/api/settings/websearch` 往返：默认 true → 关 → 复查 false → 开回来 → true，
+  **最终留在「开」**，跟改之前的行为一致
+- ✅ 无 token 打该接口回 401
+- ❌ **端到端切模型没验** —— 那要真发一句话过网关，一次冷启动（$0.26~$0.86）。
+  没擅自花她的钱。**她在界面上切一次就是验证**：
+  `pm2 logs cc-gateway --lines 20 --nostream` 里应该出现
+  `[常驻] 放掉进程 …（设置变了（… → …），重开）`。
+  出现了就是通的；**不再需要**原来那条「切完还得 pm2 restart cc-gateway」的土办法。
+
+备份：`/opt/cc-gateway/server.js.bak.pre-modelswitch.20260829-072602`、
+`backups/backend.js.bak.pre-websearch-toggle.*`、`backups/index.html.bak.pre-websearch-toggle.*`
+
+---
+
+## 🎛 08-29 · 主线切模型不生效 —— 常驻进程吃不到新 model（**已按方案 2 做完，见上一条**）
+
+**她说**：「为什么我主线切模型没成功」。
+
+**Chat-C 这半边是通的，别在这儿找**：
+- 前端把 `state.model` 塞进请求体 —— `static/index.html:4269`
+- 后端 `_pickModel()` 过白名单后原样传给网关 —— `backend.js:7335`（08-26 修过一次，
+  那次修的正是「选单是装饰、根本没往下传」）
+- 白名单三处一致：`CLI_MODELS`（`backend.js:7270`）、`/api/models`（`:9536`）、网关 `MODEL_WHITELIST`
+
+**根子在网关的常驻进程**（`/opt/cc-gateway/server.js`，工作台读不了也改不了）。
+`pm2 logs cc-gateway` 里对得上的两条：
+
+```
+cc-gateway on 127.0.0.1:9876 (model=claude-sonnet-4-6)
+[常驻] 拉起新进程 session=591c6f68（在册 2 个）
+[延迟·常驻] 递进去→第一个字 …  session=591c6f68   ← 之后一直是同一个 session
+```
+
+`--model` 是**拉进程那一刻**定死的命令行参数。进程常驻不退，之后每轮只往 stdin 递一句话，
+`model` 字段递进了一个不看这个字段的进程 —— 所以选单看着切了、实际一直是拉起时那个。
+
+**她选的方案（2）**：发现本轮 model 跟该常驻进程拉起时的不一样，就**把旧进程放掉、按新模型重拉**。
+- 代价：切模型那一轮重付冷前缀 —— 本来就该付，`/api/models` 的 `cold` 字段就是标这个的
+  （Sonnet 4.6 $0.26 / Opus 4.6 $0.43 / Fable 5 $0.86）。
+- 没选方案 1（按 `session_id + model` 分池）的原因：这台实际内存只有 1G（面板报 2048 是假的），
+  每个模型各占一份常驻进程吃不消。
+- 记得把进程记录里存一下它是用哪个 model 拉起来的，不然没法比。`effort` 同理，
+  如果它也是命令行参数、也是拉起时定死的，一起处理。
+
+**她可以这样验**：界面上切成 Opus 4.6 → `pm2 restart cc-gateway` → 再发一句。
+重启逼它重拉进程，新进程才吃到新模型 —— 改好之后就不该需要这一步了。
+
+⚠️ 改完在 `/opt/cc-gateway` 那个目录里单独 `git commit && git push`（它是 `zxz` 的 clone，两个仓库各推各的）。
+
+---
+
 ## 🪟 08-29 · 换窗改看 token 不看轮数 + 给 Read 加字符预算闸门
 
 **起因**：她说「前端现在都 0.36 一条，以前是 0.13–0.19」。

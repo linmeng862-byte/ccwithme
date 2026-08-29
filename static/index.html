@@ -2770,6 +2770,15 @@ let _modelPage='main';
 // 多写一个（比如原来的 Max）后端认不出会静默降成 medium —— 界面显示 Max、实际是 medium，看不出来。
 const _EFFORT_OPTS=[{key:'low',label:'Low',desc:'简单问题，快'},{key:'medium',label:'Medium',desc:'日常，平衡',def:true},{key:'high',label:'High',desc:'要他想深一点。慢，也更费'}];
 const _BACK_SVG='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+// 让不让他自己上网查东西。08-24 起后端一直是开的，只是界面上看不见 —— 08-29 露出来。
+// 默认 true：读不到（老浏览器缓存、接口还没答）不能当成关，那样会让他突然不会搜了。
+let _webSearch=true;
+async function loadWebSearch(){try{const r=await api('/api/settings/websearch');_webSearch=(await r.json()).web_search!==false}catch{_webSearch=true}renderModelSheet()}
+async function _setWebSearch(on){_webSearch=on;renderModelSheet();
+  try{await api('/api/settings/websearch',{method:'POST',body:JSON.stringify({web_search:on})});
+    // 跟切模型一样：--allowedTools 是 spawn 时定死的，改了下一句要重开常驻进程。
+    toast(on?'他现在可以上网查东西了（下一句会重开一次）':'已经关掉网页搜索（下一句会重开一次）')}
+  catch{_webSearch=!on;renderModelSheet();toast('没存上，再试一次')}}
 const _NAV_CHEVRON='<span class="model-nav-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></span>';
 function _selectModel(id){state.model=id;localStorage.setItem('chat_model',id);renderModelSheet();updateModelHeader()}
 function renderModelSheet(){const root=$('modelContent');root.innerHTML='';const backBtn=$('closeModel');const titleEl=$('modelSheet').querySelector('.sheet-title');
@@ -2782,7 +2791,13 @@ function _renderMainPage(root){
   root.append(g);
   const m=currentModel();
   if(m&&m.thinking!=='none'){const eg=document.createElement('div');eg.className='model-group';const r=document.createElement('button');r.className='model-group-item';r.innerHTML=`<span class="model-name" style="font-size:16px;font-family:var(--font-sans)">Effort</span><span class="model-nav-right">${modelSettingText()} ${_NAV_CHEVRON}</span>`;r.onclick=()=>{_modelPage='effort';renderModelSheet()};eg.append(r);root.append(eg)}
-  if(state.models.some(x=>!x.primary)){const mg=document.createElement('div');mg.className='model-group';const r=document.createElement('button');r.className='model-group-item';r.innerHTML=`<span class="model-name" style="font-size:16px;font-family:var(--font-sans)">More models</span><span class="model-nav-right">${_NAV_CHEVRON}</span>`;r.onclick=()=>{_modelPage='more';renderModelSheet()};mg.append(r);root.append(mg)}}
+  if(state.models.some(x=>!x.primary)){const mg=document.createElement('div');mg.className='model-group';const r=document.createElement('button');r.className='model-group-item';r.innerHTML=`<span class="model-name" style="font-size:16px;font-family:var(--font-sans)">More models</span><span class="model-nav-right">${_NAV_CHEVRON}</span>`;r.onclick=()=>{_modelPage='more';renderModelSheet()};mg.append(r);root.append(mg)}
+  // 网页搜索开关。放这儿是因为它跟模型 / Effort 是同一类东西：都影响他下一句怎么想，
+  // 也都要重开一次常驻进程才生效。用 Effort 页里 Extended 那套现成样式。
+  {const wg=document.createElement('div');wg.className='model-group';const row=document.createElement('div');row.className='extended-row';
+   row.innerHTML=`<span class="extended-info"><span class="extended-label">联网搜索</span><span class="extended-desc">让他自己上网查东西</span></span>`;
+   const tgl=document.createElement('button');tgl.className='toggle'+(_webSearch?' on':'');tgl.onclick=()=>_setWebSearch(!_webSearch);
+   row.append(tgl);wg.append(row);root.append(wg)}}
 function _renderEffortPage(root){const m=currentModel(),s=modelSetting(m);
   if(m?.thinking==='adaptive'||m?.thinking==='extended'){const g=document.createElement('div');g.className='model-group';
     _EFFORT_OPTS.forEach(o=>{const b=document.createElement('button');b.className='model-group-item';const active=(s.effort||'medium')===o.key;b.innerHTML=`<span class="model-info"><span class="effort-option-name">${o.label}${o.def?'<span class="effort-option-badge">Default</span>':''}</span><span class="effort-option-desc">${o.desc}</span></span>${active?'<span class="model-check"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>':''}`;b.onclick=()=>{const c=state.settings[m.id]||{};state.settings[m.id]={...c,effort:o.key};saveSettings();renderModelSheet();updateModelHeader()};g.append(b)});
@@ -4982,7 +4997,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSessionContextM
 addEventListener('resize',closeSessionContextMenu);
 addEventListener('orientationchange',closeSessionContextMenu);
 addEventListener('pagehide',closeSessionContextMenu);
-showChat();resetEmpty().catch(()=>{});loadModels();updateSessionHeader();updateSendButton();
+showChat();resetEmpty().catch(()=>{});loadModels();loadWebSearch().catch(()=>{});updateSessionHeader();updateSendButton();
 $('modelCapsule').onclick=function(){$('topbarModelButton').click()};
 // 头像上传
 // Clawd 限制在输入框上方走动
