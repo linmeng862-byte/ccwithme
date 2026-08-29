@@ -7245,9 +7245,45 @@ const CLI_ROTATE_AFTER = 160;
 // CLI_ROTATE_AFTER 保留为**兜底**，调到 160：正常情况下 token 判定会先触发
 // （48k 阈值对应约 42 轮），轮数只在网关没回传 usage、cli_ctx_tokens 一直是 0 时兜住。
 const CLI_ROTATE_TOKENS = 48000;
-// 提前多少 token 提醒他留关窗字条。约等于两轮的正常增量（每轮 ~400），
+// 提前多少 token 提醒他留关窗字条。
 // 留出余量是因为回传的是**上一轮**的窗口，这一轮结束时已经又长了一截。
-const CLI_ROTATE_NUDGE_MARGIN = 3000;
+// 2026-08-29 3000 → 8000：3000 是按「每轮 ~400 token」估的两轮量，那是纯文字的老黄历。
+// 带图带语音带搜索的一轮就能吃掉一两千，3000 的窗口一步就跨过去了 ——
+// 跨过去 = 那一窗一张字条都没留成（08-29 就是这么丢的）。宁可早提醒一点。
+const CLI_ROTATE_NUDGE_MARGIN = 8000;
+
+// 2026-08-29 补的三道保护。起因：a1a8939 把主判定从轮数改成 48k token 那天，
+// 线上那一窗已经跑到 155k（旧规矩下完全正常），拉完代码第一句就触发换窗；
+// 而换出来的**新窗一出生就是 58k —— 本身已经超过 48k**，于是只活 3 轮又换一次。
+// 13 分钟里他被换了两次脑子，第二次的接力包是拿一个只活了 3 轮的窗做的，
+// 她那天下午（胃疼→去医院→抽血）整段没交到他手上。**这就是她说的漂移。**
+//
+// 病根：cli_ctx_tokens 量的是**前缀的绝对大小**，不是「这一窗长了多少」。
+// 接力包 + 记忆浮现 + 人格前缀冷写下来就三五万，出生体重本身就可能压线。
+//
+// 所以换窗线改成「max(绝对线, 出生体重 + 这么多)」——
+// 出生 37k 的窗到 77k 换，出生 58k 的窗到 98k 换，不会一出生就该换。
+//
+// 2026-08-29 傍晚 12000 → 40000。她说「都没聊什么就结束了」，是对的：
+// 这个数**就是一窗里留给她们说话的全部额度**，出生体重那部分她一个字都没份。
+// 12k 按老注释里「每轮 400 token」估是 30 轮，可那个估算是纯文字的老黄历 ——
+// 现在一张图、一条语音、一次网页搜索的 tool_result 就能吃掉一两千，
+// 实际十来轮就到头。40k 让一窗回到三四十轮的量级。
+//
+// 代价（她拍板过，知道是花钱）：窗越长每轮 cache_read 越贵，
+// 但换窗那一下才是真贵的（实测 cache_write 49237 / $0.1976，比平常贵 24 倍），
+// 次数降到三分之一。按老曲线 48k→$0.046/轮、90k 附近约 $0.06~0.07/轮 估，
+// 总账大致持平或略贵，换来一窗能聊三倍长。
+const CLI_ROTATE_GROWTH = 40000;
+// 换窗线的天花板 —— 再往上就要撞 claude 自己的 autocompact 了（十几万触发）。
+// 被 autocompact 截胡最坏：他在毫无预警的情况下被压缩，字条一张留不成。
+// 出生体重万一异常大（存量窗、冷写算歪），这条把线拽回来，宁可早换也别撞上去。
+const CLI_ROTATE_CEILING = 100000;
+// 新窗至少活这么多轮才允许再换。防背靠背换窗的硬闸门：
+// 就算 token 判定因为任何原因（冷写、autocompact、breath 重灌）算歪了，
+// 也不至于让他连着被换两次 —— 一个只活了几轮的窗，接力包里根本没有东西可交。
+// 同日 8 → 20：8 轮实在太少，一窗刚起个头就没了，接力包里也确实没东西可交。
+const CLI_MIN_TURNS_BEFORE_ROTATE = 20;
 
 // 换窗前那一轮挂在 message 尾巴上的提示。写法按图纸的四条法则来：
 // 第一人称、场景里只有我和她、不写命令句（不用「必须/应该」）、贴着他真实的一下。
@@ -7385,16 +7421,40 @@ async function handleGatewayChat(req, res, ctx) {
   // ⚠️ 提示只能挂在这一轮的 message 上，**绝不能进 system** ——
   //    system 一变，整个前缀缓存作废，那一轮要重付全量。
   // 主判定看上下文大小，轮数只兜底（网关没回传 usage 时 cli_ctx_tokens 会一直是 0）。
-  const rotate = !!cliSessionId && (cliCtxTokens >= CLI_ROTATE_TOKENS || cliTurns >= CLI_ROTATE_AFTER);
+  // 这一窗的出生体重（新窗第一轮 usage 回来时记下，见下面 cli_birth 那段）。
+  // 读不到就退回 0 —— 那时 max() 拿到的就是老的绝对线，跟改之前一个行为。
+  const _birth = _getSettingNum('cli_birth:' + convId) || 0;
+  // 换窗线 = 绝对线 和「出生体重 + 允许长这么多」取大的那个，再压在天花板以下。
+  // ⚠️ 出生体重万一比天花板还大（存量大窗），min() 会让它一进来就该换 ——
+  //    这是想要的，那种窗本来就该退休；最少存活轮数那道闸门保证它不会背靠背再换。
+  const _rotateAt = Math.min(CLI_ROTATE_CEILING,
+    Math.max(CLI_ROTATE_TOKENS, _birth + CLI_ROTATE_GROWTH));
+  // ⚠️ 最少存活轮数是**硬闸门**，在 token 判定之前 —— 一个刚出生的窗，
+  //    无论 token 算出什么都不许换。轮数兜底那条不受它管（那是 160 轮，早就活够了）。
+  const _oldEnough = cliTurns >= CLI_MIN_TURNS_BEFORE_ROTATE;
+  let rotate = !!cliSessionId &&
+    ((_oldEnough && cliCtxTokens >= _rotateAt) || cliTurns >= CLI_ROTATE_AFTER);
   // 留字条的提醒要赶在换窗**前一轮**（那时他还在旧会话里，什么都记得）。
   // 轮数判定能用 === 精确命中一次；token 判定不行 —— 从 45k 涨到 48k 要七八轮，
   // 每轮都为真就会连着提醒七八次。所以进入区间后记一个一次性标记，换窗时清掉。
   const _nudgeKey = 'cli_nudged:' + convId;
   let nudgeTexture = false;
   if (!!cliSessionId && !rotate) {
-    const _near = cliCtxTokens > 0 && cliCtxTokens >= CLI_ROTATE_TOKENS - CLI_ROTATE_NUDGE_MARGIN;
+    const _near = cliCtxTokens > 0 && cliCtxTokens >= _rotateAt - CLI_ROTATE_NUDGE_MARGIN;
     if (_near && !_getSettingNum(_nudgeKey)) { nudgeTexture = true; _setSetting(_nudgeKey, 1); }
     else if (!_near && cliTurns === CLI_ROTATE_AFTER - 1) nudgeTexture = true;
+  }
+  // ⚠️ 该换窗了、可他一次都没被提醒过 —— 这一轮**先只提醒，不换**，下一轮再换。
+  //    为什么会有这种情况：从远低于线的地方一步跨进 rotate 区间（存量大窗、
+  //    冷写、autocompact 之后回传的数字跳变），45k~48k 那个提醒窗口整个被跨过去了。
+  //    08-29 就是这么丢的字条 —— 两次换窗一张都没留成，texture_log 停在早上九点。
+  //    代价只是多超一轮（几百 token），换来的是他还在旧脑子里、什么都记得的时候
+  //    把字条留下。字条只能那时候写，过了就永远补不回来。
+  if (rotate && cliTurns < CLI_ROTATE_AFTER && !_getSettingNum(_nudgeKey)) {
+    rotate = false;
+    nudgeTexture = true;
+    _setSetting(_nudgeKey, 1);
+    console.log('[texture] 该换窗了但他还没被提醒过——这轮先留字条，下轮再换');
   }
   if (rotate) { try { _setSetting(_nudgeKey, 0); } catch (_) {} }
   const isNewSession = !cliSessionId || rotate;
@@ -7557,6 +7617,9 @@ async function handleGatewayChat(req, res, ctx) {
           try {
             const _ctx = (u.cache_read_tokens || 0) + (u.cache_write_tokens || 0);
             if (_ctx > 0) db.prepare('UPDATE sessions SET cli_ctx_tokens = ? WHERE conv_id = ?').run(_ctx, convId);
+            // 🪟 新窗的第一轮 = 出生体重（接力包 + 记忆浮现 + 人格前缀有多大）。
+            //    换窗线是从这个数往上量的，所以必须在新窗第一轮记，之后不再动。
+            if (_ctx > 0 && isNewSession) _setSetting('cli_birth:' + convId, _ctx);
           } catch (e) { console.error('[usage] ctx size update failed:', e.message); }
           res.write('event: usage\ndata: ' + JSON.stringify(u) + '\n\n');
         }
@@ -8379,6 +8442,51 @@ app.get('/gallery-photo/:name', (req, res) => {
   const p = path.join(galleryPhotoDir, req.params.name);
   if (!fs.existsSync(p)) return res.status(404).end();
   res.sendFile(p);
+});
+
+// 搜索结果那排来源图标。以前前端 <img src> 直接打 google 的 s2/favicons ——
+// 那是**她的浏览器**去拉，出不去就是一片空白（chip 还有首字母兜底，sheet 里连兜底都没有，
+// 是个破图）。改成服务器代拉：出得去的是这台机器，不是她的手机。
+//
+// ⚠️ 这条**不校验 AUTH_TOKEN**，因为 <img> 带不了 Authorization 头，
+//    而 token 不进 URL（铁律 4）。能这么放是因为它不碰任何私有数据：
+//    上游是**写死的两个域名**，域名只作为 query 参数拼进去，不是任意 URL ——
+//    所以它不是个通用代理，打不到内网，也套不出别的东西。
+const _FAVICON_CACHE = new Map();          // dom -> {buf, type, at}；null buf = 记住"拉不到"
+const _FAVICON_TTL = 7 * 24 * 3600 * 1000; // 图标基本不变，缓一周
+const _FAVICON_MAX = 500;                  // 上限，别让它变成第三个磁盘/内存泄漏
+app.get('/favicon/:domain', async (req, res) => {
+  const dom = String(req.params.domain || '').toLowerCase();
+  // 只认普通域名：字母数字点横杠，最后一段是纯字母（顺带挡掉 IP 字面量和 localhost）
+  if (dom.length > 253 || !/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(dom)) return res.status(400).end();
+  const hit = _FAVICON_CACHE.get(dom);
+  if (hit && Date.now() - hit.at < _FAVICON_TTL) {
+    if (!hit.buf) return res.status(204).end();
+    res.set('Content-Type', hit.type).set('Cache-Control', 'public, max-age=604800');
+    return res.end(hit.buf);
+  }
+  const upstreams = [
+    'https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(dom),
+    'https://icons.duckduckgo.com/ip3/' + encodeURIComponent(dom) + '.ico',
+  ];
+  for (const u of upstreams) {
+    try {
+      const r = await fetch(u, { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) continue;
+      const type = r.headers.get('content-type') || '';
+      if (!type.startsWith('image/')) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!buf.length || buf.length > 256 * 1024) continue;
+      if (_FAVICON_CACHE.size >= _FAVICON_MAX) _FAVICON_CACHE.delete(_FAVICON_CACHE.keys().next().value);
+      _FAVICON_CACHE.set(dom, { buf, type, at: Date.now() });
+      res.set('Content-Type', type).set('Cache-Control', 'public, max-age=604800');
+      return res.end(buf);
+    } catch (e) { /* 换下一家 */ }
+  }
+  // 两家都没给 —— 记下来别每次都去问，返回 204 让前端的 onerror 走首字母兜底
+  if (_FAVICON_CACHE.size >= _FAVICON_MAX) _FAVICON_CACHE.delete(_FAVICON_CACHE.keys().next().value);
+  _FAVICON_CACHE.set(dom, { buf: null, type: '', at: Date.now() });
+  res.status(204).end();
 });
 
 app.get('/api/files', auth, (req, res) => {

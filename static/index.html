@@ -4099,7 +4099,7 @@ function _toolIconSvg(name,input){if(_isMemoryOp(name,input))return icon('histor
 function _toolActionDescription(name,input){if(_isMemoryOp(name,input)){const w=['Write','Edit','Bash'];return w.includes(name)?'Saving memory\u2026':'Recalling memory\u2026'}const map={WebSearch:'Searching the web\u2026',WebFetch:'Fetching web page\u2026',Read:'Reading file\u2026',Grep:'Searching for pattern\u2026',Glob:'Finding files\u2026',Bash:'Running command\u2026',Write:'Writing file\u2026',Edit:'Editing file\u2026',TodoWrite:'Updating todo list\u2026'};return map[name]||(name?name+'\u2026':'Working\u2026')}
 function _maybeFetchToolCaption(row,d){const phases=_getPhases(row);if(phases.some(p=>p.type==='thinking'))return;const phase=phases.find(p=>p.toolUseId===d.tool_use_id);if(!phase)return;api('/api/tool-caption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_name:d.name||phase.toolName||'tool',tool_input:phase.toolInput,tool_output:typeof d.content==='string'?d.content.slice(0,4000):JSON.stringify(d.content||'').slice(0,4000)})}).then(r=>r&&r.ok?r.json():null).then(j=>{if(!j||!j.caption)return;const ps=_getPhases(row);const p=ps.find(x=>x.toolUseId===d.tool_use_id);if(!p)return;p.caption=j.caption;_setPhases(row,ps);_renderTraceRowActive(row)}).catch(()=>{})}
 function _maybeFetchThinkingSummary(row){const phases=_getPhases(row);const tp=phases.find(p=>p.type==='thinking'&&p.processText);if(!tp||tp._summaryFetched)return;tp._summaryFetched=true;_setPhases(row,phases);api('/api/thinking-summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thinking:tp.processText.slice(0,8000)})}).then(r=>r&&r.ok?r.json():null).then(j=>{if(!j||!j.summary)return;const ps=_getPhases(row);const p=ps.find(x=>x.id===tp.id);if(!p)return;p.summary=j.summary;p.title=j.summary;_setPhases(row,ps);_renderTraceRowActive(row)}).catch(()=>{})}
-function _renderTraceRowActive(row){const phases=_getPhases(row);if(!phases.length)return;let active=phases[phases.length-1];const icon=row.querySelector('.trace-row-icon');const text=row.querySelector('.trace-row-text');if(active.type==='tool'&&active.status!=='running'){const lastThinking=[...phases].reverse().find(p=>p.type==='thinking');if(lastThinking){active=lastThinking}}row.dataset.type=active.type||'tool';row.dataset.status=active.status||'';if(active.type==='thinking'){icon.innerHTML=_CLOCK_SVG;text.textContent=active.title||active.summary||'Thinking'}else{icon.innerHTML=_toolIconSvg(active.toolName,active.toolInput);text.textContent=active.caption||_toolActionDescription(active.toolName,active.toolInput)}}
+function _renderTraceRowActive(row){const phases=_getPhases(row);if(!phases.length)return;let active=phases[phases.length-1];const icon=row.querySelector('.trace-row-icon');const text=row.querySelector('.trace-row-text');if(active.type==='tool'&&active.status!=='running'){const lastThinking=[...phases].reverse().find(p=>p.type==='thinking');if(lastThinking){active=lastThinking}}row.dataset.type=active.type||'tool';row.dataset.status=active.status||'';let _t;if(active.type==='thinking'){icon.innerHTML=_CLOCK_SVG;_t=active.title||active.summary||'Thinking'}else{icon.innerHTML=_toolIconSvg(active.toolName,active.toolInput);_t=active.caption||_toolActionDescription(active.toolName,active.toolInput)}text.textContent=_t;laSetDetail(_t);}
 function openTraceSheet(row){const phases=_getPhases(row);if(!phases.length)return;if(phases.length===1&&phases[0].type==='thinking'){_showThoughtProcess(phases[0]);return}if(phases.length===1&&phases[0].type==='tool'){_showToolDetail(phases[0]);return}_showSummary(phases)}
 function _showThoughtProcess(phase){const s=$('thoughtSheet');const t=s.querySelector('.sheet-title');if(t)t.textContent='Thought process';const c=$('thoughtContent');c.style.whiteSpace='';c.textContent=phase.processText||phase.summary||'';if(phase.status==='running')s.dataset.live='1';else delete s.dataset.live;sheet('thought',true)}
 function _showToolDetail(phase){const t=$('thoughtSheet').querySelector('.sheet-title');if(t)t.textContent=phase.toolName||'Tool';const c=$('thoughtContent');c.innerHTML='';const lab='font-weight:600;font-size:13px;opacity:.6;margin:0 0 6px';const pre='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;background:var(--bg-sunken);padding:8px 10px;border-radius:8px;color:var(--text-primary);margin:0';const inT=document.createElement('div');inT.style.cssText=lab;inT.textContent='Input';const inB=document.createElement('pre');inB.style.cssText=pre+';margin-bottom:14px;max-height:280px;overflow:auto';try{inB.textContent=typeof phase.toolInput==='string'?phase.toolInput:JSON.stringify(phase.toolInput,null,2)}catch(e){inB.textContent=String(phase.toolInput||'')}const outT=document.createElement('div');outT.style.cssText=lab;outT.textContent='Output';const outB=document.createElement('pre');outB.style.cssText=pre+';max-height:400px;overflow:auto';outB.textContent=phase.toolOutput||'(\u65e0\u8f93\u51fa)';c.append(inT,inB,outT,outB);sheet('thought',true);$('thoughtSheet').classList.add('expanded');$('thoughtSheet').style.transform=''}
@@ -4120,6 +4120,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
   function setPhase(p){
     if(row.dataset.phase===p)return;
     row.dataset.phase=p;
+    laSetPose(p);   // 灵动岛那只螃蟹跟页面这只听同一个状态机
     if(p==='thinking'){
       setClaudeLogoMode(trailLogo,'writing',undefined,163);
     }else if(p==='streaming'){
@@ -5493,7 +5494,9 @@ function initLiveActivity(){
   try{
     if(window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.LiveActivity){
       Capacitor.Plugins.LiveActivity.laIsSupported().then(function(r){
-        _laSupported=r.supported===true;
+        // 系统设置里关掉「实时活动」时 supported 仍是 true，但 request 必失败。
+        // 两个都要真，不然每次发消息都白调一遍插件。
+        _laSupported=r.supported===true&&r.liveActivitiesEnabled!==false;
         console.log('LiveActivity supported:',_laSupported);
       }).catch(function(){_laSupported=false});
     }
@@ -5512,11 +5515,47 @@ function laEndTimer(cmdId){
   if(!_laSupported)return;clearLaUpdateInterval();
   try{Capacitor.Plugins.LiveActivity.laEndTimer({id:cmdId}).catch(function(){})}catch(e){}
 }
+// 灵动岛上的螃蟹。姿势和细节是两个不同的 owner 在推：
+//   姿势 ← setPhase()（submitted/thinking/streaming/complete 那个状态机，页面上那只
+//          螃蟹也是听它的）—— 名字要和 ClawdPose 的 rawValue 对上，对不上 widget 退回 idle
+//   细节 ← _renderTraceRowActive()（"他现在在调哪个工具"），它只知道这一件事
+// 别再让某一个函数同时管两样：页面那只和岛上那只一旦各判各的，就会当着她的面打架。
+var _CLAWD_ISLAND_POSE={submitted:'idle',thinking:'thinking',streaming:'streaming',complete:'happy'};
+var _laActive=false,_laPose='idle',_laDetail='',_laDetailRaw='',_laTimer=null;
 function laStartThinking(){
   if(!_laSupported)return;
-  try{Capacitor.Plugins.LiveActivity.laStartThinking({}).catch(function(){})}catch(e){}
+  _laActive=true;_laPose='idle';_laDetail='';
+  try{Capacitor.Plugins.LiveActivity.laStartThinking({pose:'idle',detail:''}).catch(function(){})}catch(e){}
 }
+// ActivityKit 对更新频率有限流，而 trace 每来一个 delta 就重绘一次 ——
+// 直接透传会被系统丢帧。所以变了才推，推也压到 900ms 一次（尾沿）。
+function _laPush(){
+  if(_laTimer)return;
+  _laTimer=setTimeout(function(){
+    _laTimer=null;
+    if(!_laActive)return;
+    try{Capacitor.Plugins.LiveActivity.laUpdateThinking({pose:_laPose,detail:_laDetail}).catch(function(){})}catch(e){}
+  },900);
+}
+// 由 setPhase 调。phase 认不出来就别动姿势，保持上一个 —— 总比闪回 idle 强。
+function laSetPose(phase){
+  if(!_laSupported||!_laActive)return;
+  var pose=_CLAWD_ISLAND_POSE[phase];
+  if(!pose||pose===_laPose)return;
+  _laPose=pose;_laPush();
+}
+// 由 _renderTraceRowActive 调。传全串进来，先比全串再截断 ——
+// 绝大多数 delta 这行字根本没变，比一下就短路，一次分配都不用。
+function laSetDetail(text){
+  if(!_laSupported||!_laActive)return;
+  text=text||'';
+  if(text===_laDetailRaw)return;
+  _laDetailRaw=text;_laDetail=text.slice(0,60);_laPush();
+}
+var _laDetailRaw='';
 function laStopThinking(){
+  if(_laTimer){clearTimeout(_laTimer);_laTimer=null}
+  _laActive=false;_laPose='idle';_laDetail='';_laDetailRaw='';
   if(!_laSupported)return;
   try{Capacitor.Plugins.LiveActivity.laStopThinking({}).catch(function(){})}catch(e){}
 }

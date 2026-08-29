@@ -80,38 +80,49 @@ final class LiveActivityManager {
     // MARK: - Thinking
 
     @available(iOS 16.2, *)
-    static func startThinking() {
-        guard thinkingActivity == nil else { return }
-        let attrs = ThinkingLiveActivityAttributes()
-        let state = ThinkingLiveActivityAttributes.ContentState(
-            isActive: true,
-            label: "小克正在回复…"
-        )
+    static func startThinking(pose: ClawdPose = .idle, detail: String = "") {
+        // 已经有一个在跑就只更新，别重复 request —— 同类型活动叠起来
+        // 系统只显示最新那个，旧的会滞留在锁屏上不消失。
+        guard thinkingActivity == nil else {
+            updateThinking(pose: pose, detail: detail)
+            return
+        }
         do {
-            let activity = try Activity<ThinkingLiveActivityAttributes>.request(
-                attributes: attrs,
-                contentState: state,
+            thinkingActivity = try Activity<ThinkingLiveActivityAttributes>.request(
+                attributes: ThinkingLiveActivityAttributes(),
+                contentState: .init(pose: pose, detail: detail),
                 pushType: nil
             )
-            thinkingActivity = activity
         } catch {
             print("[LiveActivity] Failed to start thinking: \(error)")
         }
     }
 
+    /// 阶段变化时推一帧。ActivityKit 对更新频率有限流，
+    /// 所以调用方要自己去抖（见 index.html 的 _laPush）。
+    @available(iOS 16.2, *)
+    static func updateThinking(pose: ClawdPose, detail: String) {
+        guard let activity = thinkingActivity else { return }
+        Task { await activity.update(using: .init(pose: pose, detail: detail)) }
+    }
+
+    /// 回完话先让螃蟹笑一下再收掉 —— 直接 .immediate 的话，
+    /// 岛上最后一帧停在"在回复…"，看着像卡住了。
     @available(iOS 16.2, *)
     static func stopThinking() {
         guard let activity = thinkingActivity else { return }
-        let finalState = activity.contentState
+        // 先摘引用：这中间她要是又发一条，startThinking 该新建一个，
+        // 不能让它撞上这个正在退场的活动。
+        thinkingActivity = nil
+
+        let farewell = ThinkingLiveActivityAttributes.ContentState(pose: .happy, detail: "")
         Task {
+            await activity.update(using: farewell)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
             await activity.end(
-                ActivityContent(
-                    state: finalState,
-                    staleDate: Date().addingTimeInterval(60)
-                ),
+                ActivityContent(state: farewell, staleDate: nil),
                 dismissalPolicy: .immediate
             )
         }
-        thinkingActivity = nil
     }
 }

@@ -62,12 +62,31 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
 
     // MARK: - Thinking
 
+    /// pose 是从 JS 过来的、唯一不受信的边界，就在这儿解一次。
+    /// 往里走的 Swift 签名一律用 ClawdPose，不再传字符串。
+    @available(iOS 16.2, *)
+    private func thinkingArgs(_ call: CAPPluginCall) -> (ClawdPose, String) {
+        let pose = call.getString("pose").flatMap(ClawdPose.init(rawValue:)) ?? .idle
+        return (pose, call.getString("detail") ?? "")
+    }
+
     @objc func laStartThinking(_ call: CAPPluginCall) {
         guard #available(iOS 16.2, *) else {
             call.resolve(["supported": false])
             return
         }
-        LiveActivityManager.startThinking()
+        let (pose, detail) = thinkingArgs(call)
+        LiveActivityManager.startThinking(pose: pose, detail: detail)
+        call.resolve(["success": true])
+    }
+
+    @objc func laUpdateThinking(_ call: CAPPluginCall) {
+        guard #available(iOS 16.2, *) else {
+            call.resolve(["supported": false])
+            return
+        }
+        let (pose, detail) = thinkingArgs(call)
+        LiveActivityManager.updateThinking(pose: pose, detail: detail)
         call.resolve(["success": true])
     }
 
