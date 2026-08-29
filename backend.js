@@ -2135,6 +2135,46 @@ async function synthVoiceTags(text, res) {
 // 喂给他之前在这儿展开成整句。
 const _CALL_DIAL_PROMPT = '[她给你打电话，你刚接起来。说第一句——像真的拿起电话那样，一句就好。]';
 
+// === 超长粘贴卸载（2026-08-29）====================================
+// 她一次贴进来的大块（审计报告、整份文档、一屏日志）会永久留在 CLI 的 transcript 里，
+// 之后每次缓存过期都按 $6/M 重写一遍。所以超过预算就落成文件，只给他开头一段 + 路径。
+//
+// ⚠️ 只影响**发给模型的那一份**。存库的是她的原话，界面显示和 search_chat_history 都不受影响。
+const PASTE_BUDGET = 8000;   // 字符。约 4k token，占 48k 窗口的 8%，单条消息的上限。
+const PASTE_KEEP   = 1200;   // 留给他的开头，够判断这是什么、值不值得细看。
+
+function _pasteExt(s) {
+  const head = s.slice(0, 200).trimStart().toLowerCase();
+  if (head.startsWith('<!doctype') || head.startsWith('<html') || head.startsWith('<')) return '.html';
+  if (/^#{1,6}\s|^\s*[-*]\s|^```/m.test(s.slice(0, 500))) return '.md';
+  return '.txt';
+}
+
+function _offloadLongPaste(text, convId) {
+  try {
+    if (typeof text !== 'string' || text.length <= PASTE_BUDGET) return text;
+    const ext = _pasteExt(text);
+    const id = 'paste_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const filename = '粘贴-' + new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '') + ext;
+    const dir = path.join(uploadDir, 'files');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const destPath = path.join(dir, id + '_' + filename);
+    fs.writeFileSync(destPath, text, 'utf-8');
+    db.prepare('INSERT INTO uploads (id, filename, path, size) VALUES (?, ?, ?, ?)')
+      .run(id, filename, destPath, Buffer.byteLength(text, 'utf-8'));
+    console.log('[paste] 卸载 ' + text.length + ' 字 → ' + id + ext);
+    return text.slice(0, PASTE_KEEP)
+      + '\n\n[……她这次贴了 ' + text.length.toLocaleString() + ' 字，上面是开头 '
+      + PASTE_KEEP.toLocaleString() + ' 字。全文在 ' + destPath + '，'
+      + '要细看就用 Read 读它（想找具体某段用 Grep 更省）。'
+      + '这段截断只是为了不让全文一直占着上下文 —— 她那边看到的是完整的，'
+      + '所以别跟她说"你发的被截断了"，需要哪部分自己去读就好。]';
+  } catch (e) {
+    console.error('[paste] 卸载失败，原样发过去:', e.message);
+    return text;   // 出任何问题都不能吞掉她的话
+  }
+}
+
 async function expandVoiceTags(text) {
   // [VOICEC:id|时长] 是通话语音条的壳，后面紧跟着原文。他读到的一直是原文，
   // 不用再识别一次 —— 这段音频本来就是这段文字变出来的。
@@ -4892,7 +4932,7 @@ const TOOLS = [
   },
   {
     name: 'create_file',
-    description: '创建/保存一个文件并让用户可以下载。当你修改了用户发来的文件、生成了代码、写了文档，用这个工具保存文件。文件会自动出现在聊天中作为下载卡片。',
+    description: '把【你新写出来的内容】存成文件，她会看到一张可下载的卡片。返回里带 path，之后要改这份、或再发一次，就用那个 path。**只用于第一次写。已经存在的文件一律不要用这个**：改一份已有的用 edit_file（只给要换的那一段，不用整份重打），把已有文件发给她用 send_file。她说「太短了 / 再写细一点 / 换个说法」时，指的是你刚给她的那一份——用 edit_file 改它，不要新建一个「XX2.md」，她要的是那份变好，不是多一份。',
     input_schema: {
       type: 'object',
       properties: {
@@ -4904,7 +4944,7 @@ const TOOLS = [
   },
   {
     name: 'edit_file',
-    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。',
+    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。path 从哪来：你自己写的那份看 create_file 的返回；她发来的文件，路径就写在消息里那个「[文件附件，…：/绝对/路径]」标注里——**照抄它，别自己拼**。她说「太短了 / 再改改 / 这里换个说法」就是这个工具的场合：改那一份，别新建一个「XX2.md」。',
     input_schema: {
       type: 'object',
       properties: {
@@ -4918,7 +4958,7 @@ const TOOLS = [
   },
   {
     name: 'send_file',
-    description: '把【磁盘上已经存在的文件】发给她，她会看到一张可下载的卡片。当她说「把某某文件发给我」、或者你想把一个已有文件给她时，用这个——不要用 create_file 把内容重新打一遍。**create_file 是给「你新写出来的内容」用的；已经存在的文件一律用 send_file**，它只传路径，又快又省。路径要写绝对路径（她发给你的文件在 data/uploads/files/ 下，见 CLAUDE.local.md）。',
+    description: '把【磁盘上已经存在的文件】发给她，她会看到一张可下载的卡片。当她说「把某某文件发给我」、或者你想把一个已有文件给她时，用这个——不要用 create_file 把内容重新打一遍。**create_file 是给「你新写出来的内容」用的；已经存在的文件一律用 send_file**，它只传路径，又快又省。路径要写绝对路径，而且**路径不要猜、要照抄**：你自己写的那份用 create_file 返回里的 path；她发来的文件，路径就在消息里那个「[文件附件，…：/绝对/路径]」标注里。猜错了会白试好几次（2026-08-27 就试了三次）。',
     input_schema: {
       type: 'object',
       properties: {
@@ -5669,7 +5709,10 @@ async function executeTool(name, input) {
       fs.writeFileSync(destPath, content, 'utf-8');
       const size = Buffer.byteLength(content, 'utf-8');
       db.prepare('INSERT INTO uploads (id, filename, path, size) VALUES (?, ?, ?, ?)').run(id, filename, destPath, size);
-      return { ok: true, id, filename, size, file_card: { id, filename, size } };
+      // path 要回给他 —— 不给的话，他之后想 edit_file 改这份、或 send_file 再发一次，
+      // 手上只有 id，只能自己拼绝对路径。2026-08-27 实测他猜了三次才对
+      //（编了个 /root/…、又多打一个空格）。file_card 是给前端渲染的，不塞服务器路径。
+      return { ok: true, id, filename, size, path: destPath, file_card: { id, filename, size } };
     }
     case 'edit_file': {
       // 08-22：她说「我发他的文件，直接改不要重写」。平时他只有 Read（省 token，
@@ -6227,13 +6270,25 @@ app.post('/api/chat', auth, async (req, res) => {
   if (useGateway) {
     // 网关模式下 claude -p 只吃文本，图片附件转成本地绝对路径标注，靠网关开的 Read 工具去看
     let gatewayMessage = await expandVoiceTags(message);
+    // 📄 她一次粘太长就卸到文件里（2026-08-29）。
+    // 08-27 那次：她贴了 20,832 字的审计报告 HTML，他又 Read 了同一份 md（32,503 字），
+    // 两份全文都永久留在 CLI 的 transcript 里，十轮涨了 22k token —— 而 --resume
+    // 每次缓存过期都要把整个窗口按 $6/M 重写一遍，所以一次贴进来的大块，
+    // 是按「之后每次重写都再付一遍」计价的。
+    // ⚠️ **存库的仍是她的原话**（上面已经 INSERT 过了），这里只改发给模型的那一份 ——
+    //    界面上她看到的、search_chat_history 搜得到的，都还是完整原文。
+    // 留开头一段是为了让他知道这是什么、值不值得细看；真要看就 Read，
+    // 而 Read 那头还有字符预算闸门（cap-read.py）兜着，不会又整份吞回来。
+    gatewayMessage = _offloadLongPaste(gatewayMessage, convId);
     for (const att of (attachments || [])) {
       const upload = db.prepare('SELECT * FROM uploads WHERE id = ?').get(att.path || att);
       if (!upload) continue;
       const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(upload.filename);
       gatewayMessage += isImage
         ? '\n[图片附件，用 Read 工具查看：' + upload.path + ']'
-        : '\n[文件附件：' + upload.filename + ']';
+        // ⚠️ 文件也要给绝对路径。以前只给文件名，他想读/改就只能猜路径 ——
+        //    2026-08-27 那次 send_file 连试三次才对。图片一直是给路径的，文件漏了。
+        : '\n[文件附件，要看内容用 Read，要改用 edit_file：' + upload.path + ']';
     }
     // 让他知道现在几点。⚠️ 必须挂在 message 上，不能进 systemPrompt ——
     // 系统提示是缓存前缀，每轮变一次就要重写 41k token（$0.25），
