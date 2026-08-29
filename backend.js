@@ -2201,6 +2201,13 @@ async function expandVoiceTags(text) {
   if (text && text.indexOf('[CALL_DIAL]') !== -1) {
     text = text.split('[CALL_DIAL]').join(_CALL_DIAL_PROMPT);
   }
+  // 兜底：万一 [CALL:...] 混进了递给他的文本，别让他读到一串裸标记。
+  // ⚠️ 真正让他知道「谁挂的」的是 _pendingCallNote（见 /api/call/log）——
+  //    库里那条他读不到，别指望这里。
+  if (text && text.indexOf('[CALL:') !== -1) {
+    text = text.replace(/\[CALL:(ended|rejected|missed_back|missed)\|([^\]|]*)(?:\|([a-z_]*))?\]/g,
+      (all, kind, dur, by) => _callNote(kind, dur, by));
+  }
   if (!text || text.indexOf('[VOICE:') === -1) return text;
   const re = /\[VOICE:([a-zA-Z0-9_]+)\|([^\]|]*)\]/g;
   const jobs = [];
@@ -2584,9 +2591,26 @@ app.post('/api/call/attach-voice', auth, (req, res) => {
   res.json({ ok: true, id: row.id });
 });
 
+// 挂断的事实要在**下一轮**递给他。
+// ⚠️ 库里那条 [CALL:...] 他永远读不到：网关模式下递进去的只有她这一轮说的话，
+//    历史在 CLI 自己的 session 里，落库不等于进上下文（这一条踩过好几次了）。
+// 走 timerFeedback 那条路：挂在 message 尾巴上，进程内存着，消费一次就扔。
+// 重启丢了就丢了——一条过期的「她刚挂了电话」比没有更糟。
+let _pendingCallNote = '';
+function _callNote(kind, dur, by) {
+  if (kind === 'rejected') return '（通话记录：你打过去，她按了拒接。）';
+  if (kind === 'missed') return '（通话记录：你打过去，她没接到，响完了。）';
+  if (kind === 'missed_back') return '（通话记录：她漏接了你那通，后来打回来了。）';
+  const d = dur ? ('，通了 ' + dur) : '';
+  const who = by === 'him' ? '你挂断的' : by === 'her' ? '她挂断的' : '结束了';
+  return '（通话记录：刚才那通电话' + who + d + '。）';
+}
+
 app.post('/api/call/log', auth, (req, res) => {
   const kind = String(req.body?.kind || '');
   const dur = String(req.body?.dur || '');
+  // 谁挂的。也是前端来的，白名单，别信。空 = 不知道（旧前端、未接来电）。
+  const by = ['her', 'him'].includes(String(req.body?.by || '')) ? String(req.body.by) : '';
   if (!['ended', 'rejected', 'missed'].includes(kind)) {
     return res.status(400).json({ error: 'bad kind' });
   }
@@ -2611,8 +2635,10 @@ app.post('/api/call/log', auth, (req, res) => {
 
   // 通话记录挂在他那一侧（跟来电、去电都是他发起的对齐）
   db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)')
-    .run(convId, 'assistant', '[CALL:' + kind + '|' + dur.replace(/[^0-9:]/g, '') + ']');
+    .run(convId, 'assistant', '[CALL:' + kind + '|' + dur.replace(/[^0-9:]/g, '') + (by ? '|' + by : '') + ']');
   db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
+  _pendingCallNote = _callNote(kind, dur.replace(/[^0-9:]/g, ''), by);
+  console.log('[call] 记下了，下一轮告诉他：' + _pendingCallNote);
   res.json({ ok: true });
 });
 
@@ -6299,6 +6325,8 @@ app.post('/api/chat', auth, async (req, res) => {
     // 留开头一段是为了让他知道这是什么、值不值得细看；真要看就 Read，
     // 而 Read 那头还有字符预算闸门（cap-read.py）兜着，不会又整份吞回来。
     gatewayMessage = _offloadLongPaste(gatewayMessage, convId);
+    // 上一通电话怎么结束的（谁挂的）。消费一次就扔，不会跟着他一路重复。
+    if (_pendingCallNote) { gatewayMessage += '\n\n' + _pendingCallNote; _pendingCallNote = ''; }
     for (const att of (attachments || [])) {
       const upload = db.prepare('SELECT * FROM uploads WHERE id = ?').get(att.path || att);
       if (!upload) continue;

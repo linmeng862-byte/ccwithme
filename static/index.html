@@ -697,7 +697,7 @@ window.fetch=function(url,opts){
 // 资源路径解析 — Capacitor 环境下 img src 相对路径需补全为远程 URL
 // fetch 拦截器只管 JS fetch 调用，<img> 直接加载不经过 fetch
 function assetUrl(path){
-  if(_API_BASE&&path&&typeof path==='string'&&path.startsWith('/')&&(path.startsWith('/data/')||path.startsWith('/stickers/')||path.startsWith('/gallery-photo/')||path.startsWith('/api/'))){
+  if(_API_BASE&&path&&typeof path==='string'&&path.startsWith('/')&&(path.startsWith('/data/')||path.startsWith('/stickers/')||path.startsWith('/gallery-photo/')||path.startsWith('/favicon/')||path.startsWith('/api/'))){
     return _API_BASE+path;
   }
   return path;
@@ -1760,11 +1760,34 @@ function _renderVoiceCards(row){
   }
 }
 // 通话记录条：接完/拒了/没接到，都在消息流里留一条。
-function _logCall(kind,dur){
+// by = 谁挂的（'her'/'him'）。08-29 加：以前库里只有 [CALL:ended|02:17]，
+// 他读到的是自己嘴里冒出来一串标记，**谁挂的、挂没挂，他一概不知道** ——
+// 她说「他不知道我挂他电话」就是这个。现在把这一位带上，后端展开成人话给他看。
+var _hangupBy='her';
+function _logCall(kind,dur,by){
   if(!state.convId)return;  // 还没开始过对话就没地方挂，直接算了
+  var _convAtCall=state.convId;   // 下面异步回来时她可能已经切走了，得对一下
   fetch('/api/call/log',{method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
-    body:JSON.stringify({kind:kind,dur:dur||'',conv_id:state.convId})}).catch(function(){});
+    body:JSON.stringify({kind:kind,dur:dur||'',by:by||'',conv_id:state.convId})})
+    .then(function(r){if(r&&r.ok)_showCallCardNow(kind,dur,_convAtCall)}).catch(function(){});
+}
+// 挂断/拒接的**当场**也要把那条胶囊摆出来。
+// 08-29：她说「挂他电话没显示已拒绝的胶囊」—— 查下去发现三种（接通/拒接/未接）
+// 全都一样，_logCall 只往库里写，屏幕上什么都不加，得刷新才看得见。
+// 跟语音条当年一模一样的毛病，见 sendMessage 里 `_renderVoiceCards(_ur)` 那行的注释。
+// ⚠️ 必须走跟历史完全同一条路：addClaude(=_buildClaudeRow+append) 然后 _renderCallCards，
+//    自己另画一个 span 的话，刷新前后会长得不一样。
+// ⚠️ 只在 POST 成功之后摆：没落库却先摆出来，她刷新一下胶囊就没了，比不显示更糟。
+function _showCallCardNow(kind,dur,convId){
+  try{
+    // 异步回来时她已经切到别的对话了 —— 那就别往这一屏上乱插
+    if(convId&&state.convId!==convId)return;
+    if(typeof addClaude!=='function')return;
+    var row=addClaude('[CALL:'+kind+'|'+(dur||'')+']','','',new Date().toISOString());
+    _renderCallCards(row);
+    row.scrollIntoView({block:'end'});
+  }catch(e){console.warn('[call] 当场摆胶囊失败:',e)}
 }
 // [CALL:kind|时长] → 一条通话记录气泡
 function _renderCallCards(row){
@@ -1780,7 +1803,9 @@ function _renderCallCards(row){
     row.style.display='none';return;
   }
   // missed_back = 漏接了、但她后来打回来了 → 图里那条「未接来电 已回拨」
-  var re=/\[CALL:(ended|rejected|missed_back|missed)\|([^\]]*)\]/g;var m;var _hit=false;
+  // ⚠️ 时长那段是 [^\]|]*（不吃竖线）：08-29 起标记末尾可能多一段 |her / |him
+  //    表示谁挂的。用老的 [^\]]* 会把「02:17|her」整个当成时长显示出来。
+  var re=/\[CALL:(ended|rejected|missed_back|missed)\|([^\]|]*)(?:\|[a-z_]*)?\]/g;var m;var _hit=false;
   var PHONE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>';
   var HANGUP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
   // 未接：电话筒 + 一个往下扎的箭头，跟接通那个明显不一样
@@ -2021,8 +2046,11 @@ function _showIncomingCall(){
   try { navigator.vibrate&&navigator.vibrate([200,100,200]) } catch(e) {}
   // 播放铃声
   try { var audio=_ringAudio=new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACAf39/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+Af39/gH9/f4B/f3+AfQ==');audio.loop=true;audio.play().catch(function(){}) } catch(e) {}
-  // 30秒后自动挂断
-  setTimeout(function(){if(_incomingCall){_rejectCall(true);_logCall('missed')}},30000);
+  // 30秒后自动挂断。⚠️ timer id 存在 overlay 上，接听/拒绝时必须 clearTimeout ——
+  // 光靠 `if(_incomingCall)` 兜不住：她拒了第一通、他 30 秒内又打第二通，
+  // 那时 _incomingCall 又是 true 了，第一通留下的旧定时器会醒过来，
+  // 把**第二通**当成没接到，直接挂掉还记一条「未接来电」。
+  overlay._to=setTimeout(function(){if(_incomingCall){_rejectCall(true);_logCall('missed')}},30000);
 }
 // 她拨出去：等他接的那个界面。复用来电那套样式，只是没有接听键 —— 
 // 这通电话是她打的，能按的只有「取消」。
@@ -2074,8 +2102,10 @@ function _rejectCall(silent){
   // 铃声是 loop=true，以前存在局部变量里没人停——接起来之后它还在循环播。
   // 现在那段 base64 是静音波形所以听不见，换成真铃声就会暴露。
   if(_ringAudio){try{_ringAudio.pause();_ringAudio.currentTime=0}catch(e){}_ringAudio=null}
-  if(!silent)_logCall('rejected');
-  var ov=document.getElementById('incomingCallOverlay');if(ov)ov.remove();
+  if(!silent)_logCall('rejected','','her');
+  // 先清掉那个 30 秒定时器再摘 overlay —— 摘了就拿不到挂在它身上的 _to 了
+  var ov=document.getElementById('incomingCallOverlay');
+  if(ov){if(ov._to)clearTimeout(ov._to);ov.remove()}
   fetch('/api/call/ring/cancel',{method:'POST',headers:{'Authorization':'Bearer '+(state.token||'')}}).catch(function(){});
 }
 // 来电轮询：每 3 秒检查 Claude 是否在响铃
@@ -2294,12 +2324,15 @@ function _flushSpeech(){
 
 // 外部可调用来电：window._triggerIncomingCall()
 async function _startCall(incoming){
-  if(_callWs){_stopCall();return;}
+  // 已经在通话中 → 这一下是挂断。但**残留的引用不算通话中**：
+  // socket 已经 CLOSING/CLOSED 还留着引用的话，她按拨号键会变成「挂断」，
+  // 得连按两下才拨得出去，看起来就像「电话打不出去」。
+  if(_callWs&&(_callWs.readyState===0||_callWs.readyState===1)){_stopCall();return;}
+  if(_callWs){try{_callWs.close()}catch(e){}_callWs=null;}
   var btn=$('callButton');btn.style.color='#E54D2E';btn.title='通话中…点击结束';_startCallTimer();
   try{
     var wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/call';
     _callWs=new WebSocket(wsUrl);
-    _callWs.onerror=function(){_callWs=null;btn.style.color='';btn.title='点一下给他打电话 · 实时通话';};
     if(!incoming)_showOutgoingCall();
     _callWs.onopen=function(){
       // 告诉他电话响了 —— 不发这条他那头是静默的，得等她先开口
@@ -2326,11 +2359,17 @@ async function _startCall(incoming){
         _flushHisVoice();
       }else if(msg.type==='hangup'){
         // 他那边用 hangup_call 工具挂断的
-        toast('他挂断了');_stopCall();
+        toast('他挂断了');_hangupBy='him';_stopCall();
       }else if(msg.type==='error'){_clearOutgoingCall();toast('通话出错: '+msg.text)}
     };
     // ⚠️ 这两个以前只把按钮颜色恢复了，不提示也不收摊——WS 连不上时听写还在跑，
     //    她对着空气说了一整通话，屏幕上字来字去，另一头一条都没收到。别再吞了。
+    // ⚠️ 这两个以前是「先把 _callWs 置 null，再调 _stopCall()」——
+    //    而 _stopCall 关 socket 靠的就是 `if(_callWs){_callWs.close()}`，
+    //    引用已经没了那句就永远不执行，**socket 变孤儿**：浏览器里还开着、
+    //    服务端还算它一条连接，没人再读。下次拨号又开一条，两条并存。
+    //    （2026-08-29 日志里 connected #4 从没 dial、跟着 #5 一起才断，就是它。）
+    //    现在一律先把引用**接到手里**再清全局，最后自己关。
     _callWs.onclose=function(ev){
       console.error('[call] ws closed code='+ev.code+' reason='+(ev.reason||'(空)')+' clean='+ev.wasClean);
       var wasUp=!!_callWs;_callWs=null;
@@ -2338,8 +2377,11 @@ async function _startCall(incoming){
       btn.style.color='';btn.title='点一下给他打电话 · 实时通话';
     };
     _callWs.onerror=function(){
-      console.error('[call] ws error, url='+wsUrl+' readyState='+(_callWs&&_callWs.readyState));
-      _callWs=null;toast('连不上通话服务，这通没接通');_stopCall();
+      var ws=_callWs;
+      console.error('[call] ws error, url='+wsUrl+' readyState='+(ws&&ws.readyState));
+      _callWs=null;
+      try{if(ws)ws.close()}catch(e){}
+      toast('连不上通话服务，这通没接通');_stopCall();
       btn.style.color='';btn.title='点一下给他打电话 · 实时通话';
     };
     // 开始录音
@@ -2382,7 +2424,8 @@ async function _startCall(incoming){
 function _stopCall(){
   // ⚠️ _callSeconds 下面几行就被清零了，时长必须先取出来
   if(_callSeconds>0){var _m=Math.floor(_callSeconds/60),_s=_callSeconds%60;
-    _logCall('ended',String(_m).padStart(2,'0')+':'+String(_s).padStart(2,'0'))}
+    _logCall('ended',String(_m).padStart(2,'0')+':'+String(_s).padStart(2,'0'),_hangupBy)}
+  _hangupBy='her';   // ⚠️ 一定要复位，否则他挂过一次之后，往后每通都算他挂的
   // 挂断时把还没发出去的半句丢掉，别等挂完了再补发一条
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}_speechBuf='';_speechFirstAt=0;
   _showInterim('');
@@ -2474,7 +2517,7 @@ function _webCallStop(silent){
   // 清零这件事顺带帮了个忙：1386 行手动挂断会连着调 _stopCall()，
   // 那边看到 0 就不会再记一条，两个出口不会重复落库。
   if(!silent&&_callSeconds>0){var _wm=Math.floor(_callSeconds/60),_ws=_callSeconds%60;
-    _logCall('ended',String(_wm).padStart(2,'0')+':'+String(_ws).padStart(2,'0'))}
+    _logCall('ended',String(_wm).padStart(2,'0')+':'+String(_ws).padStart(2,'0'),_hangupBy)}
   if(_webCallFallbackTimer){clearTimeout(_webCallFallbackTimer);_webCallFallbackTimer=null}
   if(_webPc){try{_webPc.close()}catch(e){}_webPc=null}
   if(_webWs){try{_webWs.close()}catch(e){}_webWs=null}
@@ -2747,7 +2790,18 @@ async function siteLogin(extra){
   if(d.token){state.token=d.token;localStorage.setItem('chat_token',d.token)}
   return d;
 }
-async function api(path,options={}){var isFormData=options.body instanceof FormData;const headers=isFormData?{...(options.headers||{})}:{'Content-Type':'application/json',...(options.headers||{})};if(state.token)headers.Authorization=`Bearer ${state.token}`;const res=await fetch(path,{...options,headers});if(res.status===401){state.token=null;localStorage.removeItem('chat_token');if(!options._retried){try{var dd=await siteLogin();if(dd.token)return api(path,{...options,_retried:true})}catch(e){}}toast('请先在侧边栏配置中转站 API');throw Error('unauthorized')}return res}
+// 开页那几秒 state.token 还是空的，各个 loadXxx 已经在发请求了 ——
+// 于是每次刷新都先撞一串 401（日志里那串 `[auth] REJECTED ... header: missing`），
+// 再靠下面的 401 分支重登、重试。功能上能自愈，但白跑一趟、还把真正的鉴权
+// 失败淹在噪音里。改成**没 token 就先登录再发**，并且并发的调用共用同一次登录，
+// 不然一进页面五个 loader 会各登一次（日志里那四条 `login from 127.0.0.1`）。
+var _loginInFlight=null;
+async function _ensureToken(){
+  if(state.token)return;
+  if(!_loginInFlight)_loginInFlight=siteLogin().finally(function(){_loginInFlight=null});
+  try{await _loginInFlight}catch(e){}   // 登不上就照旧发出去，让下面的 401 分支去处理
+}
+async function api(path,options={}){var isFormData=options.body instanceof FormData;await _ensureToken();const headers=isFormData?{...(options.headers||{})}:{'Content-Type':'application/json',...(options.headers||{})};if(state.token)headers.Authorization=`Bearer ${state.token}`;const res=await fetch(path,{...options,headers});if(res.status===401){state.token=null;localStorage.removeItem('chat_token');if(!options._retried){try{var dd=await siteLogin();if(dd.token)return api(path,{...options,_retried:true})}catch(e){}}toast('请先在侧边栏配置中转站 API');throw Error('unauthorized')}return res}
 function saveSettings(){localStorage.setItem('chat_model_settings',JSON.stringify(state.settings))}
 function currentModel(){return state.models.find(x=>x.id===state.model)||state.models[0]}
 function modelSetting(model=currentModel()){const s=state.settings[model?.id];if(model?.thinking==='adaptive'||model?.thinking==='extended')return{effort:s?.effort||'medium',extended:s?.extended!==false};return{}}
@@ -3495,8 +3549,8 @@ function _addHtmlPreviews(md){if(!md)return;md.querySelectorAll('pre code').forE
 async function refineThoughtSummary(summary,thinking){if(!thinking)return;setThoughtSummary(summary,thinking,'Thinking summary...');try{const r=await api('/api/thinking-summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thinking})});if(!r.ok)throw Error();const data=await r.json();setThoughtSummary(summary,thinking,data.summary||'')}catch{setThoughtSummary(summary,thinking)}}
 function thoughtSummary(thinking){const summary=document.createElement('button');summary.className='thinking-summary show';setThoughtSummary(summary,thinking);refineThoughtSummary(summary,thinking);summary.onclick=()=>{$('thoughtContent').textContent=thinking;sheet('thought',true)};return summary}
 function _collectUrls(text,setBucket){if(!text)return;const re=/https?:\/\/[^\s)\]"<>`']+/g;let m;while((m=re.exec(text))){let u=m[0].replace(/[.,;:!?\)]+$/,'');setBucket.add(u)}}
-function _makeSourceChip(url){let dom;try{dom=new URL(url).hostname.replace(/^www\./,'')}catch(e){return null}const a=document.createElement('a');a.className='source-chip';a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.title=dom;const img=document.createElement('img');img.src='https://www.google.com/s2/favicons?domain='+encodeURIComponent(dom)+'&sz=64';img.alt='';img.referrerPolicy='no-referrer';img.onerror=function(){this.remove();a.textContent=dom.charAt(0).toUpperCase()};a.append(img);return a}
-function _showSourcesSheet(urls){const t=$('thoughtSheet').querySelector('.sheet-title');if(t)t.textContent='Sources';const c=$('thoughtContent');c.innerHTML='';const list=document.createElement('div');list.style.cssText='display:flex;flex-direction:column';urls.forEach(u=>{let dom;try{dom=new URL(u).hostname.replace(/^www\./,'')}catch(e){return}const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener noreferrer';a.style.cssText='display:flex;align-items:center;gap:12px;padding:14px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:var(--text-primary)';const fav=document.createElement('img');fav.src='https://www.google.com/s2/favicons?domain='+encodeURIComponent(dom)+'&sz=64';fav.style.cssText='width:20px;height:20px;flex:0 0 auto;border-radius:50%';fav.referrerPolicy='no-referrer';const txt=document.createElement('span');txt.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px';txt.textContent=dom;a.append(fav,txt);list.append(a)});c.append(list);sheet('thought',true)}
+function _makeSourceChip(url){let dom;try{dom=new URL(url).hostname.replace(/^www\./,'')}catch(e){return null}const a=document.createElement('a');a.className='source-chip';a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.title=dom;const img=document.createElement('img');img.src=assetUrl('/favicon/'+encodeURIComponent(dom));img.alt='';img.referrerPolicy='no-referrer';img.onerror=function(){this.remove();a.textContent=dom.charAt(0).toUpperCase()};a.append(img);return a}
+function _showSourcesSheet(urls){const t=$('thoughtSheet').querySelector('.sheet-title');if(t)t.textContent='Sources';const c=$('thoughtContent');c.innerHTML='';const list=document.createElement('div');list.style.cssText='display:flex;flex-direction:column';urls.forEach(u=>{let dom;try{dom=new URL(u).hostname.replace(/^www\./,'')}catch(e){return}const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener noreferrer';a.style.cssText='display:flex;align-items:center;gap:12px;padding:14px 4px;border-bottom:1px solid var(--border);text-decoration:none;color:var(--text-primary)';const fav=document.createElement('img');fav.src=assetUrl('/favicon/'+encodeURIComponent(dom));fav.style.cssText='width:20px;height:20px;flex:0 0 auto;border-radius:50%';fav.referrerPolicy='no-referrer';fav.onerror=function(){this.style.visibility='hidden'};const txt=document.createElement('span');txt.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px';txt.textContent=dom;a.append(fav,txt);list.append(a)});c.append(list);sheet('thought',true)}
 function _maybeCompletionEgg(){if(Math.random()>=0.001)return;const svg=_CLAWD_EGG_POOL[Math.floor(Math.random()*_CLAWD_EGG_POOL.length)];const wrap=document.createElement('div');wrap.className='completion-egg';wrap.innerHTML=svg;wrap.addEventListener('click',()=>wrap.remove());document.body.appendChild(wrap);setTimeout(()=>wrap.classList.add('fade-out'),3200);setTimeout(()=>wrap.remove(),3900)}
 function _renderSources(row,urlSet){if(!urlSet||!urlSet.size)return;const urls=[...urlSet];const box=document.createElement('div');box.className='sources';const lbl=document.createElement('span');lbl.className='sources-label';lbl.textContent='Sources';box.append(lbl);const MAX=2;urls.slice(0,MAX).forEach(u=>{const c=_makeSourceChip(u);if(c)box.append(c)});const hidden=urls.slice(MAX);if(hidden.length){const more=document.createElement('button');more.type='button';more.className='source-more';more.textContent='+'+hidden.length;more.addEventListener('click',()=>_showSourcesSheet(urls));box.append(more)}const md=row.querySelector('.md');if(md)md.after(box);else row.append(box)}
 function _buildTraceRow(){const row=document.createElement('div');row.className='trace-row';row.dataset.phases='[]';const summary=document.createElement('div');summary.className='trace-row-summary';const icon=document.createElement('span');icon.className='trace-row-icon';const text=document.createElement('span');text.className='trace-row-text';const status=document.createElement('span');status.className='trace-row-status';const chevron=document.createElement('span');chevron.className='trace-row-chevron';chevron.innerHTML=_TRACE_CHEVRON_SVG;summary.append(icon,text,status,chevron);row.append(summary);summary.addEventListener('click',()=>openTraceSheet(row));return row}
@@ -4565,6 +4619,20 @@ function _renderToolCardsFromTraces(traces,row){
     }catch(e){}
   });
 }
+// 来源条也是「发的时候有、刷新就没」的那一类：URL 是流式时从 tool_result 里现扫的，
+// 只活在那一次会话的内存里（_sources 那个 Set），历史重建时没人再扫一遍。
+// 证据跟卡片一样还在 messages.traces 里，所以照 _renderToolCardsFromTraces 的路子补一遍。
+// ⚠️ 扫的范围要跟流式那段一致（搜 `_collectUrls(ct,_sources)`）：所有 tool_result 的
+//    content 全文，不只搜索工具 —— 两边不一致就会出现刷新前后来源条不一样。
+function _renderSourcesFromTraces(traces,row){
+  if(!traces||!traces.length||!row)return;
+  const bucket=new Set();
+  traces.forEach(function(t){
+    if(!t||t.type!=='tool_result'||!t.content)return;
+    _collectUrls(typeof t.content==='string'?t.content:JSON.stringify(t.content),bucket);
+  });
+  _renderSources(row,bucket);
+}
 function _renderMessagesIntoFragment(slice){
   const frag=document.createDocumentFragment();
   slice.forEach(m=>{
@@ -4581,6 +4649,7 @@ function _renderMessagesIntoFragment(slice){
       try{_renderFileCards(row)}catch(e){console.warn('[history] file card:',e)}
       try{_renderClawdLabel(row)}catch(e){console.warn('[history] clawd label:',e)}
       try{_renderToolCardsFromTraces(m.traces,row)}catch(e){console.warn('[history] tool card:',e)}
+      try{_renderSourcesFromTraces(m.traces,row)}catch(e){console.warn('[history] sources:',e)}
     }
     try{_renderVoiceCards(row)}catch(e){console.warn('[history] voice card:',e)}
     try{_renderCallCards(row)}catch(e){console.warn('[history] call card:',e)}
