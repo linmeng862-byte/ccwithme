@@ -8,7 +8,7 @@
 
 **做完的是下面那条**（原文原样留着，别删 —— 诊断过程比结论有用）。三件事：
 
-**1. 网关真的读 model / effort 了**（`/opt/cc-gateway/server.js`）
+**1. 网关真的读 model / effort 了**（网关仓库的 `server.js`，路径见 `CLAUDE.local.md`）
 - 顶上加 `MODEL_WHITELIST` / `EFFORT_WHITELIST` + `pickModel()` / `pickEffort()`。
   原来那句注释「网关再校一遍白名单」是**空头支票** —— 那个白名单压根不存在，
   `/chat` 从来没解构过 `req.body.model`，spawn 时用的一直是文件顶上的 `MODEL` 常量。
@@ -46,8 +46,8 @@
   `[常驻] 放掉进程 …（设置变了（… → …），重开）`。
   出现了就是通的；**不再需要**原来那条「切完还得 pm2 restart cc-gateway」的土办法。
 
-备份：`/opt/cc-gateway/server.js.bak.pre-modelswitch.20260829-072602`、
-`backups/backend.js.bak.pre-websearch-toggle.*`、`backups/index.html.bak.pre-websearch-toggle.*`
+备份：网关仓库根目录的 `server.js.bak.pre-modelswitch.20260829-072602`、
+本仓库 `backups/backend.js.bak.pre-websearch-toggle.*`、`backups/index.html.bak.pre-websearch-toggle.*`
 
 ---
 
