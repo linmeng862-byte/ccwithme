@@ -903,6 +903,15 @@ function _renderDetail() {
   html += '</div>';
 
   timeline.innerHTML = html;
+  // 详情页要把 #diaryTimeline 那 80px 的 padding-bottom 关掉（08-29）。
+  // 那 80px 是给时间线视图底下浮着的搜索栏留的，详情页没有搜索栏。
+  // 留着的话，输入框 `position:sticky; bottom:0` 贴的是 **padding box 内沿**，
+  // 会被顶到离底 80px 的半空 —— 看着就是「没固定住」，日记还从它底下滚过去。
+  timeline.classList.add('diary-detail-mode');
+  // 详情页把「新建日记」那个悬浮 + 收起来：这里已经有 Edit / Delete 了，
+  // 而且它固定在右下角，**正好压在最后一条评论上**，评论的删除按钮点不到。
+  var _fab = $('diaryFab');
+  if (_fab) _fab.style.display = 'none';
   // Scroll to top
   timeline.scrollTop = 0;
 }
@@ -921,7 +930,27 @@ function _renderCommentCard(c) {
         '<div class="diary-comment-meta"><span class="diary-comment-author">' + escHtml(c.author || 'zhou') + '</span><span class="diary-comment-time">' + timeStr + '</span></div>' +
         '<p class="diary-comment-text">' + escHtml(c.content) + '</p>' +
       '</div>' +
+      // 删除（08-29 补的）：后端 DELETE /api/diary/:id/comments/:cid 一直都在，
+      // 只是前端从来没接上，所以写错了一条只能留着。
+      '<button class="diary-comment-del" onclick="_deleteComment(\'' + escHtml(c.id) + '\')" aria-label="Delete" title="删掉这条">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '</button>' +
     '</div>';
+}
+
+async function _deleteComment(cid) {
+  if (!confirm('删掉这条想法？')) return;
+  var tl = $('diaryTimeline');
+  var keep = tl ? tl.scrollTop : 0;      // 别让删一条就跳回顶上
+  try {
+    var r = await api('/api/diary/' + _diaryDetailId + '/comments/' + encodeURIComponent(cid), { method: 'DELETE' });
+    if (!r.ok) throw new Error('删除失败');
+    _diaryComments = _diaryComments.filter(function (x) { return x.id !== cid; });
+    _renderDetail();
+    if (tl) tl.scrollTop = keep;
+  } catch (e) {
+    alert('没删掉：' + (e.message || e));
+  }
 }
 
 function _backToTimeline() {
@@ -930,6 +959,10 @@ function _backToTimeline() {
   _diaryDetailId = null;
   _diaryDetailEntry = null;
   _diaryComments = [];
+  var _tl = $('diaryTimeline');
+  if (_tl) _tl.classList.remove('diary-detail-mode');   // 把那 80px 还给时间线视图
+  var _fab = $('diaryFab');
+  if (_fab) _fab.style.display = '';                    // 悬浮 + 回来
   _renderTimelineShell();
   _renderWeekCalendar();
   _renderTimeline();
@@ -1216,6 +1249,8 @@ function _initDiaryStyles() {
 
     /* Timeline shell */
     '#diaryTimeline { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:0 0 calc(env(safe-area-inset-bottom) + 80px); }',
+    /* 详情页没有底部那条浮动搜索栏，那 80px 留着只会把 sticky 的输入框顶到半空 */
+    '#diaryTimeline.diary-detail-mode { padding-bottom:0; }',
 
     /* Nav bar — iOS capsule */
     '.diary-nav { display:flex; justify-content:center; padding:0 24px 0; position:sticky; top:0; z-index:10; }',
@@ -1382,6 +1417,10 @@ function _initDiaryStyles() {
     '.diary-comment-author { font:600 13px/1 var(--font-sans); color:var(--d-text); }',
     '.diary-comment-time { font:400 11px/1 var(--font-sans); color:var(--d-muted); }',
     '.diary-comment-text { font:400 14px/1.55 var(--font-sans); color:var(--d-text); margin:0; }',
+    /* 删除按钮：淡到几乎看不见，手机上没有 hover，所以不能藏起来只在 hover 显示 */
+    '.diary-comment-del { flex:none; align-self:flex-start; width:26px; height:26px; margin:-2px -4px 0 4px; border:0; padding:0; border-radius:50%; background:transparent; color:var(--d-muted); opacity:.35; display:grid; place-items:center; cursor:pointer; transition:opacity .15s, background .15s; }',
+    '.diary-comment-del:hover { opacity:1; background:var(--d-line); }',
+    '.diary-comment-del:active { transform:scale(.9); }',
 
     /* Comment input */
     '.diary-comment-input-wrap { position:sticky; bottom:0; display:flex; align-items:center; gap:8px; padding:14px 24px calc(env(safe-area-inset-bottom) + 10px); background:var(--d-bg); border-top:1px solid var(--d-line); }',

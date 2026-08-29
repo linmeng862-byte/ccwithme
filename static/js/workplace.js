@@ -608,6 +608,29 @@
       }).catch(function () {});
     }
 
+    // 刷新/重开面板时，他可能正在后台干活（2026-08-29）。
+    // history 拉回来的是他**已经说出口**的半截，接上去才看得见后面。
+    // ⚠️ 放在 history 之后：那条空的 him 记录已经被 replay 画出来了，
+    //    这里再造一个新气泡会变成两条 —— 所以自己造一个干净的，让流往里写。
+    api('/api/workplace/run').then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.running || wpBusy) return;
+      wpBusy = true; send.textContent = '…'; send.style.opacity = '.6';
+      liveReset(); setRunning(true);
+      liveLine('> 他还在跑上一轮（已经 ' + Math.round((d.elapsed_ms || 0) / 1000) + 's），接回来了', T_GREEN);
+      var him = bubbleHim();
+      var himRec = { who: 'him', text: d.text || '', tools: (d.tools || []).slice() };
+      him.body.textContent = himRec.text;
+      himRec.tools.forEach(function (t) {
+        var inp = ''; try { inp = JSON.stringify(t.input).slice(0, 70); } catch (e) {}
+        toolLine(him.wrap, t.name, inp);
+      });
+      convo.push(himRec);
+      // from = seq：她刚从 /run 拿走了到此为止的全文，只要后面新增的那截。
+      wpRunId = d.run_id; wpSeq = d.seq || 0;
+      wpFollow(api('/api/workplace/stream?run_id=' + encodeURIComponent(d.run_id) + '&from=' + wpSeq),
+               him, himRec, []);
+    }).catch(function () {});
+
     // ── 底：输入条 ──
     var dock = h('div', 'flex:none;padding:8px var(--page-pad) calc(env(safe-area-inset-bottom) + 8px);background:transparent');
 
@@ -809,16 +832,36 @@
       if (upIds.length) toolLine(him.wrap, '附件', upIds.length + ' 个');
       atts = []; syncStrip();   // 发出去就清掉，免得下一句又带一遍
 
-      fetch('/api/workplace/chat', {
+      wpFollow(fetch('/api/workplace/chat', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ message: msg, mainline_ids: ids, upload_ids: upIds }),
-      }).then(function (r) {
+      }), him, himRec, ids);
+    }
+
+    // ── 跟着一轮活看（2026-08-29）────────────────────────────────────────
+    // 以前这一整段是写死在 doSend 里的，流一断这轮就算完了 ——
+    // 08-29 他干到第 39 轮她那头断了，界面上只剩「他没说话，直接改了」。
+    // 现在后端把活跑在后台，这里只是**订阅**：断了就带着事件号接回去，不是宣告结束。
+    var wpRunId = null;     // 当前这轮的 id，重连要用
+    var wpSeq = 0;          // 已经收到的最后一个事件号 + 1
+    var wpRetry = 0;        // 连续重连失败次数，用来退避
+    var wpLive = null;      // 当前这轮的 { him, himRec, ids }，重连时接着往里写
+    // ⚠️ 这两个是防「同一轮开出两条流」的：她切回来时旧连接可能还活着，
+    //    或者已经有一个退避定时器排着队 —— 再开一条，delta 会重复灌进同一个气泡。
+    var wpStreaming = false;
+    var wpTimer = null;
+
+    function wpFollow(p, him, himRec, ids) {
+      wpLive = { him: him, himRec: himRec, ids: ids };
+      clearTimeout(wpTimer); wpTimer = null;
+      wpStreaming = true;
+      p.then(function (r) {
         if (r.status === 429) return r.json().then(function (j) { throw new Error(j.error || '超出额度'); });
         if (!r.ok || !r.body) throw new Error('后端返回 ' + r.status);
-        var reader = r.body.getReader(), dec = new TextDecoder(), buf = '', ev = '';
+        var reader = r.body.getReader(), dec = new TextDecoder(), buf = '', ev = '', ended = false;
         // ⚠️ 必须 return —— 不返回 pump 的 Promise，外层 then 会立刻 resolve，
-        //    .finally() 在流还没读完时就跑：himRec.text 还是空的，于是塞进
+        //    后面的收尾在流还没读完时就跑：himRec.text 还是空的，于是塞进
         //    「他没说话，直接改了」，后到的真文字再追加在它后面；
         //    himRec.tools 也还是空的，卡片退回「N 个文件」列不出操作；
         //    loadDiff() 还会提前拿到他没改完的中间状态。2026-08-21 修。
@@ -831,6 +874,9 @@
               if (line.indexOf('event: ') === 0) { ev = line.slice(7).trim(); return; }
               if (line.indexOf('data: ') !== 0) return;
               var j; try { j = JSON.parse(line.slice(6)); } catch (e) { return; }
+              if (typeof j._i === 'number') wpSeq = j._i + 1;
+              if (ev === 'run') { wpRunId = j.run_id; wpRetry = 0; return; }
+              if (ev === 'done' || ev === 'gone') { ended = true; return; }
               if (ev === 'delta' && j.text) { himRec.text += j.text; him.body.textContent = himRec.text; toBottom(); }
               else if (ev === 'tool_use') {
                 var inp = '';
@@ -844,24 +890,66 @@
                 himRec.text += '\n⚠️ ' + (j.message || '') + '\n';
                 him.body.textContent = himRec.text;
                 liveLine('!! ' + (j.message || ''), '#FF8A80');
+                // 这句根本没发出去（他还在跑上一轮），把字还回输入框 ——
+                // 不还她就以为发出去了，等一个不会来的回答。
+                if (j.restore_text && !ta.value.trim()) {
+                  ta.value = j.restore_text;
+                  ta.oninput();          // 复用输入框自己的高度逻辑，别在这儿复刻一份
+                }
               }
               else if (ev === 'usage') liveLine('# 本次 $' + Number(j.cost_usd || 0).toFixed(4), T_DIM);
             });
             return pump();
           });
-        })();
+        })().then(function () {
+          wpStreaming = false;
+          // 收到过 done/gone = 这轮真的完了；否则是连接断了，活还在后台跑。
+          if (ended) wpFinish(); else wpReconnect();
+        });
       }).catch(function (e) {
+        wpStreaming = false;
+        // 连都没连上：如果已经知道 run_id，说明活已经开跑了，别报错，去接回来。
+        if (wpRunId) return wpReconnect();
         himRec.text += '\n⚠️ ' + e.message;
         him.body.textContent = himRec.text;
-      }).finally(function () {
-        wpBusy = false; send.textContent = '↑'; send.style.opacity = '1';
-        setRunning(false);
-        if (!himRec.text) { himRec.text = '（他没说话，直接改了）'; him.body.textContent = himRec.text; }
-        // 带过一次就清掉：会话是 --resume 的，他已经记住了，再带一遍是白花钱
-        if (ids.length) { picked = {}; syncMlCount(); mlLoaded = false; if (mlOpen) loadMainline(); }
-        loadDiff(himRec.tools);           // 改完把 diff 当成他递过来的一张卡摆进流里，带上这轮干了什么
+        wpFinish();
       });
     }
+
+    // 断了就接回去。**不清 wpBusy** —— 活还在跑，界面要一直是「在跑」的样子。
+    // 退避：1s、2s、4s…最多 15s。她锁屏十分钟回来，第一次 visibilitychange 会立刻催一次。
+    function wpReconnect() {
+      if (!wpRunId || !wpLive) return wpFinish();
+      if (wpStreaming || wpTimer) return;        // 已经连着 / 已经排着队了
+      var wait = Math.min(1000 * Math.pow(2, wpRetry++), 15000);
+      liveLine('… 连接断了，' + Math.round(wait / 1000) + 's 后接回去（他还在跑）', T_DIM);
+      wpTimer = setTimeout(function () {
+        wpTimer = null;
+        if (!wpBusy) return;                      // 期间已经收尾了
+        wpFollow(api('/api/workplace/stream?run_id=' + encodeURIComponent(wpRunId) + '&from=' + wpSeq),
+                 wpLive.him, wpLive.himRec, wpLive.ids);
+      }, wait);
+    }
+
+    function wpFinish() {
+      if (!wpLive) return;
+      var him = wpLive.him, himRec = wpLive.himRec, ids = wpLive.ids;
+      wpLive = null; wpRunId = null; wpSeq = 0; wpRetry = 0;
+      clearTimeout(wpTimer); wpTimer = null; wpStreaming = false;
+      wpBusy = false; send.textContent = '↑'; send.style.opacity = '1';
+      setRunning(false);
+      if (!himRec.text) { himRec.text = '（他没说话，直接改了）'; him.body.textContent = himRec.text; }
+      // 带过一次就清掉：会话是 --resume 的，他已经记住了，再带一遍是白花钱
+      if (ids && ids.length) { picked = {}; syncMlCount(); mlLoaded = false; if (mlOpen) loadMainline(); }
+      loadDiff(himRec.tools);           // 改完把 diff 当成他递过来的一张卡摆进流里，带上这轮干了什么
+    }
+
+    // 她回到这个页面（切回 App、解锁屏幕）就立刻催一次重连，别干等退避那几秒。
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible' || !wpBusy || !wpLive) return;
+      if (wpStreaming) return;                   // 连接其实没断，别多开一条
+      wpRetry = 0; clearTimeout(wpTimer); wpTimer = null; wpReconnect();
+    });
 
     // 前端调试钩子：不用真发消息（花钱）就能把卡片渲染出来看样式。
     // 用法：__wpTestCard({changed:[{status:"M",file:"a.js"}],diff:"..."}, [{name:"Edit",input:"..."}])

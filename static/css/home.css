@@ -1055,6 +1055,16 @@ html[data-theme="dark"] .inside-letter-head{color:#C89664}
 .msg-user .bubble.voice-only,.msg-claude .bubble.voice-only{
   background:none;padding:0;max-width:none;border-radius:0;
 }
+/* 表情包（2026-08-29）
+   整条只有一个表情时，气泡壳全脱掉 —— 表情就该是一张裸图浮在那儿，
+   不是气泡里的一张插图。跟语音条同一个道理，只是这个连内边距都不留。 */
+.msg-user .bubble.sticker-only,.msg-claude .bubble.sticker-only{
+  background:none;padding:0;max-width:none;border-radius:0;border:none;box-shadow:none;
+}
+/* 他流式发过来的表情：挂在气泡外面，同样不带壳 */
+.msg-sticker{margin:6px 0;display:block}
+.msg-user .msg-sticker{margin-left:auto}
+
 .msg-user .voice-msg{background:#FFF0F5}
 .msg-claude .voice-msg{background:var(--bg-surface)}
 .voice-msg .voice-play-btn:hover,.voice-msg .voice-tx-btn:hover{opacity:1}
@@ -1455,6 +1465,10 @@ html.as-non .msg-claude.streaming .claude-trail-logo{align-self:flex-end;margin:
       所以这一条同时管住语音条和通话胶囊，别再单独为通话写一条。 */
 .msg-user .bubble.voice-only,.msg-claude .bubble.voice-only{padding:0!important;margin:0!important}
 .msg-user .voice-msg,.msg-claude .voice-msg{margin-left:0!important;margin-right:0!important}
+/* 08-29 表情包脱壳踩的是同一颗雷：上面 1060 行那条 .sticker-only{padding:0} 一样会被
+   `padding:9px 15px!important` 盖掉 —— 背景和圆角脱了，13px 内边距还在，
+   Playwright 量出来是 `7px 13px`。任何要脱壳的 .bubble 变体都得带 !important。 */
+.msg-user .bubble.sticker-only,.msg-claude .bubble.sticker-only{padding:0!important;margin:0!important}
 
 /* 🚨 她发图那条消息里，文字气泡被压成一竖条（08-22 Playwright 拍下来的）：
    有图片时前端会包一层 .msg-user-col，图片和气泡竖着排在里面。

@@ -1504,6 +1504,61 @@ async function _autoTagSticker(sid) {
   }
 }
 
+// 历史里一条 `[Sticker] /stickers/xxx.webp` 对他来说就是一行文件路径 —— 猜都没法猜。
+// 这里把它换成「首帧图 + 库里那段描述」，他才知道她刚才丢过来的是什么表情。
+// 首帧是上传时 sharp 提好的静态 PNG：动图整个喂进去 token 不可控，一张首帧就够看懂。
+// 查不到 / 读不出图都不算致命 —— 退回一句纯文字，别让整轮对话炸掉。
+// 首帧图的 base64 缓存。history 是**每轮重建**的，同一张表情在一个会话里
+// 会被读几十遍 —— 不缓存就是每轮把同一张图从盘上重读一次、再 base64 一次，
+// 全在事件循环上，而这是全站最热的那条路。
+// key 带 mtime：reprocess 重新生成首帧后自然失效，不用手动清。
+const _stkB64 = new Map();
+function _stickerThumbB64(file) {
+  try {
+    const key = file + ':' + fs.statSync(file).mtimeMs;
+    const hit = _stkB64.get(key);
+    if (hit) return hit;
+    const b64 = fs.readFileSync(file).toString('base64');
+    if (_stkB64.size > 200) _stkB64.clear();   // 表情统共也没几百张，满了整锅倒掉就行
+    _stkB64.set(key, b64);
+    return b64;
+  } catch (e) {
+    console.warn('[sticker] 首帧读取失败 ' + file + ': ' + e.message);
+    return null;
+  }
+}
+
+let _stkQuery = null;   // 懒建：建表可能排在这行后面，模块级 prepare 会抛
+function _stickerContextParts(raw, role) {
+  const m = String(raw || '').match(/^\[Sticker\]\s*\/stickers\/([\w.-]+)/);
+  if (!m) return null;
+  const who = role === 'assistant' ? 'Noct' : '粥粥';
+  let s = null;
+  try {
+    if (!_stkQuery) _stkQuery = db.prepare(
+      'SELECT name, description, emotion_tags, thumbnail FROM stickers WHERE filename = ?');
+    s = _stkQuery.get(m[1]);
+  } catch (_) {}
+  if (!s) return [{ type: 'text', text: '[' + who + '发了个表情]' }];
+
+  let tags = [];
+  try { tags = JSON.parse(s.emotion_tags || '[]'); } catch (_) {}
+  let desc = '[' + who + '发了个表情：' + (s.name || '没名字') + ']';
+  if (s.description) desc += '\n画面：' + s.description;
+  if (tags.length) desc += '\n语气：' + tags.join('、');
+
+  const parts = [];
+  if (s.thumbnail) {
+    const b64 = _stickerThumbB64(path.join(stickerDir, s.thumbnail));
+    // 首帧可能是 png（有透明）也可能是 jpg（照片类），media_type 得跟着走，
+    // 写死 image/png 会让 jpg 那批直接被 API 退回来。
+    const mt = /\.jpe?g$/i.test(s.thumbnail) ? 'image/jpeg' : 'image/png';
+    if (b64) parts.push({ type: 'image', source: { type: 'base64', media_type: mt, data: b64 } });
+  }
+  parts.push({ type: 'text', text: desc });
+  return parts;
+}
+
 app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, async (req, res) => {
   const tmpPath = req.file && req.file.path;
   try {
@@ -1540,10 +1595,24 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
 
     // 提首帧。给他看的就是这一张 —— 单张图 token 可控，比让他逐帧读稳。
     // 提不出来不算致命：表情照样能发，只是自动识别会少一张图。
+    //
+    // ⚠️ 一定要 resize（08-29 补的）：第一版直接 .png() 存原尺寸，
+    //    960x960 的表情提出来是 339KB 的 PNG。这张**每一轮对话都要重新喂给他**，
+    //    等于每轮多烧 1k+ token 的图，还多读一遍盘。384 够他看清是什么表情了。
+    //    ⚠️ 只动这张给他看的首帧，**原图一个字节都不碰** —— 她明确说过表情不许压，
+    //    GIF 一转码就掉帧。原图走 _shrinkSticker，跟这里是两条路。
     let thumbnail = '';
     try {
-      await sharp(path.join(stickerDir, realFname), { pages: 1 }).png().toFile(path.join(stickerDir, thumbName));
-      thumbnail = thumbName;
+      const src = sharp(path.join(stickerDir, realFname), { pages: 1 })
+        .resize(384, 384, { fit: 'inside', withoutEnlargement: true });
+      // 有透明通道才用 PNG。没有的（照片类、jpg 来源）用 PNG 存纯属浪费 ——
+      // 实测一张 384x335 的照片类首帧，PNG 241KB，JPEG q82 只要二十几 KB，
+      // 而这张是**每轮对话都要重传一次**的。
+      const hasAlpha = (await sharp(path.join(stickerDir, realFname), { pages: 1 }).metadata()).hasAlpha;
+      const tName = hasAlpha ? thumbName : thumbName.replace(/\.png$/, '.jpg');
+      await (hasAlpha ? src.png() : src.jpeg({ quality: 82 }))
+        .toFile(path.join(stickerDir, tName));
+      thumbnail = tName;
     } catch(e) {
       console.warn('[sticker] 首帧提取失败 ' + sid + ': ' + e.message);
     }
@@ -5959,6 +6028,8 @@ app.post('/api/chat', auth, async (req, res) => {
     'SELECT role, content, attachments FROM messages WHERE conv_id = ? ORDER BY id ASC'
   ).all(convId);
   const history = await Promise.all(rawMessages.map(async (r) => {
+    const stkParts = _stickerContextParts(r.content, r.role);
+    if (stkParts) return { role: r.role, content: stkParts };
     const atts = JSON.parse(r.attachments || '[]');
     if (!atts.length) return { role: r.role, content: r.content };
     const contentParts = [];
@@ -6468,11 +6539,185 @@ db.exec(`
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_wp_msg_session ON workplace_messages (session_id, id)'); } catch (e) {}
 
 function wpSave(sessionId, who, text, tools) {
-  if (!sessionId) return;
+  if (!sessionId) return null;
   try {
-    db.prepare('INSERT INTO workplace_messages (session_id, who, text, tools) VALUES (?,?,?,?)')
+    const r = db.prepare('INSERT INTO workplace_messages (session_id, who, text, tools) VALUES (?,?,?,?)')
       .run(sessionId, who, String(text || ''), JSON.stringify(tools || []));
-  } catch (e) { console.error('[workplace 存盘]', e.message); }
+    return r.lastInsertRowid;
+  } catch (e) { console.error('[workplace 存盘]', e.message); return null; }
+}
+
+// === 后台跑这一轮（2026-08-29）===========================================
+// 起因：08-29 她在工作台让他改表情包，他干到第 39 轮她那头断了 ——
+// 网关日志 `error_during_execution turns=39 result=""`，39 轮的活整个判失败，
+// 她回来只看见自己最后那句「嗯？」没人应。
+//
+// 根子是**这一轮挂在她的连接上**：原来是「读网关的流 → 写她的 res」，
+// 一条链从她的浏览器直通 claude 进程，她一断就从头断到尾。
+// 手机锁屏、切 App、地铁进隧道，全算断。
+//
+// 现在：这一轮由 wpRun 在后台跑，她的连接只是**订阅者**。
+// 断了只是少一个订阅者 —— 进程照跑、照落库，她回来重新订阅接着看。
+//
+// ⚠️ 仍然拦不住的一种：backend 自己重启（到网关那条 fetch 会断）。
+//    所以**边跑边落库**，已经跑到的部分留在库里 —— 就算被重启掐了，
+//    她回来至少看得见他做到哪儿了。这正是原来那句注释想要、但没做到的效果。
+const wpRuns = new Map();     // runId → run
+let _wpRunSeq = 0;
+const WP_RUN_KEEP_MS = 30 * 60 * 1000;   // 跑完了再留半小时，够她从锁屏回来接上
+const WP_EVENT_CAP   = 4000;             // 重连补发用的事件上限，防长活把内存吃穿
+
+function wpCurrentRun() {
+  for (const r of wpRuns.values()) if (!r.done) return r;
+  return null;
+}
+
+// 事件既要广播给在线的订阅者，也要留一份给断线重连的人补发。
+function wpEmit(run, event, data) {
+  const i = run.seq++;
+  if (run.events.length < WP_EVENT_CAP) run.events.push({ i, event, data });
+  else run.dropped++;
+  // `_i` 是给断线重连用的事件号 —— 她那头记住收到的最后一个，重连时带 from=_i+1
+  // 回来，后端只补她漏的那截。前端自己数是不行的：事件一旦超上限被丢，就错位了。
+  const frame = 'event: ' + event + '\ndata: ' + JSON.stringify(Object.assign({ _i: i }, data)) + '\n\n';
+  for (const res of run.subs) { try { res.write(frame); } catch (e) {} }
+}
+
+// 落库节流：delta 一轮几千条，每条都写盘等于把 SQLite 当日志用。
+// 2 秒一次 + 工具调用/结束时强制写 —— 断在半截最多丢 2 秒的字。
+function wpFlush(run, force) {
+  if (!run.rowId) return;
+  const now = Date.now();
+  if (!force && now - run.lastFlush < 2000) return;
+  run.lastFlush = now;
+  try {
+    db.prepare('UPDATE workplace_messages SET text = ?, tools = ? WHERE id = ?')
+      .run(run.text, JSON.stringify(run.tools), run.rowId);
+  } catch (e) { console.error('[workplace 落库]', e.message); }
+}
+
+// 把一条 SSE 连接挂到 run 上：先补发它错过的，再跟着往下听。
+// from = 她上次收到的最后一个事件号 + 1；不传就从头补。
+function wpAttach(run, res, from) {
+  res.write('event: run\ndata: ' + JSON.stringify({
+    run_id: run.id, seq: run.seq, dropped: run.dropped, running: !run.done,
+  }) + '\n\n');
+  for (const e of run.events) {
+    if (e.i < from) continue;
+    try {
+      res.write('event: ' + e.event + '\ndata: ' +
+        JSON.stringify(Object.assign({ _i: e.i }, e.data)) + '\n\n');
+    } catch (err) {}
+  }
+  if (run.done) {
+    // ⚠️ 只在补发里**没有** done 的时候才补一个 —— 跑完之后接进来的人，
+    //    上面那轮补发里已经带了一个 done 了，无条件再写就是两个。
+    //    （事件超了 WP_EVENT_CAP 被丢的情况下才真的需要这个兜底。）
+    if (!run.events.some(e => e.event === 'done')) {
+      res.write('event: done\ndata: ' + JSON.stringify({ run_id: run.id }) + '\n\n');
+    }
+    return res.end();
+  }
+  run.subs.add(res);
+  // ⚠️ 这里【只退订，不中断】—— 跟改造前最要紧的区别就是这一行。
+  res.on('close', () => { run.subs.delete(res); });
+}
+
+// 真正跑一轮。不接受任何 res —— 它跟谁在看完全无关。
+function wpRun(sid, isNew, prefixed) {
+  const run = {
+    id: 'wr' + (++_wpRunSeq) + '-' + Date.now().toString(36),
+    sid, text: '', tools: [], events: [], seq: 0, dropped: 0,
+    subs: new Set(), done: false, startedAt: Date.now(), endedAt: 0,
+    lastFlush: 0, rowId: null,
+  };
+  wpRuns.set(run.id, run);
+  // 先插一条空的 him —— 这样 /history 和 /activity 立刻就能看见「他在干活」，
+  // 而不是等他说完才凭空冒出来一整条。
+  run.rowId = wpSave(sid, 'him', '', []);
+
+  (async () => {
+    try {
+      const gw = await fetch(WORKPLACE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+        body: JSON.stringify({ message: prefixed, session_id: sid, is_new_session: isNew }),
+      });
+      if (!gw.ok || !gw.body) {
+        wpEmit(run, 'error', { message: '网关返回 ' + gw.status });
+        return;
+      }
+      const reader = gw.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+          if (evt.delta) {
+            run.text += evt.delta;
+            wpEmit(run, 'delta', { text: evt.delta });
+            wpFlush(run, false);
+          }
+          if (evt.thinking) wpEmit(run, 'thinking', { text: evt.thinking });
+          if (evt.tool_use) {
+            run.tools.push({ name: evt.tool_use.name || '', input: evt.tool_use.input || '' });
+            wpEmit(run, 'tool_use', evt.tool_use);
+            wpFlush(run, true);   // 工具调用是她最想回看的，别攒着
+          }
+          if (evt.error) {
+            // 会话丢了（网关重启/记录过期）就清掉，下一句自动开新的。
+            // ⚠️ 别把 'session_lost' 这个内部标记原样吐给她 —— 界面上蹦一个英文单词，
+            //    她不知道发生了什么、也不知道该重发。说人话。
+            if (evt.error === 'session_lost') {
+              wpSession.set('');
+              wpEmit(run, 'error', {
+                message: '上一条工作台会话过期了，我已经开了新的一条 —— 把刚才那句（连同附件）再发一遍就行。',
+              });
+            } else {
+              wpEmit(run, 'error', { message: evt.error });
+            }
+          }
+          if (evt.usage) {
+            const u = evt.usage;
+            try {
+              db.prepare(`INSERT INTO usage_log
+                (conv_id, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms, num_turns, source)
+                VALUES (?,?,?,?,?,?,?,?,'workplace')`).run(
+                'workplace', u.cost_usd || 0, u.input_tokens || 0, u.output_tokens || 0,
+                u.cache_read_tokens || 0, u.cache_write_tokens || 0, u.duration_ms || 0, u.num_turns || 0);
+            } catch (e) { console.error('[workplace usage]', e.message); }
+            wpEmit(run, 'usage', u);
+          }
+        }
+      }
+    } catch (e) {
+      wpEmit(run, 'error', { message: String(e.message || e) });
+    } finally {
+      run.done = true; run.endedAt = Date.now();
+      // 一个字都没说、一个工具都没调 → 那条占位的空记录就是噪音，删掉。
+      if (!run.text && !run.tools.length && run.rowId) {
+        try { db.prepare('DELETE FROM workplace_messages WHERE id = ?').run(run.rowId); } catch (e) {}
+        run.rowId = null;
+      } else {
+        wpFlush(run, true);
+      }
+      wpEmit(run, 'done', { run_id: run.id });
+      for (const res of run.subs) { try { res.end(); } catch (e) {} }
+      run.subs.clear();
+      console.log('[workplace] 这轮跑完 ' + run.id +
+        ' 用了 ' + Math.round((run.endedAt - run.startedAt) / 1000) + 's' +
+        ' 工具 ' + run.tools.length + ' 次' +
+        ' 字 ' + run.text.length);
+      setTimeout(() => { wpRuns.delete(run.id); }, WP_RUN_KEEP_MS).unref?.();
+    }
+  })();
+
+  return run;
 }
 
 // 开面板时拉回来。只给**当前这条会话**的 —— 前端「新话题」会清空重来，
@@ -6480,9 +6725,13 @@ function wpSave(sessionId, who, text, tools) {
 app.get('/api/workplace/history', auth, (req, res) => {
   const sid = wpSession.get();
   if (!sid) return res.json({ messages: [] });
+  // ⚠️ 正在跑的那条 him 要排掉 —— 它是半截的，由 /api/workplace/run + /stream
+  //    那条路负责画（还要接着往里写）。两边都画就会出现两个他的气泡。
+  const live = wpCurrentRun();
+  const skipId = (live && live.rowId) || -1;
   const rows = db.prepare(
-    'SELECT who, text, tools FROM workplace_messages WHERE session_id = ? ORDER BY id ASC LIMIT 200'
-  ).all(sid);
+    'SELECT who, text, tools FROM workplace_messages WHERE session_id = ? AND id != ? ORDER BY id ASC LIMIT 200'
+  ).all(sid, skipId);
   res.json({
     messages: rows.map(r => {
       let t = [];
@@ -6505,6 +6754,20 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  // 上一轮还在跑就别再开一轮 —— 同一个 --resume 会话被两轮同时踩，
+  // 网关那头会直接报「这个进程还有一轮没跑完」。让她接上那一轮，不是排队再开一个。
+  const busy = wpCurrentRun();
+  if (busy) {
+    // restore_text：她这句**没发出去**（也没存库），但前端已经把输入框清空了。
+    // 不退回去，她打的字就凭空消失了 —— 她会以为发出去了，等一个不会来的回答。
+    res.write('event: error\ndata: ' + JSON.stringify({
+      message: '他还在跑上一轮（已经 ' + Math.round((Date.now() - busy.startedAt) / 1000) + 's）—— ' +
+               '我把你接回那一轮了，你这句先还给你，等他跑完再发。',
+      restore_text: message,
+    }) + '\n\n');
+    return wpAttach(busy, res, 0);
+  }
+
   let sid = reset ? null : wpSession.get();
   const isNew = !sid;
   if (isNew) { sid = crypto.randomUUID(); wpSession.set(sid); }
@@ -6512,68 +6775,36 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
   // 存她那句。存的是**原文**不是 prefixed —— 拼进去的主线上下文和附件是给他看的，
   // 回放给她看时应该只有她自己打的那句，不然满屏都是她没写过的东西。
   wpSave(sid, 'her', message, []);
-  let _hisText = '', _hisTools = [];
 
-  try {
-    const gw = await fetch(WORKPLACE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-      body: JSON.stringify({ message: prefixed, session_id: sid, is_new_session: isNew }),
-    });
-    if (!gw.ok || !gw.body) {
-      res.write('event: error\ndata: ' + JSON.stringify({ message: '网关返回 ' + gw.status }) + '\n\n');
-      return res.end();
-    }
-    const reader = gw.body.getReader(), dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-        if (evt.delta)    { _hisText += evt.delta;
-                            res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n'); }
-        if (evt.thinking) res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
-        if (evt.tool_use) { _hisTools.push({ name: evt.tool_use.name || '', input: evt.tool_use.input || '' });
-                            res.write('event: tool_use\ndata: ' + JSON.stringify(evt.tool_use) + '\n\n'); }
-        if (evt.error) {
-          // 会话丢了（网关重启/记录过期）就清掉，下一句自动开新的。
-          // ⚠️ 别把 'session_lost' 这个内部标记原样吐给她 —— 界面上蹦一个英文单词，
-          //    她不知道发生了什么、也不知道该重发。说人话。
-          if (evt.error === 'session_lost') {
-            wpSession.set('');
-            res.write('event: error\ndata: ' + JSON.stringify({
-              message: '上一条工作台会话过期了，我已经开了新的一条 —— 把刚才那句（连同附件）再发一遍就行。',
-            }) + '\n\n');
-          } else {
-            res.write('event: error\ndata: ' + JSON.stringify({ message: evt.error }) + '\n\n');
-          }
-        }
-        if (evt.usage) {
-          const u = evt.usage;
-          try {
-            db.prepare(`INSERT INTO usage_log
-              (conv_id, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms, num_turns, source)
-              VALUES (?,?,?,?,?,?,?,?,'workplace')`).run(
-              'workplace', u.cost_usd || 0, u.input_tokens || 0, u.output_tokens || 0,
-              u.cache_read_tokens || 0, u.cache_write_tokens || 0, u.duration_ms || 0, u.num_turns || 0);
-          } catch (e) { console.error('[workplace usage]', e.message); }
-          res.write('event: usage\ndata: ' + JSON.stringify(u) + '\n\n');
-        }
-      }
-    }
-    res.write('event: done\ndata: {}\n\n');
-  } catch (e) {
-    res.write('event: error\ndata: ' + JSON.stringify({ message: String(e.message || e) }) + '\n\n');
+  // 开跑。注意 wpRun **不接受 res** —— 这一轮跟谁在看无关，她断了它照跑。
+  const run = wpRun(sid, isNew, prefixed);
+  wpAttach(run, res, 0);
+});
+
+// 现在有没有活在跑？她重进工作台第一件事问这个。
+app.get('/api/workplace/run', auth, (req, res) => {
+  const run = wpCurrentRun();
+  if (!run) return res.json({ running: false });
+  res.json({
+    running: true, run_id: run.id, seq: run.seq,
+    elapsed_ms: Date.now() - run.startedAt,
+    text: run.text, tools: run.tools,
+  });
+});
+
+// 断线重连：接回一轮还在跑（或刚跑完还没过期）的活。
+// from = 她已经收到的最后一个事件号 + 1，用来只补她漏掉的那截。
+app.get('/api/workplace/stream', auth, (req, res) => {
+  const run = req.query.run_id ? wpRuns.get(String(req.query.run_id)) : wpCurrentRun();
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  if (!run) {
+    res.write('event: gone\ndata: {}\n\n');
+    return res.end();
   }
-  // 存他那句。**放在 catch 外面**，中途断了也要把已经说出来的存下来 ——
-  // 断在半截正是她最需要回看的时候（想知道他做到哪儿了）。
-  if (_hisText || _hisTools.length) wpSave(sid, 'him', _hisText, _hisTools);
-  res.end();
+  wpAttach(run, res, parseInt(req.query.from, 10) || 0);
 });
 
 // 主线最近说了什么 —— 给 workplace 面板显示，让她勾选哪几条带给干活的这个。
@@ -7014,6 +7245,7 @@ async function handleGatewayChat(req, res, ctx) {
     // 这里把 gateway 路径补齐，跟中转对齐。⚠️ 只对以后的新消息有效，旧的补不回来。
     let gwThinking = '';
     let gwMarkers = '';
+    const gwStickers = [];   // 表情单独成条，不拼进正文
     // 08-24：网关这条路以前不存 tool_use / tool_result —— 卡片和 trace row
     // 只在流式当下画出来，刷新就没了（中转那条路 08-22 就修了，这条一直漏着）。
     // 格式跟前端 _buildTraceRowFromHistory 期望的一致：tool_use 在前、tool_result 在后。
@@ -7066,7 +7298,8 @@ async function handleGatewayChat(req, res, ctx) {
         } else if (evt.tool_result) {
           const ctt = evt.tool_result;
           const parsed = ctt.parsed;
-          if (parsed && parsed.sticker_url) { gwMarkers += '\n![sticker](' + parsed.sticker_url + ')'; res.write('event: sticker\ndata: ' + JSON.stringify({ url: parsed.sticker_url }) + '\n\n'); }
+          // 表情不进正文 —— 单独存一条消息，前端才能不套气泡地渲染（见下面的 INSERT）
+          if (parsed && parsed.sticker_url) { gwStickers.push(parsed.sticker_url); res.write('event: sticker\ndata: ' + JSON.stringify({ url: parsed.sticker_url }) + '\n\n'); }
           if (parsed && parsed.file_card) gwMarkers += '\n[FILE:' + parsed.file_card.filename + '|' + parsed.file_card.id + ']';
           if (parsed && parsed.markup && typeof parsed.markup === 'string') gwMarkers += '\n' + parsed.markup;
           if (parsed && parsed.artifact) {
@@ -7135,7 +7368,7 @@ async function handleGatewayChat(req, res, ctx) {
     }
     // 标记要跟正文一起存：胶囊/贴纸/文件卡片靠它们在历史里重新渲染出来。
     // 注意接在 synthVoiceTags 之后 —— 那个函数只处理 <voice> 标签，别让它啃到标记。
-    if (assistantText || gwMarkers) {
+    if (assistantText || gwMarkers || gwStickers.length) {
       if (assistantText) assistantText = await synthVoiceTags(assistantText, res);
       const gwFull = (assistantText || '') + gwMarkers;
       if (gwFull) {
@@ -7147,6 +7380,11 @@ async function handleGatewayChat(req, res, ctx) {
         } catch (e) { _gwTraces = '[]'; }
         db.prepare('INSERT INTO messages (conv_id, role, content, thinking, traces) VALUES (?, ?, ?, ?, ?)')
           .run(convId, 'assistant', gwFull, gwThinking, _gwTraces);
+      }
+      // 文字一条、表情一条 —— 拆开存，历史里表情才是一张裸图而不是气泡里的插图
+      for (const u of gwStickers) {
+        db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)')
+          .run(convId, 'assistant', '[Sticker] ' + u);
       }
     }
     // 正常情况这里已经在收到第一块数据时写过了（幂等，直接返回）。
@@ -7465,11 +7703,12 @@ async function handleAnthropicChat(req, res, ctx) {
           
           // 检查是否调用了 send_sticker / create_file / share_music / create_artifact —— 把图/文件/音乐/HTML 注入回复
           let stickerImgs = '';
+          const stickerUrls = [];   // 表情单独成条，不拼进正文
           for (const tr of toolResults) {
             try {
               const ct = typeof tr.content === 'string' ? JSON.parse(tr.content) : tr.content;
               if (ct && ct.sticker_url) {
-                stickerImgs += '\n![sticker](' + ct.sticker_url + ')';
+                stickerUrls.push(ct.sticker_url);
               }
               if (ct && ct.file_card) {
                 stickerImgs += '\n[FILE:' + ct.file_card.filename + '|' + ct.file_card.id + ']';
@@ -7499,7 +7738,7 @@ async function handleAnthropicChat(req, res, ctx) {
           _mindExtracted2.memories.forEach(_insertMindItem);
           _mindExtracted2.dreams.forEach(_insertMindItem);
           _mindExtracted2.flashes.forEach(_insertMindItem);
-          if (cleanFullText || (stickerImgs && cleanFullText)) {
+          if (cleanFullText) {
             cleanFullText = await synthVoiceTags(cleanFullText, res);
             // 08-22：把这一轮的工具调用一起存下来，前端刷新后才能把卡片和 trace row 还原。
             // 格式跟前端 _buildTraceRowFromHistory 期望的一致：tool_use 在前、tool_result 在后。
@@ -7518,6 +7757,11 @@ async function handleAnthropicChat(req, res, ctx) {
             } catch (e) { _tracesJson = '[]'; }
             db.prepare('INSERT INTO messages (conv_id, role, content, thinking, traces) VALUES (?, ?, ?, ?, ?)')
               .run(convId, 'assistant', cleanFullText, fullThinking, _tracesJson);
+          }
+          // 文字一条、表情一条 —— 拆开存，历史里表情才是一张裸图而不是气泡里的插图
+          for (const u of stickerUrls) {
+            db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?, ?, ?)')
+              .run(convId, 'assistant', '[Sticker] ' + u);
           }
         }
       }
