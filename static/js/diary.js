@@ -1227,7 +1227,11 @@ function _initDiaryEvents() {
 }
 
 function _ensureFab() {
-  if (document.getElementById('diaryFab')) return;
+  // 详情页把它 display:none 了（见 _renderDetail）。只有 _backToTimeline 会还回来 ——
+  // 从详情页直接关掉面板再打开，就还不回来了，+ 号永久消失（08-29 她报的）。
+  // 这里是时间线视图的必经之路，一律把它显出来。
+  var _exist = document.getElementById('diaryFab');
+  if (_exist) { _exist.style.display = ''; return; }
   var fab = document.createElement('button');
   fab.id = 'diaryFab';
   fab.className = 'diary-fab';
