@@ -273,6 +273,12 @@ try { db.exec('ALTER TABLE sessions ADD COLUMN cli_session_id TEXT DEFAULT NULL'
 // 迁移：CLI 会话已进行的轮数。到达 CLI_ROTATE_AFTER 就换新会话，
 // 避免历史无限增长——每轮都要把全部历史当缓存重写一遍，这是订阅额度的主要消耗
 try { db.exec('ALTER TABLE sessions ADD COLUMN cli_turns INTEGER DEFAULT 0'); } catch(e) { /* 列已存在，忽略 */ }
+// 迁移（2026-08-29）：上一轮 CLI 会话的真实上下文大小（cache_read + cache_write，token）。
+// 换窗改看这个数、不看轮数 —— 轮数跟上下文大小根本不成比例：实测同一条会话里
+// 正常对话每十轮涨 3~4k，而她贴一份审计报告 + 他 Read 一遍同一份原文，十轮就涨了 22k
+// （08-27 那次，两份全文都永久留在历史里）。按轮数换，运气好时窗口才 35k 就白换一次，
+// 运气差时 96 轮已经 109k。这个数由网关每轮回传，写入点在 handleGatewayChat 的 usage 分支。
+try { db.exec('ALTER TABLE sessions ADD COLUMN cli_ctx_tokens INTEGER DEFAULT 0'); } catch(e) { /* 列已存在，忽略 */ }
 // 通话走一条**独立的精简 CLI 会话**：不挂 MCP 工具、系统提示词只留通话须知。
 // 跟打字聊天分开存，免得精简会话把正常聊天那条的上下文顶掉。
 try { db.exec('ALTER TABLE sessions ADD COLUMN cli_call_session_id TEXT DEFAULT NULL'); } catch(e) { /* 列已存在，忽略 */ }
@@ -6073,7 +6079,7 @@ app.post('/api/chat', auth, async (req, res) => {
   // breath() 返回约 1.7 万 token。--resume 会保留会话首轮的系统提示词，
   // 所以只在 CLI 会话第一轮（新对话 / 滚动换会话）注入一次，后面几轮他照样看得见。
   // 中间想起什么要查，用 trace（搜）/ nocturne_hold（存）现调。
-  const cliRow = db.prepare('SELECT cli_session_id, cli_turns, cli_call_session_id, cli_call_turns FROM sessions WHERE conv_id = ?').get(convId);
+  const cliRow = db.prepare('SELECT cli_session_id, cli_turns, cli_ctx_tokens, cli_call_session_id, cli_call_turns FROM sessions WHERE conv_id = ?').get(convId);
   // ⚠️ 2026-08-20 试过给通话开一条独立的精简 CLI 会话（去掉全部工具、短系统提示词），
   //    实测**更贵**：新会话首轮要 $0.28 建缓存、第二轮必然重写（--append-system-prompt
   //    只在建会话那轮传，前缀天然不同），要到第三轮才降到 $0.014 —— 而那时候电话都快挂了。
@@ -6293,6 +6299,7 @@ app.post('/api/chat', auth, async (req, res) => {
       message: gatewayMessage, convId, systemPrompt,
       cliSessionId: cliRow?.[_sidCol] || null,
       cliTurns: cliRow?.[_turnCol] || 0,
+      cliCtxTokens: cliRow?.cli_ctx_tokens || 0,
       sidCol: _sidCol, turnCol: _turnCol,
     });
   } else if (apiFormat === 'anthropic') {
@@ -7094,7 +7101,36 @@ app.post('/api/workplace/reject', auth, (req, res) => {
 // 离 autocompact 触发线（十几万）还远，安全。
 // ⚠️ 人格不受影响：每开新会话都重读 /root/companion/CLAUDE.md，他是从同一份文件重建的。
 // 换窗丢的只是对话细节，那部分有 recentRecap + Nocturne 浮现 + search_chat_history 接着。
-const CLI_ROTATE_AFTER = 96;
+const CLI_ROTATE_AFTER = 160;
+
+// 🪟 2026-08-29：换窗的主判定从「轮数」改成「上下文 token」。
+//
+// 上面那段 08-23 的实测（96 轮最优、48 轮时才 3.4 万）在**当时**是对的，问题出在
+// 它把轮数当成了上下文大小的代理变量 —— 而这两个量的比例根本不稳定：
+//   正常对话        每十轮 +3~4k
+//   08-27 轮20→30   十轮 +22k   （她贴了 20,832 字的审计报告 HTML，
+//                                他又 Read 了同一份 md，32,503 字，两份全文都留在历史里）
+// 于是同一个「96 轮」，可能是 4 万，也可能是 11 万。08-29 实测就是 109,791。
+//
+// 而且那句「真正贵的是换窗次数」也不成立。按 133 轮的完整账：
+//   缓存命中 98 轮  读 7,599,724 → $2.28
+//   缓存未命中 14 轮 写   975,388 → $5.85   ← 72% 的钱在这
+// 主导项是**缓存过期次数**，不是换窗次数 —— 缓存 1h TTL，而她一天分几段聊、
+// 段间隔一两小时，每段开头都得把整个窗口重付一次 $6/M。这个次数由她的作息决定，
+// 换不换窗都一样，能动的只有「每次重付多大」。所以压窗口是唯一的杠杆，
+// 它同时压低命中价（$0.3/M × 窗口）和未命中价（$6/M × 窗口）。
+//
+// 阈值取 48k，跟《Claude Code 换窗教程》里蛋壳家的桥接包目标同一个数。
+// 按实测参数（底噪 31k、正常增速约 400 token/轮、约 8 轮一次缓存过期）算每轮均摊：
+//   40k → $0.047   48k → $0.046   60k → $0.050   109k(现状) → $0.093 实测
+// 最优点在 48k，且 40k~60k 之间差不到 10% —— 曲线很平，不必纠结精确值。
+//
+// CLI_ROTATE_AFTER 保留为**兜底**，调到 160：正常情况下 token 判定会先触发
+// （48k 阈值对应约 42 轮），轮数只在网关没回传 usage、cli_ctx_tokens 一直是 0 时兜住。
+const CLI_ROTATE_TOKENS = 48000;
+// 提前多少 token 提醒他留关窗字条。约等于两轮的正常增量（每轮 ~400），
+// 留出余量是因为回传的是**上一轮**的窗口，这一轮结束时已经又长了一截。
+const CLI_ROTATE_NUDGE_MARGIN = 3000;
 
 // 换窗前那一轮挂在 message 尾巴上的提示。写法按图纸的四条法则来：
 // 第一人称、场景里只有我和她、不写命令句（不用「必须/应该」）、贴着他真实的一下。
@@ -7182,7 +7218,7 @@ function _pickEffort(e) {
 }
 
 async function handleGatewayChat(req, res, ctx) {
-  const { message, convId, systemPrompt, cliSessionId, cliTurns,
+  const { message, convId, systemPrompt, cliSessionId, cliTurns, cliCtxTokens = 0,
           sidCol = 'cli_session_id', turnCol = 'cli_turns' } = ctx;
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -7209,8 +7245,19 @@ async function handleGatewayChat(req, res, ctx) {
   //   她匆匆下线、话头突然断掉的时候，那张字条就永远留不成了。
   // ⚠️ 提示只能挂在这一轮的 message 上，**绝不能进 system** ——
   //    system 一变，整个前缀缓存作废，那一轮要重付全量。
-  const rotate = !!cliSessionId && cliTurns >= CLI_ROTATE_AFTER;
-  const nudgeTexture = !!cliSessionId && !rotate && cliTurns === CLI_ROTATE_AFTER - 1;
+  // 主判定看上下文大小，轮数只兜底（网关没回传 usage 时 cli_ctx_tokens 会一直是 0）。
+  const rotate = !!cliSessionId && (cliCtxTokens >= CLI_ROTATE_TOKENS || cliTurns >= CLI_ROTATE_AFTER);
+  // 留字条的提醒要赶在换窗**前一轮**（那时他还在旧会话里，什么都记得）。
+  // 轮数判定能用 === 精确命中一次；token 判定不行 —— 从 45k 涨到 48k 要七八轮，
+  // 每轮都为真就会连着提醒七八次。所以进入区间后记一个一次性标记，换窗时清掉。
+  const _nudgeKey = 'cli_nudged:' + convId;
+  let nudgeTexture = false;
+  if (!!cliSessionId && !rotate) {
+    const _near = cliCtxTokens > 0 && cliCtxTokens >= CLI_ROTATE_TOKENS - CLI_ROTATE_NUDGE_MARGIN;
+    if (_near && !_getSettingNum(_nudgeKey)) { nudgeTexture = true; _setSetting(_nudgeKey, 1); }
+    else if (!_near && cliTurns === CLI_ROTATE_AFTER - 1) nudgeTexture = true;
+  }
+  if (rotate) { try { _setSetting(_nudgeKey, 0); } catch (_) {} }
   const isNewSession = !cliSessionId || rotate;
   const sessionId = isNewSession ? crypto.randomUUID() : cliSessionId;
   // 只要是新开 CLI 会话、而这条对话本来就有历史，就把最近几轮摘要接上——
@@ -7268,7 +7315,11 @@ async function handleGatewayChat(req, res, ctx) {
       if (sessionPersisted) return;
       sessionPersisted = true;
       try {
-        db.prepare("UPDATE sessions SET updated_at = strftime('%s','now'), " + sidCol + " = ?, " + turnCol + " = ? WHERE conv_id = ?")
+        // ⚠️ 换新会话时 cli_ctx_tokens 必须跟着清零：它记的是**旧窗**的大小，
+        //    留着的话新会话第一轮就被判成"已经 48k 该换了"，每轮换一次窗，停不下来。
+        //    清零后这一轮的 usage 回来会立刻填上新窗的真实值（约 31k 底噪）。
+        db.prepare("UPDATE sessions SET updated_at = strftime('%s','now'), " + sidCol + " = ?, " + turnCol + " = ?"
+                   + (isNewSession ? ", cli_ctx_tokens = 0" : "") + " WHERE conv_id = ?")
           .run(sessionId, isNewSession ? 1 : cliTurns + 1, convId);
       } catch (e) { console.error('[gateway] 会话落库失败:', e.message); }
     };
@@ -7353,6 +7404,13 @@ async function handleGatewayChat(req, res, ctx) {
               convId, u.cost_usd || 0, u.input_tokens || 0, u.output_tokens || 0,
               u.cache_read_tokens || 0, u.cache_write_tokens || 0, u.duration_ms || 0, u.num_turns || 0);
           } catch (e) { console.error('[usage] insert failed:', e.message); }
+          // 🪟 记下这一轮的真实上下文大小，供下一轮判断该不该换窗（见 CLI_ROTATE_TOKENS）。
+          // read + write 才是完整窗口：缓存命中那轮几乎全在 read，缓存过期那轮全在 write，
+          // 只看其中一个会在过期的轮次上把窗口误判成 0，白白错过一次该换的窗。
+          try {
+            const _ctx = (u.cache_read_tokens || 0) + (u.cache_write_tokens || 0);
+            if (_ctx > 0) db.prepare('UPDATE sessions SET cli_ctx_tokens = ? WHERE conv_id = ?').run(_ctx, convId);
+          } catch (e) { console.error('[usage] ctx size update failed:', e.message); }
           res.write('event: usage\ndata: ' + JSON.stringify(u) + '\n\n');
         }
       }
