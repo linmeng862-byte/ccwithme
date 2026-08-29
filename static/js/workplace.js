@@ -558,7 +558,9 @@
           acts.remove();
           card.append(h('div', 'padding:11px 14px;font:12px var(--font-sans);color:' + (d2.pushed ? '#1a7f37' : '#B85C38'),
             applyResultText(d2)));
-          setTimeout(loadDiff, 6000);
+          // 不能写 `setTimeout(loadDiff, 6000)` —— setTimeout 会把 timer id 当第一个参数
+          // 塞进去，ops 就成了一个数字。包一层。
+          setTimeout(function () { loadDiff(); }, 6000);
           setTimeout(wsRefreshIfLoaded, 6200);
         });
       };
@@ -786,9 +788,18 @@
     syncMlCount();
 
     // diff 只在「他刚改完」之后作为卡片落进对话流，不再常驻一块面板
-    function loadDiff(ops) {
+    //
+    // ⚠️ 这儿原来是 `.catch(function(){})` —— 静默吞掉，卡片再也不补。
+    //    他的 Bash 白名单里有 `pm2 restart chat-c`，而 chat-c 正是托着这条流的后端：
+    //    他改完自己重启一下，就把自己坐的树枝锯了，这一发 fetch 正好撞进重启窗口，
+    //    活干完了、卡片一辈子出不来（2026-08-29 她报的）。重启一般 1-3 秒，重试三次够了。
+    function loadDiff(ops, _try) {
+      _try = _try || 0;
       fetch('/api/workplace/diff', { headers: authHeaders() })
-        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          if (!r.ok) throw new Error('后端返回 ' + r.status);   // 重启中会是 502/503，要走重试
+          return r.json();
+        })
         .then(function (d) {
           if (d.error) { toast(d.error); return; }
           syncPending(d);
@@ -797,7 +808,10 @@
           diffCard(d, ops);
           wsRefreshIfLoaded();
         })
-        .catch(function () {});
+        .catch(function () {
+          if (_try >= 3) return;           // 真连不上就算了，别无限刷
+          setTimeout(function () { loadDiff(ops, _try + 1); }, 2000 * (_try + 1));
+        });
     }
 
     function doSend() {
