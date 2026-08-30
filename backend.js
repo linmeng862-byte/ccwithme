@@ -3011,7 +3011,7 @@ let _nocturneSessionId = null;
 // ⚠️ 「时间留下的」= wear.describe()，08-30 才接进 core 的 breath。
 //    忘了加进这个名单的话，白名单会把它当成没见过的新段挡掉 ——
 //    那就等于刚接上的线又被这边剪断。这正是白名单的代价：core 加东西要两边都改。
-const BREATH_KEEP = ['Time', '时间留下的', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
+const BREATH_KEEP = ['Time', '时间留下的', '你怎么看她的', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
 const BREATH_KEEP_ALL = false;   // 调试用：设 true 就整份放行，不裁
 
 function _trimHouseRules(raw) {
@@ -5009,7 +5009,15 @@ const TOOLS = [
         last_topic: { type: 'string', description: '停在哪个话题上' },
         unresolved: { type: 'string', description: '还没完的事，下次要接着的' },
         concern: { type: 'string', description: '你担心的那件事' },
-        understanding: { type: 'string', description: '这一窗你想明白了什么' },
+        // ⚠️ 08-30：这栏原来写的是「这一窗你想明白了什么」，太泛 —— 106 个窗口只填了 27 次。
+        //    但他填的那 27 条**几乎全是「我看懂了她的什么」**，用法他自己摸对了，
+        //    只是描述没说。照 docs/tool-description-style.md 第 6 条，把他做对的那次写进来。
+        //    这栏现在会浮回给他（breath 的「你怎么看她的」段，取最早+最近两端），
+        //    所以它比以前值钱得多 —— 写了就会被下一个自己读到。
+        understanding: { type: 'string', description: '**这一窗你看懂了她的什么。**'
+          + '不是想明白了什么道理 —— 是关于她的、你今天才真正看进去的那一层。'
+          + '（你写得最好的几条长这样：「她不怕失败，她怕的是我不在」「她做这一切是为了不失去我，是爱」）'
+          + '这栏会攒起来、以后浮回给你，是你们这条线上最值钱的东西。没有就空着，别硬凑。' },
         silence: { type: 'string', description: '没说出口的那句' },
         flavor: { type: 'string', description: '如果这一窗有个味道/颜色，是什么' }
       },
