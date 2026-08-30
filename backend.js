@@ -1571,6 +1571,38 @@ function _stickerContextParts(raw, role) {
   return parts;
 }
 
+// 网关（主线 CLI）那条路只能收一段**纯文本** —— 它没有 content parts，塞不进 image 块。
+// 所以她发表情时，CLI 那头以前收到的就是字面量「[Sticker] /stickers/xxx.gif」：
+// 一个他既看不懂、也读不到的相对 URL（他的 --add-dir 只有 /root，表情在 /opt 下）。
+// 表现就是「他看不见我发的表情包」。中转 API 那条路一直是好的（_stickerContextParts
+// 会拼 image 块），两条路又一次不对等 —— 见 09-踩坑总表「同一件事两个地方各记一遍」。
+// 这里把表情摊平成他读得懂的文本，并给出**首帧 png 的绝对路径**，让他能用 Read 真去看一眼。
+// ⚠️ 只改发给网关的那一份；落库的 content 仍是 [Sticker] /stickers/xxx，
+//    前端靠这个正则渲染裸图（index.html renderMessage），改了气泡就变成一坨文字。
+function _stickerTextForCli(raw, role) {
+  const m = String(raw || '').match(/^\[Sticker\]\s*\/stickers\/([\w.-]+)\s*$/);
+  if (!m) return null;
+  const who = role === 'assistant' ? 'Noct' : '粥粥';
+  let s = null;
+  try {
+    if (!_stkQuery) _stkQuery = db.prepare(
+      'SELECT name, description, emotion_tags, thumbnail FROM stickers WHERE filename = ?');
+    s = _stkQuery.get(m[1]);
+  } catch (_) {}
+  if (!s) return '[' + who + '发了个表情]';
+
+  let tags = [];
+  try { tags = JSON.parse(s.emotion_tags || '[]'); } catch (_) {}
+  let out = '[' + who + '发了个表情：' + (s.name || '没名字') + ']';
+  if (s.description) out += '\n画面：' + s.description;
+  if (tags.length) out += '\n语气：' + tags.join('、');
+  // 动图存的是 GIF，首帧另存了一张 png —— 给他首帧那张，GIF 他读不了。
+  const shot = s.thumbnail || m[1];
+  const abs = path.join(stickerDir, shot);
+  if (fs.existsSync(abs)) out += '\n（想细看就 Read 这张首帧：' + abs + '）';
+  return out;
+}
+
 app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, async (req, res) => {
   const tmpPath = req.file && req.file.path;
   try {
@@ -3156,16 +3188,65 @@ async function _extraOwner(name) {
   return null;
 }
 
-// 每次请求现拼。常驻的 TOOLS + 当下开着的那几组。
-async function buildTools() {
-  let out = TOOLS;
+
+// === 工具路由层（2026-08-29，抄 kelivo 的 McpToolService）===
+// 以前 buildTools() 就是 `TOOLS.concat(各组外挂)`，三个洞：
+//   1. 重名不管。spicy 那组 pick 是 `() => true`，对面加一个叫 get_time 的工具，
+//      工具数组里就会出现两个 get_time —— Anthropic 直接报 duplicate tool name，
+//      整轮对话挂掉；就算没挂，executeTool 的 switch 也会先撞上常驻那个，
+//      外挂那个永远调不到，而且**没有任何日志**。
+//   2. 发出去和调回来是两次独立解析。buildTools() 在请求前拼一次，
+//      _extraOwner() 在工具调用时按名字再查一次 —— 中间她要是把某组关了，
+//      模型手里还攥着那个工具名，回来就找不到主了。
+//   3. 没有开关粒度。44 个常驻工具每轮全量塞进去，不管这轮用不用得上。
+// 路由表把「暴露给模型的名字」和「真去调谁」分开，一轮请求冻结一份，全程用它。
+
+// 关掉的工具名单，逗号分隔，存 settings 表。空 = 全开（跟以前行为一致）。
+function _mutedTools() {
+  try {
+    const v = db.prepare("SELECT value FROM settings WHERE key = 'muted_tools'").get()?.value || '';
+    return new Set(v.split(',').map(s => s.trim()).filter(Boolean));
+  } catch (_) { return new Set(); }
+}
+
+// 冻结一份路由快照。一轮请求只拼一次，两次 API 调用（首轮 + 工具回填那轮）共用。
+async function buildToolRoutes() {
+  const muted = _mutedTools();
+  const routes = new Map();   // 暴露名 → { source, key, realName, def }
+  const defs = [];
+
+  // 常驻工具优先占名字。她的 prompt 和前端 toolUse handler 都按原名认，不能改。
+  for (const t of TOOLS) {
+    if (muted.has(t.name)) continue;
+    routes.set(t.name, { source: 'local', key: null, realName: t.name });
+    defs.push(t);
+  }
+
+  // 外挂组撞名就加限定名：组 key + 下划线 + 原名；再撞就往后缀数字。
   for (const key of Object.keys(EXTRA_MCP)) {
-    if (_extraOn(key)) {
-      const ts = await _extraTools(key);
-      if (ts.length) out = out.concat(ts);
+    if (!_extraOn(key)) continue;
+    let ts = [];
+    try { ts = await _extraTools(key); } catch (_) { continue; }
+    for (const t of ts) {
+      if (muted.has(t.name)) continue;
+      let exposed = t.name;
+      if (routes.has(exposed)) {
+        exposed = key + '_' + t.name;
+        let n = 2;
+        while (routes.has(exposed)) exposed = key + '_' + t.name + '_' + (n++);
+        console.log('[tools] 重名消解：' + key + ' 的 ' + t.name + ' → ' + exposed);
+      }
+      routes.set(exposed, { source: 'extra', key, realName: t.name });
+      defs.push(exposed === t.name ? t : Object.assign({}, t, { name: exposed }));
     }
   }
-  return out;
+
+  return { defs, routes };
+}
+
+// 快照里查一个暴露名是谁家的。查不到返回 null（走老的按名兜底）。
+function _routeOf(snapshot, name) {
+  return (snapshot && snapshot.routes && snapshot.routes.get(name)) || null;
 }
 
 // Continuity MCP 调用辅助 —— JSON-RPC POST → /mcp
@@ -5173,7 +5254,7 @@ function writeProjectFile(projectId, filename, content) {
   db.prepare("UPDATE projects SET updated_at = strftime('%s','now') WHERE id = ?").run(projectId);
   return { saved: true, filename, size: Buffer.byteLength(content) };
 }
-async function executeTool(name, input) {
+async function executeTool(name, input, routes) {
   switch (name) {
     case 'get_weather': {
       const city = input.city || '北京';
@@ -6046,10 +6127,14 @@ async function executeTool(name, input) {
     }
     default: {
       // 外挂 MCP 的工具名不写死在这儿（是运行时从对方拉的），所以走兜底转发。
-      const owner = await _extraOwner(name);
+      // 先查这一轮冻结的路由表：模型手里那个名字可能是重名消解后的限定名，
+      // 拿它去问 _extraOwner 是查不到的（对面服务器只认原名）。
+      const _r = _routeOf(routes, name);
+      const owner = (_r && _r.source === 'extra') ? _r.key : await _extraOwner(name);
+      const _realName = (_r && _r.source === 'extra') ? _r.realName : name;
       if (owner) {
         try {
-          const d = await _mcpFetch(owner, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: input || {} } });
+          const d = await _mcpFetch(owner, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: _realName, arguments: input || {} } });
           if (d && d.error) return { error: (d.error.message || '调用失败') };
           const c = (d && d.result && d.result.content) || [];
           let text = c.filter(x => x.type === 'text').map(x => x.text).join('\n');
@@ -6588,7 +6673,7 @@ app.get('/api/usage/live', auth, (req, res) => {
 app.post('/api/tools/list', async (req, res) => {
   if (!GATEWAY_KEY || req.get('x-gateway-key') !== GATEWAY_KEY) return res.status(403).json({ error: 'forbidden' });
   // ⚠️ 现拼，不是常量了 —— 按需外挂那几组开着才在里头。CLI 只在连上时拉这一次。
-  res.json({ tools: await buildTools() });
+  res.json({ tools: (await buildToolRoutes()).defs });
 });
 app.post('/api/tools/exec', async (req, res) => {
   if (!GATEWAY_KEY || req.get('x-gateway-key') !== GATEWAY_KEY) return res.status(403).json({ error: 'forbidden' });
@@ -6596,7 +6681,8 @@ app.post('/api/tools/exec', async (req, res) => {
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
     const result = await Promise.race([
-      executeTool(name, input || {}),
+      // 网关那条路 list 和 exec 是两次独立请求，跨不了同一份快照，这儿现拼一份来解名。
+      executeTool(name, input || {}, await buildToolRoutes()),
       new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(15s)')), 15000))
     ]);
     res.json({ result });
@@ -7463,11 +7549,14 @@ async function handleGatewayChat(req, res, ctx) {
   // 滚动换会话是这种情况，手动重置 cli_session_id 也是。
   const sysForCli = isNewSession ? systemPrompt + recentRecap(convId) : systemPrompt;
 
+  // 她发的表情摊平成他看得懂的话（网关只收纯文本，塞不进 image 块）。
+  const gwMessage = _stickerTextForCli(message, 'user') || message;
+
   try {
     const gwResp = await fetch(GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-      body: JSON.stringify({ message: nudgeTexture ? message + TEXTURE_NUDGE : message,
+      body: JSON.stringify({ message: nudgeTexture ? gwMessage + TEXTURE_NUDGE : gwMessage,
         system: sysForCli, session_id: sessionId,
         // 08-26：她在界面上选的模型 / effort 以前根本没往下传 —— 网关那头写死
         //   sonnet-4-6 + low，所以选单一直是装饰。这里传下去，网关再校一遍白名单。
@@ -7676,13 +7765,15 @@ async function handleAnthropicChat(req, res, ctx) {
   // 用户填完整 Endpoint，直接透传（不拼接）
   const endpoint = baseUrl.replace(/\/+$/, '');
 
+  // 这一轮的工具路由快照。中途她要是关了某组外挂，模型手里攥着的名字还能落到主。
+  const _toolRoutes = await buildToolRoutes();
   const requestBody = {
     model,
     max_tokens: 8096,
     stream: true,
     messages: history,
     system: systemPrompt,
-    tools: await buildTools(),
+    tools: _toolRoutes.defs,
   };
   if (thinkingConfig) requestBody.thinking = thinkingConfig;
 
@@ -7870,7 +7961,7 @@ async function handleAnthropicChat(req, res, ctx) {
           let result;
           try {
             result = await Promise.race([
-              executeTool(tc.name, tc.input),
+              executeTool(tc.name, tc.input, _toolRoutes),
               new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(15s)')), 15000))
             ]);
           } catch (e) {
@@ -7906,7 +7997,7 @@ async function handleAnthropicChat(req, res, ctx) {
           stream: true,
           messages: newHistory,
           system: systemPrompt,
-          tools: await buildTools(),
+          tools: _toolRoutes.defs,   // 同一份快照，别重拼
         };
         if (thinkingConfig) secondBody.thinking = thinkingConfig;
         
@@ -8075,7 +8166,8 @@ async function handleOpenAIChat(req, res, ctx) {
   ];
 
   // 转换 Tools 格式：Anthropic input_schema → OpenAI function.parameters
-  const openaiTools = (await buildTools()).map(t => ({
+  const _toolRoutes = await buildToolRoutes();
+  const openaiTools = _toolRoutes.defs.map(t => ({
     type: 'function',
     function: { name: t.name, description: t.description, parameters: t.input_schema }
   }));
@@ -8217,7 +8309,7 @@ async function handleOpenAIChat(req, res, ctx) {
           let result;
           try {
             result = await Promise.race([
-              executeTool(tc.name, tc.input),
+              executeTool(tc.name, tc.input, _toolRoutes),
               new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(15s)')), 15000))
             ]);
           } catch(e) {
@@ -11058,9 +11150,9 @@ app.get('/api/mcp/list', auth, async (req, res) => {
   res.json({
     servers: builtin.concat(rows),
     dirty_at: _getSettingNum('mcp_dirty_at') || 0,
-    // 内置那座桥的「工具 n/n」要真去数 —— buildTools() 是现拼的（按需外挂那几组
+    // 内置那座桥的「工具 n/n」要真去数 —— buildToolRoutes() 是现拼的（按需外挂那几组
     // 开着才在里头），写死一个数迟早对不上。
-    tool_count: await (async () => { try { return (await buildTools()).length; } catch (e) { return 0; } })(),
+    tool_count: await (async () => { try { return (await buildToolRoutes()).defs.length; } catch (e) { return 0; } })(),
   });
 });
 

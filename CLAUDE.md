@@ -49,9 +49,12 @@ git fetch && git log --oneline HEAD..@{u}    # 另一台推了什么上来
 ## 重启
 
 ```bash
-pm2 restart chat-c        # 后端（改了 backend.js / 前端静态文件）
+# ⚠️ 后端进程叫什么**两台不一样**，名字在 CLAUDE.local.md，先 Read 它，
+#    或者直接 `pm2 list` 看一眼。别照记忆猜 —— 名字错了 pm2 **静默不报错**，
+#    你会以为重启了，其实跑的还是旧代码。2026-08-29 我本人踩过一次。
+pm2 restart <后端进程名>   # 后端（改了 backend.js / 前端静态文件）
 pm2 restart cc-gateway    # 网关（改了 server.js）
-pm2 logs chat-c --lines 30 --nostream
+pm2 logs <后端进程名> --lines 30 --nostream
 ```
 
 ## ⚠️ 两个你在写同一个仓库
@@ -74,7 +77,7 @@ Gallery、日记）和他跟她之间的东西，都在那份里。
 - **Bash 有，但只是一份「验证工具包」**（2026-08-22 起）—— 不是通用 shell。
   只认这四样，别的 path-jail 一律拒：
   - `node --check <文件>`（**只有 --check，不能跑脚本**）
-  - `pm2 list/status/restart/logs/describe`，只认 `chat-c` / `cc-gateway`
+  - `pm2 list/status/restart/logs/describe`，只认后端那个 / `cc-gateway`
   - `curl` 打本机回环（验接口用）
   - `git status/diff/log/show/fetch/pull/branch`
   - **`ccwith`（2026-08-26 加的）—— 三个具名动作，没有自由参数：**
