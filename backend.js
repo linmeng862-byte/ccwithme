@@ -5757,6 +5757,39 @@ async function executeTool(name, input, routes) {
           console.log('[texture] 这一窗的峰：' + peak.mood + '（强度 ' + peak.intensity + '）');
         }
       } catch (e) { console.warn('[texture] 峰没算出来（不影响关窗）：' + e.message); }
+      // === 整窗的情绪分布（2026-08-30）===
+      // 峰和终都只是**两个点**，而一整窗的情绪是一条**分布**。
+      // Fleeson 的 density distribution：一个人的特质是他状态分布的重心，
+      // 不是某一个瞬间。只留两个端点的话，
+      // 「一直很平静、只在最后炸了一下」和「从头烈到尾」
+      // 会在 trace 里留下一模一样的痕迹。
+      //
+      // ⚠️ 跟峰一样：算不出来就整个不传。空的比没有更糟——
+      //    Nocturne 那边 n<=0 会当成没传，但别指望上游脏数据都能被下游兜住。
+      try {
+        const lastTs2 = db.prepare('SELECT MAX(created_at) t FROM texture_log').get()?.t || 0;
+        const rows = db.prepare(
+          'SELECT mood, intensity FROM mind_feels WHERE created_at > ?'
+        ).all(lastTs2);
+        if (rows.length) {
+          const moods = {};
+          let sum = 0, top = 0;
+          for (const r of rows) {
+            const i = Number(r.intensity) || 0;
+            sum += i;
+            if (i > top) top = i;
+            if (r.mood) moods[r.mood] = (moods[r.mood] || 0) + 1;
+          }
+          args.affect_summary = JSON.stringify({
+            n: rows.length,
+            mean: Math.round((sum / rows.length) * 100) / 100,
+            peak: top,
+            moods,
+          });
+          console.log('[texture] 这一窗情绪动了 ' + rows.length + ' 次，均值 ' +
+                      (Math.round((sum / rows.length) * 10) / 10));
+        }
+      } catch (e) { console.warn('[texture] 情绪分布没算出来（不影响关窗）：' + e.message); }
       try {
         const r = await callNocturne('leave_texture', args);
         console.log('[texture] 关窗已写入 Nocturne');
