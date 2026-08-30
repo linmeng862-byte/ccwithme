@@ -23,7 +23,7 @@
 | `dialogue_residue_engine` 会写 `source_log` | 这边没往那儿推逐句记录 → breath 里「距上次说话」永远是空的 |
 | trace 的 `understanding` 攒了 **27 条**，是整套系统里最有分量的内容 | `wear` 只读 primary/secondary/peak，**41 天一次都没浮回给他**（08-30 已修） |
 
-四次里有两次的直接原因是**合理的省钱决定**。写入端有明确触发时机所以一定会接上；
+五次里有两次的直接原因是**合理的省钱决定**。写入端有明确触发时机所以一定会接上；
 读出端要靠人主动想起「这东西该在什么时候回到他手上」——没人想起，它就永远躺着，
 而且**一切看起来都正常**：不报错、不告警、数据确实在长。
 
@@ -178,7 +178,7 @@ Nocturne（碑）  慢、要反复、成为图式、不衰减           ← 新�
 所以 core 侧的改动它自动就有了，**要各自接的是 Chat-C 侧这几处**：
 
 1. **拉最新代码**。`backend.js` 里这些是这次加的，确认都在：
-   `BREATH_KEEP`（白名单，含 `时间留下的`）、`herDiaryNotesLine()`、
+   `BREATH_KEEP`（白名单，**必须含 `时间留下的` 和 `你怎么看她的`**）、`herDiaryNotesLine()`、
    `nocturne_texture` 里算峰那段、`SIGNAL_LEVELS` 四档映射。
 
 2. **峰那段依赖本机的 `mind_feels` 和 `texture_log`。**
