@@ -20,6 +20,10 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: - Authorization
 
     @objc func focusLockRequestAuth(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false])
             return
@@ -37,6 +41,10 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: - App Picker
 
     @objc func focusLockPickApps(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false])
             return
@@ -70,6 +78,10 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: - Lock / Unlock
 
     @objc func focusLockStart(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false])
             return
@@ -80,6 +92,10 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func focusLockStop(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false])
             return
@@ -89,6 +105,10 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func focusLockStatus(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false, "locked": false, "hasSelection": false, "authorized": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false, "locked": false, "authorized": false])
             return

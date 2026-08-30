@@ -15,6 +15,10 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
     ]
 
     @objc func screenTimeStart(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false])
             return
@@ -24,6 +28,10 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func screenTimeStop(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false])
             return
@@ -33,6 +41,10 @@ public class ScreenTimePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func screenTimeReport(_ call: CAPPluginCall) {
+        guard FamilyControlsAvailability.enabled else {
+            call.resolve(["supported": false])
+            return
+        }
         guard #available(iOS 16.0, *) else {
             call.resolve(["supported": false])
             return

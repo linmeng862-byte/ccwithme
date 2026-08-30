@@ -790,7 +790,7 @@ toolsTitle.onclick=function(){
 var flRow=document.createElement('div');
 flRow.style.cssText='display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap';
 flRow.innerHTML='<span style=\"display:inline-flex;align-items:center;gap:5px;font:500 13px var(--font-sans);color:var(--text-secondary);min-width:56px\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"14\" height=\"14\" style=\"flex:none\"><rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg>锁 App</span>';
-var _flNotReady=function(){toast('需要重建 iOS App 后才能使用专注锁。在 Capacitor 原生环境中运行即可。')};
+var _flNotReady=function(){toast('专注锁暂未启用：Family Controls 需要付费 Apple 开发者账号签名，个人免费账号不支持。')};
   if(!_focusLockAuthorized){
     var flAuth=document.createElement('button');
     flAuth.style.cssText='padding:5px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:var(--accent-fg);font:500 11px var(--font-sans)';
@@ -829,7 +829,7 @@ if(_screenTimeSupported){
     var stBtn=document.createElement('button');
     stBtn.style.cssText='padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-primary);color:var(--text-primary);font:500 11px var(--font-sans)';
     stBtn.textContent='查看报告';
-    stBtn.onclick=function(){toast('需要重建 iOS App 后才能查看屏幕时长。在 Capacitor 原生环境中运行即可。')};
+    stBtn.onclick=function(){toast('屏幕时长暂未启用：DeviceActivity 需要付费 Apple 开发者账号签名，个人免费账号不支持。')};
     stRow.append(stBtn);
   }
 

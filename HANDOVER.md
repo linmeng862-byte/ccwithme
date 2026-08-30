@@ -4,6 +4,51 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🔒 08-30 · 专注锁撞上 $99 —— Family Controls 免费账号签不了
+
+**结论先写：免费个人开发者账号连「开发用」的 Family Controls 都开不了，$99 躲不过去。**
+Xcode 原话：`Personal development teams ... do not support the Family Controls
+(Development) capability.` 「锁别的 app」整个建在这上面（`FamilyActivityPicker` 选 app、
+`ManagedSettingsStore` 屏蔽），Apple 没留第二条 API。
+
+她选了「先不买、把这功能摘掉先编出来用」。所以现在仓库里是**关掉的状态**：
+
+- `ios/App/App/App.entitlements` 和 `ios/App/ScreenTimeMonitor/ScreenTimeMonitor.entitlements`
+  里的 `com.apple.developer.family-controls` **已移除**（app group 保留）。
+- 新增编译开关 `FamilyControlsAvailability`（在 `ios/App/App/FocusLockManager.swift` 顶上），
+  默认 `false`。`FocusLockPlugin` 五个方法 + `ScreenTimePlugin` 三个方法都加了前置 guard，
+  关着的时候直接回 `supported: false`，**一行 FamilyControls / DeviceActivity 的 API 都不会碰**
+  —— 这是故意的，没有 entitlement 时调那些 API 的行为我没法在 VPS 上验证。
+- 前端两处 toast 文案改成说明真实原因（原来写的是「需要重建 iOS App」，会误导）。
+
+**买了账号之后要做的三步**（`FocusLockManager.swift` 顶上的注释里也写了一份）：
+1. App target → Build Settings → Active Compilation Conditions 加 `FAMILY_CONTROLS`
+2. 上面两个 entitlements 文件里把 `com.apple.developer.family-controls` 加回去
+3. App target → Signing & Capabilities → 添加 Family Controls
+
+⚠️ 还有第二道关：**上架 / 发 TestFlight 要另外向 Apple 填表申请**分发用的 Family Controls
+授权，付费账号只解决「开发和自己装」。
+
+**顺带修的三个真 bug**（见 commit `cb3f6cb`，跟 $99 无关，买不买都该留着）：
+1. 主 App 的 `App.entitlements` 原本是空 `<dict/>` —— app group 都没有。
+   `requestAuthorization()` 和 `ManagedSettingsStore` 都跑在主 App 里，缺授权必失败。
+2. `FamilyActivityPicker` 的 `onDismiss` 会被调两次（Done 一次、`onDisappear` 又一次），
+   第二次 `call.resolve` 撞「已 resolve」。顺手把 host 闭包的保留环也拆了。
+3. `isLocked` 原本用「有没有存 selection」判断 —— 选完 app 还没开始就报已锁定，
+   而 `stopLock` 又把 selection 删了，解锁后得重新选一遍。改成独立的 `focusLockActive`
+   标志位，selection 保留。
+
+**未验证：VPS 上没有 Swift 工具链，以上 Swift 改动一行都没编译过**，
+能不能过编译以她 Mac 上的 Xcode 为准。
+
+**Mac 那边的环境坑**（她那台是全新的，踩了一路）：系统 Ruby 2.6 太老，
+`gem install cocoapods` 会连环卡在 ffi / securerandom / zeitwerk 上，**别一个个钉版本**，
+直接装 Homebrew 再 `brew install cocoapods`（自带新 Ruby）。另外 `npm install` 报
+`EACCES` 是以前 `sudo npm` 留下的，`sudo chown -R $(whoami) ~/.npm` 修，别用 `--force`。
+三个 ruby 脚本的**正确顺序是先建扩展 target、最后跑 `add_app_plugins.rb`**
+（它自己注释里写了），而且它最后一步要读 `ios/App/App/capacitor.config.json`，
+那是 `npx cap sync` 生成的 —— 所以得 sync 完再跑它一遍。
+
 ## ⌚ 08-30 · 手表通了 —— her_vitals 第一次有数据
 
 **8-23 建的 vitals 通路，空了七天，今天接上了采集端。**

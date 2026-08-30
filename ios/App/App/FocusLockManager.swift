@@ -2,6 +2,24 @@ import FamilyControls
 import ManagedSettings
 import Foundation
 
+/// Family Controls requires a PAID Apple Developer account — a personal team
+/// cannot sign `com.apple.developer.family-controls`, not even for development.
+/// Until then the app ships with the feature switched off at compile time.
+///
+/// To turn it back on after buying the account:
+///   1. App target → Build Settings → Swift Compiler - Custom Flags →
+///      Active Compilation Conditions → add `FAMILY_CONTROLS`
+///   2. restore `com.apple.developer.family-controls` in App.entitlements
+///      and ScreenTimeMonitor/ScreenTimeMonitor.entitlements
+///   3. App target → Signing & Capabilities → add "Family Controls"
+enum FamilyControlsAvailability {
+    #if FAMILY_CONTROLS
+    static let enabled = true
+    #else
+    static let enabled = false
+    #endif
+}
+
 /// Encapsulates Focus Lock functionality:
 ///   - FamilyControls authorization
 ///   - ManagedSettings app shielding
