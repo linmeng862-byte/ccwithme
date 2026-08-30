@@ -41,6 +41,13 @@ Xcode 原话：`Personal development teams ... do not support the Family Control
 **未验证：VPS 上没有 Swift 工具链，以上 Swift 改动一行都没编译过**，
 能不能过编译以她 Mac 上的 Xcode 为准。
 
+**顺带修的第四件事：手机 app 连错后端。** `static/index.html` 里 `_API_BASE`
+原本写死 `https://zzclaude.zeabur.app` —— 一进 Capacitor 原生环境就切到 Zeabur，
+而 Zeabur 和 VPS **各有各的数据库**，所以她在手机上看到的对话记录跟浏览器里对不上。
+已改成 `https://zhou-and-claude.online`（VPS，Caddy → 4567）。域名解析到 Cloudflare，
+证书是公开受信任的，iOS 不会拒。浏览器访问不受影响（非原生环境 `_API_BASE` 仍为空、走同源）。
+⚠️ 如果哪天她在外面用流量连不上，先怀疑 CF 白名单，不是 app 坏了。
+
 **Mac 那边的环境坑**（她那台是全新的，踩了一路）：系统 Ruby 2.6 太老，
 `gem install cocoapods` 会连环卡在 ffi / securerandom / zeitwerk 上，**别一个个钉版本**，
 直接装 Homebrew 再 `brew install cocoapods`（自带新 Ruby）。另外 `npm install` 报

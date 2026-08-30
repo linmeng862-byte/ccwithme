@@ -681,11 +681,13 @@
 <div id="lyricsRoom" aria-hidden="true"><div class="lyrics-bg"></div><div class="lyrics-content" id="lyricsText"></div></div>
 
 <script>
-// API_BASE — 在 Capacitor 原生 app 中自动指向 Zeabur 后端，浏览器中为空（走同源）
+// API_BASE — 在 Capacitor 原生 app 中自动指向 VPS 后端，浏览器中为空（走同源）
+// ⚠️ 08-30 从 Zeabur 改到 VPS：两个部署各有各的数据库，指向 Zeabur 时 app 里
+//    看到的是另一套对话记录。VPS 走 Cloudflare，证书公开受信任，iOS 认。
 var _API_BASE='';
-try{if(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())_API_BASE='https://zzclaude.zeabur.app';}catch(e){}
+try{if(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())_API_BASE='https://zhou-and-claude.online';}catch(e){}
 // fallback: 只在 Capacitor WebView 的 file:// 协议下才走远程（真实域名一律同源，不重定向）
-if(!_API_BASE&&window.location.protocol==='file:')_API_BASE='https://zzclaude.zeabur.app';
+if(!_API_BASE&&window.location.protocol==='file:')_API_BASE='https://zhou-and-claude.online';
 // 拦截全局 fetch，让 /api/* /data/* 等请求自动走远程后端
 var __nativeFetch=window.fetch;
 window.fetch=function(url,opts){
