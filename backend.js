@@ -514,6 +514,19 @@ try {
     });
     if (n) console.log('[mind] FTS 重建，回填 ' + n + ' 条');
   }
+  // 信笺补进索引（2026-08-30）。上面那段整体回填只在 FTS 全空时跑，
+  // 而 FTS 早就有 617 条了 —— 08-23 起写进 mind_inside 的 58 条一条都没进索引。
+  // 幂等：只补索引里没有的，跑多少次都一样。
+  try {
+    var _missing = db.prepare(
+      "SELECT id, body FROM mind_inside WHERE id NOT IN (SELECT item_id FROM mind_fts_v2 WHERE kind = 'inside')"
+    ).all();
+    if (_missing.length) {
+      var _insIn = db.prepare('INSERT INTO mind_fts_v2 (body, item_id, kind) VALUES (?, ?, ?)');
+      _missing.forEach(function(r) { _insIn.run(r.body, r.id, 'inside'); });
+      console.log('[mind] 信笺补进 FTS ' + _missing.length + ' 条');
+    }
+  } catch(e) { console.error('[mind] 信笺 FTS 回填失败:', e.message); }
 } catch(e) { console.error('[mind] FTS 建表失败:', e.message); }
 
 // 念头池 — 活水。闪念/执念流转
@@ -3363,8 +3376,11 @@ function extractMindTags(text, convId) {
       var dup = db.prepare('SELECT id FROM mind_inside WHERE body = ? AND conv_id = ? AND created_at > ?')
         .get(ins.body, convId || '', now - 300);
       if (dup) return;
+      var _iid = crypto.randomUUID();
       db.prepare('INSERT INTO mind_inside (id, color, body, conv_id, created_at) VALUES (?,?,?,?,?)')
-        .run(crypto.randomUUID(), ins.color, ins.body, convId || '', now);
+        .run(_iid, ins.color, ins.body, convId || '', now);
+      // 写库和建索引必须成对——漏一次那条就永远搜不到（但还在库里）。
+      _ftsIndex(ins.body, _iid, 'inside');
     } catch (e) { console.error('[mind] 信笺入库失败:', e.message); }
   });
 
@@ -4213,7 +4229,8 @@ function _mindSurfaceCandidates(query, limit) {
   }
 
   function scan(sql, kind) {
-    var table = kind === 'feel' ? 'mind_feels' : kind === 'memory' ? 'mind_memories' : 'mind_dreams';
+    var table = kind === 'feel' ? 'mind_feels' : kind === 'memory' ? 'mind_memories'
+              : kind === 'inside' ? 'mind_inside' : 'mind_dreams';
     var cols = sql.slice(sql.indexOf('SELECT'), sql.indexOf(' FROM'));
     expanded.forEach(function(k) {
       var rows;
@@ -4240,6 +4257,11 @@ function _mindSurfaceCandidates(query, limit) {
   scan("SELECT id, body, mood, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_feels WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 20", 'feel');
   scan("SELECT id, body, mood, tags, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_memories WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 20", 'memory');
   scan("SELECT id, title, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_dreams WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 10", 'dream');
+  // 内心信笺（2026-08-30 接上）。这张表 08-23 起写了 58 条，
+  // **浮现次数一直是 0** —— 建表注释里那句「现在浮起只查 feels/memories/dreams
+  // 三张」就是原因。写的那半做了，读的那半没接。
+  // LIMIT 10 不是 20：它是他没打算说出口的话，浮太多会盖过她这句话本身。
+  scan("SELECT id, color, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_inside WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 10", 'inside');
 
   var cands = Array.from(hitMap.values());
 
@@ -4300,7 +4322,8 @@ function _mindSurfaceCandidates(query, limit) {
 function _mindMarkSurfaced(rows) {
   var now = Math.floor(Date.now() / 1000);
   rows.forEach(function(r) {
-    var table = r.kind === 'feel' ? 'mind_feels' : r.kind === 'memory' ? 'mind_memories' : 'mind_dreams';
+    var table = r.kind === 'feel' ? 'mind_feels' : r.kind === 'memory' ? 'mind_memories'
+              : r.kind === 'inside' ? 'mind_inside' : 'mind_dreams';
     try {
       db.prepare('UPDATE ' + table + ' SET surface_count = COALESCE(surface_count,0) + 1, ' +
         'weight = MIN(1.0, ROUND(COALESCE(weight,0) + 0.05, 6)), last_surfaced_at = ? WHERE id = ?')
@@ -4319,6 +4342,9 @@ function mindBreath(query) {
     var lines = rows.map(function(r) {
       if (r.kind === 'dream') return '· （梦）' + (r.title ? r.title + '：' : '') + r.body;
       if (r.kind === 'feel') return '· （那时的感觉' + (r.mood ? '·' + r.mood : '') + '）' + r.body;
+      // 信笺要标出来。它跟别的不一样——那是他当时**没打算说出口**的话，
+      // 混在一堆「那时的感觉」里会被他当成可以直接复述的东西。
+      if (r.kind === 'inside') return '· （没说出口' + (r.color ? '·' + r.color : '') + '）' + r.body;
       return '· ' + r.body;
     });
     // ⚠️ 别再叫 breath（2026-08-21 改名）：Nocturne 那份记忆浮现也叫 breath，
@@ -9170,7 +9196,7 @@ app.get('/api/mind/search', auth, (req, res) => {
         seen.add(k); results.push(r);
       });
     }
-    var TABLES = [['mind_feels','feel',20], ['mind_memories','memory',20], ['mind_dreams','dream',10]];
+    var TABLES = [['mind_feels','feel',20], ['mind_memories','memory',20], ['mind_dreams','dream',10], ['mind_inside','inside',10]];
     TABLES.forEach(function(t) {
       var rows = [];
       if (q.length >= 3) {
@@ -9197,7 +9223,7 @@ app.get('/api/mind/search', auth, (req, res) => {
 app.patch('/api/mind/:type/:id/pin', auth, (req, res) => {
   try {
     var { type, id } = req.params;
-    var table = type === 'feel' ? 'mind_feels' : type === 'memory' ? 'mind_memories' : type === 'dream' ? 'mind_dreams' : null;
+    var table = type === 'feel' ? 'mind_feels' : type === 'memory' ? 'mind_memories' : type === 'dream' ? 'mind_dreams' : type === 'inside' ? 'mind_inside' : null;
     if (!table) return res.status(400).json({ error: 'Invalid type: '+type });
     var row = db.prepare('SELECT pinned FROM '+table+' WHERE id = ?').get(id);
     if (!row) return res.status(404).json({ error: 'Not found' });
@@ -9211,7 +9237,7 @@ app.patch('/api/mind/:type/:id/pin', auth, (req, res) => {
 app.patch('/api/mind/:type/:id/archive', auth, (req, res) => {
   try {
     var { type, id } = req.params;
-    var table = type === 'feel' ? 'mind_feels' : type === 'memory' ? 'mind_memories' : type === 'dream' ? 'mind_dreams' : null;
+    var table = type === 'feel' ? 'mind_feels' : type === 'memory' ? 'mind_memories' : type === 'dream' ? 'mind_dreams' : type === 'inside' ? 'mind_inside' : null;
     if (!table) return res.status(400).json({ error: 'Invalid type: '+type });
     db.prepare('UPDATE '+table+' SET weight = 0.05, pinned = 0 WHERE id = ?').run(id);
     res.json({ ok: true });
@@ -12020,6 +12046,11 @@ function _mindDecayTick() {
     db.prepare('UPDATE mind_memories SET weight = MAX(0, ROUND(weight - ? / (504.0 * 1.0), 6)) WHERE pinned = 0').run(dh);
     // dreams: weight -= dh / 12, 下限 0.15
     db.prepare('UPDATE mind_dreams SET weight = MAX(0.15, ROUND(weight - ? / 12.0, 6)) WHERE pinned = 0').run(dh);
+    // inside: 跟 memories 同一档（504 小时基准，21 天）。
+    // 建表时那几列就是为这天留的（「将来要让信笺跟着衰减」）。
+    // 为什么不跟 feels 一档：feels 的分母带 intensity，而 inside 没有这一列；
+    // 也不该跟 dreams 一档——梦 12 小时就淡完了，信笺不是那种东西。
+    db.prepare('UPDATE mind_inside SET weight = MAX(0, ROUND(weight - ? / (504.0 * 1.0), 6)) WHERE pinned = 0').run(dh);
     // 念头池搭同一班车：同一个 dh，同样享受停摆补偿
     _flashPoolTick(dh);
     _flashPoolSweep();
