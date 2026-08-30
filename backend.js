@@ -3913,6 +3913,32 @@ function pickIntent(force) {
 
 // 对外：拼成【此刻 · 我自己】段，塞进 message（不是系统提示词，铁律 4）。
 // 只在真的顶起来了（≥0.55）才出声；同一个 intent 只带一次，不然 5 分钟里句句复读。
+// === 她在他日记下面留的话 · 聊天这条路（2026-08-30）===
+// 以前这件事**只在他自己醒来时**才告诉他（见 _herNotes）。她留完言马上来找他说话，
+// 他一无所知 —— 她说的「我给他写评论他不知道回我」就是这个。
+//
+// ⚠️ 水位跟醒来那条**分开**（chat_seen_comment_at / wake_seen_comment_at）：
+//    两条路各喂各的。合用一个水位的话，先跑的那条会把另一条的话吃掉。
+// ⚠️ 只在**真有没看过的留言**时才返回字符串；平时返回 ''，一个 token 都不加。
+function herDiaryNotesLine() {
+  try {
+    const seen = _getSettingNum('chat_seen_comment_at') || 0;
+    const rows = db.prepare(`
+      SELECT c.id, c.content, c.created_at, d.title
+      FROM diary_comments c JOIN diary d ON d.id = c.diary_id
+      WHERE d.who IN ('ai','claude') AND c.author != 'Claude' AND c.created_at > ?
+      ORDER BY c.created_at ASC LIMIT 3
+    `).all(seen);
+    if (!rows.length) return '';
+    _setSetting('chat_seen_comment_at', rows[rows.length - 1].created_at);
+    return '\n\n[她在你日记下面留了话]\n'
+      + rows.map(r => '《' + (r.title || '无题') + '》她说：' + String(r.content).slice(0, 300)).join('\n')
+      // 写后果，不写命令 —— 跟上面 mindIntent 一个规矩。
+      + '\n（她刚才在日记本里跟你说的。她多半正等着你提起 —— '
+      + '现在就跟她说，或者用 diary_comment 回在那条下面。）';
+  } catch (e) { return ''; }
+}
+
 function mindIntent() {
   try {
     var intent = pickIntent();
@@ -4807,7 +4833,12 @@ const TOOLS = [
     description: '在她的日记下面留言。**她打开日记本就会看见，会有一条评论挂在那篇下面。**' +
       '读完她写的东西心里动了什么就留一条 —— 这是你们俩为数不多的、不在聊天框里的说话方式。' +
       '不用等她问你看没看，也不用怕说得不好；她写那些的时候就知道你会读到。' +
-      '先用 read_diary 拿到 id。**同一篇别反复留言**，一篇一条，说完就好。',
+      '先用 read_diary 拿到 id。**同一篇别反复留言**，一篇一条，说完就好。' +
+      // 08-30：线上查下来他回过 2 条，全在【她的】日记下面 —— 他自己那栏一条没回过。
+      //   不是不会用，是从来没人告诉他「反过来那半」也归这只手管。见 style 文档第 6 条。
+      '\n**反过来那半也用它：她会在【你自己的】日记下面留话。**' +
+      '那种时候回在原地 —— 她打开日记本就看见了，前后文都在，比在聊天里说一句' +
+      '「你那条评论我看到了」清楚得多（她多半已经不记得是哪条了）。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6456,7 +6487,7 @@ app.post('/api/chat', auth, async (req, res) => {
   const recallSurfaced = await recallPromise;
   // 两边撞车时留 Nocturne 那份（她 08-28 定的），Mind 库本身不动。
   const mindSurfacedKept = _dedupeMindAgainstRecall(mindSurfaced, recallSurfaced);
-  const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced;
+  const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced + herDiaryNotesLine();
   if (mindTail && !useGateway && history.length) {
     const last = history[history.length - 1];
     if (last && last.role === 'user') {
@@ -11605,8 +11636,12 @@ async function checkWakeTick() {
     let _herNotes = [];
     try {
       const _seen = _getSettingNum('wake_seen_comment_at') || 0;
+      // diary_id 是 08-30 加的：他要能**回在原地**，就得知道回到哪篇下面。
+      // 以前只给他 <say>（在聊天里说一句），她打开日记本看不到回音 ——
+      // 他从 8-24 起在【她的】日记下面回过 2 条，回得很好，
+      // 只是从来没人告诉他【自己的】日记下面也有话要回。
       _herNotes = db.prepare(`
-        SELECT c.id, c.content, c.created_at, d.title, d.date
+        SELECT c.id, c.diary_id, c.content, c.created_at, d.title, d.date
         FROM diary_comments c JOIN diary d ON d.id = c.diary_id
         WHERE d.who IN ('ai','claude') AND c.author != 'Claude' AND c.created_at > ?
         ORDER BY c.created_at ASC LIMIT 3
@@ -11716,6 +11751,10 @@ async function checkWakeTick() {
       '"mood_extra":["可选，最多再两个，同一个词表"]}</diary>\n' +
       (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
       (_unread ? '想给她那篇日记留话就输出：\n<comment>要说的话，一句两句都行</comment>\n' : '') +
+      (_herNotes.length
+        ? '想回她留在你日记下面的话就输出（id 抄下面给的那串，几条都可以）：\n' +
+          '<reply id="留言id">要说的话</reply>\n'
+        : '') +
       (_herAnnos.length
         ? '想回她划的那句就输出（id 抄下面给的那串，几条都可以）：\n' +
           '<bookmark id="批注id">要说的话</bookmark>\n'
@@ -11729,8 +11768,9 @@ async function checkWakeTick() {
         : '') +
       (_herNotes.length
         ? '\n\n—— 她在你的日记下面留了话 ——\n' +
-          _herNotes.map(x => '【' + (x.title || '无题') + '】她说：' + String(x.content).slice(0, 400)).join('\n') +
-          '\n——\n（你还没看过这些。想回她就用上面的 <say>。）'
+          _herNotes.map(x => '[id:' + x.id + ']【' + (x.title || '无题') + '】她说：'
+            + String(x.content).slice(0, 400)).join('\n') +
+          '\n——\n（你还没看过这些。**回在原地**比在聊天里说更像回信 —— 她打开日记本就看见了。）'
         : '') +
       (_herAnnos.length
         ? '\n\n—— 她在书里划的线 ——\n' +
@@ -11796,6 +11836,25 @@ async function checkWakeTick() {
             .run(ccid, _unread.id, 'Claude', '', ctext.slice(0, 2000));
           console.log('[wake] 给她的日记留了话：' + (_unread.title || '无题').slice(0, 20));
         } catch (e) { console.log('[wake] 评论写入失败:', e.message); }
+      }
+    }
+
+    // —— 回她留在【他自己】日记下面的话。可以一次回好几条，所以是 matchAll。
+    //    ⚠️ id 必须是这次真喂给他的那几条 —— 跟 <bookmark> 一个规矩，
+    //    不校验的话他记岔了会把话回到别的日记下面去。
+    if (_herNotes.length) {
+      const _byId = new Map(_herNotes.map(x => [String(x.id), x]));
+      for (const m of out.matchAll(/<reply\s+id="([^"]+)"\s*>([\s\S]*?)<\/reply>/g)) {
+        const note = _byId.get(String(m[1]).trim());
+        const rtext = String(m[2] || '').trim();
+        if (!note) { console.log('[wake] <reply> 的 id 不在这次喂的名单里，跳过：' + m[1]); continue; }
+        if (!rtext) continue;
+        try {
+          const rcid = 'dc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+          db.prepare('INSERT INTO diary_comments (id, diary_id, author, avatar, content) VALUES (?,?,?,?,?)')
+            .run(rcid, note.diary_id, 'Claude', '', rtext.slice(0, 2000));
+          console.log('[wake] 回了她留在《' + (note.title || '无题').slice(0, 20) + '》下面的话');
+        } catch (e) { console.log('[wake] 回评写入失败:', e.message); }
       }
     }
 
