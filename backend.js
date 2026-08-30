@@ -5309,8 +5309,9 @@ async function executeTool(name, input, routes) {
       if (Number.isFinite(parseInt(input.minutes, 10))) {
         fireAt = nowS + parseInt(input.minutes, 10) * 60;
       } else if (input.at) {
-        // 她这边一律北京时间。Date 直接 parse "2026-09-02 09:00" 会按服务器时区算，
-        // 服务器就是 +08，所以对得上；格式不认就退回报错，别默默定到一个错的点上。
+        // 她这边一律 +08（Asia/Singapore）。Date 直接 parse "2026-09-02 09:00"
+        // 会按服务器时区算，服务器 08-30 起已设成 Asia/Singapore，所以对得上；
+        // 格式不认就退回报错，别默默定到一个错的点上。
         const t = new Date(String(input.at).replace(/-/g, '/'));
         if (isNaN(t.getTime())) return { error: '时间看不懂，用 "2026-09-02 09:00" 这种写法，或者改用 minutes' };
         fireAt = Math.floor(t.getTime() / 1000);
@@ -5332,7 +5333,7 @@ async function executeTool(name, input, routes) {
       };
     }
     case 'get_time': {
-      const tz = input.timezone || 'Asia/Shanghai';
+      const tz = input.timezone || 'Asia/Singapore';
       try {
         const now = new Date();
         const opts = { timeZone: tz, hour12: false };
@@ -5362,7 +5363,7 @@ async function executeTool(name, input, routes) {
         SELECT m.role, m.content, m.created_at, s.title, s.is_main
         FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
         ${where} ORDER BY m.created_at ${dir}, m.id ${dir} LIMIT ?`).all(...filterParams, limit);
-      // 本地时间（VPS 为北京时间），别用 toISOString——那是 UTC，会差 8 小时
+      // 本地时间（VPS 时区 08-30 起为 Asia/Singapore，+08），别用 toISOString——那是 UTC，会差 8 小时
       const fmt = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') AS t").get(ts).t.slice(0, 16);
       const results = rows.map(r => ({
         when: fmt(r.created_at),
