@@ -4584,7 +4584,7 @@ const TOOLS = [
       properties: {
         action: { type: 'string', enum: ['set', 'list', 'cancel'], description: '默认 set' },
         minutes: { type: 'integer', description: '多少分钟后（跟 at 二选一）' },
-        at: { type: 'string', description: '绝对时间，如 "2026-09-02 09:00"（北京时间，跟 minutes 二选一）' },
+        at: { type: 'string', description: '绝对时间，如 "2026-09-02 09:00"（她那边的时间，+08，跟 minutes 二选一）' },
         note: { type: 'string', description: '留给那时候自己的话。写清楚是什么事、为什么在意' },
         id: { type: 'integer', description: 'cancel 用：要撤掉哪一条' },
       },
