@@ -3008,7 +3008,10 @@ let _nocturneSessionId = null;
 //
 // ⚠️ breath 本身**没有任何参数**（08-30 查了 core 的 inputSchema，properties 是空的），
 //    所以只能在这一侧裁。要根治得改 core，让它自己少吐。
-const BREATH_KEEP = ['Time', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
+// ⚠️ 「时间留下的」= wear.describe()，08-30 才接进 core 的 breath。
+//    忘了加进这个名单的话，白名单会把它当成没见过的新段挡掉 ——
+//    那就等于刚接上的线又被这边剪断。这正是白名单的代价：core 加东西要两边都改。
+const BREATH_KEEP = ['Time', '时间留下的', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
 const BREATH_KEEP_ALL = false;   // 调试用：设 true 就整份放行，不裁
 
 function _trimHouseRules(raw) {
