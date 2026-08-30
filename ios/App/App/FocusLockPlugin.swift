@@ -42,18 +42,28 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        DispatchQueue.main.async {
-            let wrapper = FocusLockPickerWrapper { selection in
-                FocusLockManager.shared.applySelection(selection)
-                call.resolve([
-                    "appCount": selection.applicationTokens.count,
-                    "categoryCount": selection.categoryTokens.count
-                ])
+        DispatchQueue.main.async { [weak self] in
+            guard let presenter = self?.bridge?.viewController else {
+                call.reject("No view controller to present from")
+                return
             }
 
-            let host = UIHostingController(rootView: wrapper)
-            host.modalPresentationStyle = .formSheet
-            self.bridge?.viewController?.present(host, animated: true)
+            let wrapper = FocusLockPickerWrapper(
+                onDismiss: { selection in
+                    FocusLockManager.shared.applySelection(selection)
+                    call.resolve([
+                        "appCount": selection.applicationTokens.count,
+                        "categoryCount": selection.categoryTokens.count
+                    ])
+                },
+                onDismissRequested: { [weak presenter] in
+                    presenter?.presentedViewController?.dismiss(animated: true)
+                }
+            )
+
+            let controller = UIHostingController(rootView: wrapper)
+            controller.modalPresentationStyle = .formSheet
+            presenter.present(controller, animated: true)
         }
     }
 
@@ -65,7 +75,8 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         FocusLockManager.shared.startLock()
-        call.resolve(["locked": true])
+        // startLock is a no-op when nothing was picked — report the real state.
+        call.resolve(["locked": FocusLockManager.shared.isLocked])
     }
 
     @objc func focusLockStop(_ call: CAPPluginCall) {
@@ -74,7 +85,7 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         FocusLockManager.shared.stopLock()
-        call.resolve(["locked": false])
+        call.resolve(["locked": FocusLockManager.shared.isLocked])
     }
 
     @objc func focusLockStatus(_ call: CAPPluginCall) {
@@ -85,6 +96,7 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve([
             "supported": true,
             "locked": FocusLockManager.shared.isLocked,
+            "hasSelection": FocusLockManager.shared.lockSelection != nil,
             "authorized": FocusLockManager.shared.isAuthorized
         ])
     }
@@ -92,10 +104,31 @@ public class FocusLockPlugin: CAPPlugin, CAPBridgedPlugin {
 
 // MARK: - FamilyActivityPicker Wrapper
 
+/// Reference box: the View struct is re-created on every render, so the
+/// "already resolved" flag has to live outside it.
+fileprivate final class FocusLockFinishedFlag {
+    var value = false
+}
+
 @available(iOS 16.0, *)
 fileprivate struct FocusLockPickerWrapper: View {
     @State private var selection = FamilyActivitySelection()
-    let onDismiss: (FamilyActivitySelection) -> Void
+    /// Both "Done" and .onDisappear can fire; the call may only be resolved once.
+    private let finished = FocusLockFinishedFlag()
+    private let onDismiss: (FamilyActivitySelection) -> Void
+    private let onDismissRequested: () -> Void
+
+    init(onDismiss: @escaping (FamilyActivitySelection) -> Void,
+         onDismissRequested: @escaping () -> Void) {
+        self.onDismiss = onDismiss
+        self.onDismissRequested = onDismissRequested
+    }
+
+    private func finish(_ sel: FamilyActivitySelection) {
+        guard !finished.value else { return }
+        finished.value = true
+        onDismiss(sel)
+    }
 
     var body: some View {
         NavigationView {
@@ -104,13 +137,15 @@ fileprivate struct FocusLockPickerWrapper: View {
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") {
-                            onDismiss(selection)
+                            finish(selection)
+                            onDismissRequested()
                         }
                     }
                 }
         }
         .onDisappear {
-            onDismiss(selection)
+            // Swipe-to-dismiss: keep whatever was picked.
+            finish(selection)
         }
     }
 }

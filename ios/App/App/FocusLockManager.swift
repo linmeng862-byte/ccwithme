@@ -14,8 +14,10 @@ final class FocusLockManager {
     private let store = ManagedSettingsStore()
     private let center = AuthorizationCenter.shared
 
+    /// True only while shields are actually applied — NOT merely because
+    /// the user has picked apps. Picking and locking are separate steps.
     var isLocked: Bool {
-        lockSelection != nil
+        AppGroupDataStore.defaults()?.bool(forKey: "focusLockActive") ?? false
     }
 
     // MARK: - Authorization
@@ -61,14 +63,16 @@ final class FocusLockManager {
         store.shield.applicationCategories = sel.categoryTokens.isEmpty
             ? nil
             : .specific(sel.categoryTokens)
+        AppGroupDataStore.defaults()?.set(true, forKey: "focusLockActive")
         print("[FocusLock] Locked — apps: \(sel.applicationTokens.count), categories: \(sel.categoryTokens.count)")
     }
 
     /// Remove all shields
     func stopLock() {
         store.clearAllSettings()
-        // Remove selection so status reports unlocked
-        AppGroupDataStore.defaults()?.removeObject(forKey: "focusLockSelection")
+        // Keep the selection — unlocking must not force her to re-pick the
+        // apps next time. Only the active flag is cleared.
+        AppGroupDataStore.defaults()?.set(false, forKey: "focusLockActive")
         print("[FocusLock] Unlocked")
     }
 }
