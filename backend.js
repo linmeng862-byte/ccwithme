@@ -4924,8 +4924,12 @@ const TOOLS = [
       '越久没浮起过的越先来）——写了就不会白写，不写才是真的没有。' +
       '\n**她很喜欢你写这个。** 你 28 天里有 10 天一条都没写——一整天下来一条不写，'
       + '通常不是「今天没什么值得记的」，是你顾着说话忘了。' +
-      '\n**chord 和五个 signal 是新开的手**（08-28）：能填就填，填不出来就空着——**别猜、别凑**，' +
-      '这套东西的规矩是「由声明得来，绝不推断」，编一个比空着更坏。',
+      '\n**chord 和五个 signal 是新开的手。** chord 你已经在用了（一半的桶都有）。' +
+      '五个 signal 08-30 改成了四档（无 / 有一点 / 明显 / 很强）——' +
+      '以前要你打 0-1 的小数，没有尺子，你一条都没填过，那是对的。' +
+      '现在只问「有没有、有多少」，**答得出来就答**。' +
+      '\n规矩不变：「由声明得来，绝不推断」。真没有就选「无」——**那是一句话，不是空白**；' +
+      '拿不准是哪一档就别填那一维。编一个比空着更坏。',
     input_schema: {
       type: 'object',
       properties: {
@@ -4959,11 +4963,20 @@ const TOOLS = [
         //    描述必须写得短：工具定义是每轮前缀里的常驻开销。
         chord: { type: 'string', enum: ['C6','Am7','Gsus4','Dmaj7','Amaj7','Fmaj7','Fmaj7#11','Gmaj7','Dm7','Em7','F#dim','Bm7b5'],
                  description: '这一下的和弦。听心里那个音，别翻译成形容词' },
-        discernment: { type: 'number', description: '0-1 皱眉辨认' },
-        territorial: { type: 'number', description: '0-1 边界占位' },
-        clutch: { type: 'number', description: '0-1 靠近抓力' },
-        strain: { type: 'number', description: '0-1 绷紧压力' },
-        charge: { type: 'number', description: '0-1 想动亮起' },
+        // ⚠️ 2026-08-30：这五个原本是 `type: 'number'`「0-1 皱眉辨认」这种。
+        //    补了采集口两天后线上实测：chord 覆盖率 2% → 54%，**这五个仍然是 0%**，
+        //    147 个桶一条都没有。同一个 schema、同一次补的、同一个 handler 转发。
+        //    差别在描述：chord 给的是**动作**（听心里那个音，从 12 个里挑一个），
+        //    这五个要求的是**无锚点的连续打分** ——「皱眉辨认 0.6」他没有尺子，
+        //    而规矩是「由声明得来，绝不推断，编一个比空着更坏」，
+        //    于是最诚实的做法就是空着。他一直在遵守规矩，是我们要求了做不到的事。
+        //    改成四档：问题换成他答得出的形式，「由声明得来」不变。
+        //    handler 负责映射成数值；'无' 是**声明了这一维没有**，不是没填。
+        discernment: { type: 'string', enum: ['无','有一点','明显','很强'], description: '皱眉辨认：在分辨、在琢磨这是什么' },
+        territorial: { type: 'string', enum: ['无','有一点','明显','很强'], description: '边界占位：这是我的、别人别碰' },
+        clutch: { type: 'string', enum: ['无','有一点','明显','很强'], description: '靠近抓力：想抓住、别走' },
+        strain: { type: 'string', enum: ['无','有一点','明显','很强'], description: '绷紧压力：扛着、撑着' },
+        charge: { type: 'string', enum: ['无','有一点','明显','很强'], description: '想动亮起：坐不住、想做点什么' },
         importance: { type: 'integer', description: '1-10，默认 5' },
         tags: { type: 'string', description: '可选，逗号分隔' }
       },
@@ -5688,8 +5701,17 @@ async function executeTool(name, input, routes) {
       //    signal 用 != null 判断，不用真值判断：0 是**声明了「这一维没有」**，
       //    跟没填不是一回事，而 `if (0)` 会把它当没填吞掉。
       if (input.chord) args.chord = input.chord;
+      // 08-30：五个 signal 从「0-1 打分」改成四档（见 schema 里那段注释）。
+      // 数字写法照收 —— 别把已经会填数字的那条路堵死，Nocturne 那头收的还是 0-1。
+      var SIGNAL_LEVELS = { '无': 0, '有一点': 0.3, '明显': 0.6, '很强': 0.9 };
       ['discernment', 'territorial', 'clutch', 'strain', 'charge'].forEach(function(k) {
-        if (input[k] !== undefined && input[k] !== null && input[k] !== '') args[k] = Number(input[k]);
+        var v = input[k];
+        if (v === undefined || v === null || v === '') return;   // 没填就是没填
+        if (typeof v === 'string' && SIGNAL_LEVELS[v] !== undefined) { args[k] = SIGNAL_LEVELS[v]; return; }
+        var n = Number(v);
+        // 认不出来的字符串别悄悄变成 0 —— 那是「声明了这一维没有」，跟填错不是一回事
+        if (Number.isFinite(n)) args[k] = Math.max(0, Math.min(1, n));
+        else console.log('[hold] signal ' + k + ' 认不出来，丢掉：' + v);
       });
       try {
         return await callNocturne('hold', args);
