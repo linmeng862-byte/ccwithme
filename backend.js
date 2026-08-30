@@ -5728,6 +5728,27 @@ async function executeTool(name, input, routes) {
       for (const k of ['secondary_feeling','her_mood','last_topic','unresolved','concern','understanding','silence','flavor']) {
         if (input[k]) args[k] = input[k];
       }
+      // === 峰（2026-08-30）===
+      // primary/secondary 记的是**关窗那一下**，也就是「终」。但人对一段经历的
+      // 回顾评价由**峰值和结尾**共同决定，跟时长几乎无关（峰终定律 / duration
+      // neglect）—— 一窗里最烈的那一下不管发生在中间哪儿，以前一个字都没留下。
+      //
+      // 峰不用问他（问了就是让他回忆，那是二次加工）。mind_feels 里 intensity
+      // 本来就是当下打的分，取这一窗最高的那条就是峰。
+      // ⚠️ 取不到就整个不传 —— 空字符串在 Nocturne 那边表示「这一窗没传」，
+      //    跟「没有峰」不是一回事，别塞个空的进去污染磨损。
+      try {
+        const lastTs = db.prepare('SELECT MAX(created_at) t FROM texture_log').get()?.t || 0;
+        const peak = db.prepare(
+          'SELECT body, mood, intensity FROM mind_feels WHERE created_at > ? ORDER BY intensity DESC, created_at DESC LIMIT 1'
+        ).get(lastTs);
+        if (peak && peak.mood) {
+          args.peak_feeling = peak.mood;
+          args.peak_intensity = peak.intensity || 0;
+          args.peak_moment = String(peak.body || '').slice(0, 200);
+          console.log('[texture] 这一窗的峰：' + peak.mood + '（强度 ' + peak.intensity + '）');
+        }
+      } catch (e) { console.warn('[texture] 峰没算出来（不影响关窗）：' + e.message); }
       try {
         const r = await callNocturne('leave_texture', args);
         console.log('[texture] 关窗已写入 Nocturne');
