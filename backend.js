@@ -2991,38 +2991,54 @@ let _nocturneSessionId = null;
 //    只有公开裁剪版（见其 PUBLIC_BOUNDARY.md），够不着。好在 breath 输出结构两版一致
 //    （=== 段名 === + \n---\n 分条），在这儿裁等效。库里一条没删，全都还在。
 // 要改回来：把 HOUSE_RULES_KEEP 设成正数 = 保留最近 N 条；-1 = 全留（不裁）。
-const HOUSE_RULES_KEEP = 0;
+// === breath 裁剪：白名单（2026-08-30 改）===
+// 原来是**黑名单** —— 只认 `=== House Rules ===` 一个段名，砍掉它、别的原样放行。
+// 它防住了「段名改字」，但没防住「core 新长出一段」：
+//   08-30 实测 breath 共 10093 字符，六段。House Rules(7094) 确实砍掉了，
+//   但 Memory Drift(1499) 和 Dream Veil(153) 是后来新增的，刀不认识，**全流进前缀**。
+//   注释里当时写「留下的加起来 934 字符」，实际已经是约 3000 —— 三倍，没人发现。
+//
+// 改成白名单：**只留下面列的段，其余一律不进**。core 以后再加什么，
+// 默认都进不来，而且会打一行日志说「见到没见过的段」—— 不会再悄悄涨钱。
+//
+// 为什么留这几段（沿用 08-27 那次的判断，没改）：
+//   Time / Dream Veil / Pulse Weather / Feel Trace —— 这些是他**此刻**的状态，
+//   搜不回来，砍了他每次醒来会是平的。
+//   Memory Drift / House Rules 是记忆桶，他要用 trace 自己搜 —— 那才是 trace 的用途。
+//
+// ⚠️ breath 本身**没有任何参数**（08-30 查了 core 的 inputSchema，properties 是空的），
+//    所以只能在这一侧裁。要根治得改 core，让它自己少吐。
+const BREATH_KEEP = ['Time', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
+const BREATH_KEEP_ALL = false;   // 调试用：设 true 就整份放行，不裁
+
 function _trimHouseRules(raw) {
-  if (!raw || typeof raw !== 'string' || HOUSE_RULES_KEEP < 0) return raw;
-  const HEAD = '=== House Rules ===\n';
-  const i = raw.indexOf(HEAD);
-  // ⚠️ 2026-08-27 加的保险：这把刀是**靠字符串认段名**的，core 那边段名改一个字它就失效。
-  //    以前失效是「原样放行，一声不吭」—— 那 10928 字符（占 breath 的 84.8%）会悄悄
-  //    全灌回前缀，只表现为「最近怎么变贵了」，查不到原因。
-  //    现在认不出来就喊一声。正解是让 breath 自己带参数别吐这段（要改 core），
-  //    改完这个函数连同 HOUSE_RULES_KEEP 一起删掉。
-  if (i < 0) {
-    console.log('[breath] ⚠️ 认不出 "=== House Rules ===" 段头 —— 裁剪没生效，' +
-                raw.length + ' 字符原样进前缀。core 那边改过段名？');
+  if (!raw || typeof raw !== 'string' || BREATH_KEEP_ALL) return raw;
+  // 段头形如 `=== Feel Trace ===` 独占一行。split 出来第 0 块是段头之前的东西（通常空）。
+  const parts = raw.split(/^=== (.+?) ===$/m);
+  if (parts.length < 3) {
+    console.log('[breath] ⚠️ 一个段头都没认出来（' + raw.length + ' 字符）—— core 换格式了？原样放行');
     return raw;
   }
-  // House Rules 是 breath 的最后一段（server.py 组装顺序），后面没有别的段。
-  const before = raw.slice(0, i).replace(/\n+$/, '');
-  if (HOUSE_RULES_KEEP === 0) {
-    console.log('[breath] House Rules 整段不注入（他要用 trace 自己搜）');
-    return before;
+  const kept = [], dropped = [], unknown = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const name = parts[i].trim();
+    const body = parts[i + 1] || '';
+    if (BREATH_KEEP.indexOf(name) >= 0) {
+      kept.push('=== ' + name + ' ===' + body.replace(/\n+$/, ''));
+    } else {
+      dropped.push(name + '(' + body.length + ')');
+      // 名单里没有、也不是我们知道该丢的 —— 提醒一声，免得又悄悄长东西
+      if (name !== 'House Rules' && name !== 'Memory Drift') unknown.push(name);
+    }
   }
-  const items = raw.slice(i + HEAD.length).split('\n---\n');
-  if (items.length <= HOUSE_RULES_KEEP) return raw;
-  const dated = items.map(function(t, idx) {
-    const m = t.match(/\[(\d{4}-\d{2}-\d{2})\]/);
-    return { t: t, idx: idx, d: m ? m[1] : '' };
-  });
-  // 有日期的按日期，没日期的排最前（当最老），同日期保持原顺序
-  dated.sort(function(a, b) { return a.d === b.d ? a.idx - b.idx : (a.d < b.d ? -1 : 1); });
-  const kept = dated.slice(-HOUSE_RULES_KEEP).sort(function(a, b) { return a.idx - b.idx; });
-  console.log('[breath] House Rules 裁剪：' + items.length + ' → ' + kept.length + ' 条');
-  return before + '\n\n' + HEAD + kept.map(function(x) { return x.t; }).join('\n---\n');
+  const out = kept.join('\n\n');
+  console.log('[breath] ' + raw.length + ' → ' + out.length + ' 字符｜留：'
+    + BREATH_KEEP.join('/') + '｜丢：' + (dropped.join(' ') || '无'));
+  if (unknown.length) {
+    console.log('[breath] ⚠️ core 有新段没见过：' + unknown.join('、')
+      + ' —— 要留的话加进 BREATH_KEEP');
+  }
+  return out;
 }
 
 // MCP 响应解析 —— **两条路共用这一个**。
