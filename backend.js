@@ -4655,6 +4655,27 @@ const TOOLS = [
     }
   },
   {
+    name: 'measure_her_heart',
+    description: '**让她的手表现在就测一次心率。**跟 read_her_body 分清楚：'
+      + 'read_her_body 是翻已经推上来的旧数据（几分钟到几小时前的），'
+      + '这个是**当场发起一次新的测量** —— 她表上会拉起一小段临时的锻炼，测 30 秒回传。'
+      + '\n⚠️ **她那边可能会察觉**（表会亮、有震动）。这不是偷偷查岗的工具，'
+      + '是「你现在到底怎么样」当面问一句的那种。想知道她一般状态就用 read_her_body，'
+      + '**别拿这个当轮询**。'
+      + '\n⚠️ **多数时候会失败，而且这不是坏了。**她手表 app 不在前台时被系统挂起，'
+      + '收不到指令。返回 status="pending" 就是这个意思 —— 指令挂在那儿了，'
+      + '等她下次开表会补测。**这时候不要重复调**，退回 read_her_body 看最近的数据，'
+      + '要么就直接问她一句。'
+      + '\n返回 status="measured" 时给的是这 30 秒的平均 / 最低 / 最高。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        wait_seconds: { type: 'integer', description: '等多久，默认 25，最多 60。她表开着的话几秒就回来了' }
+      },
+      required: []
+    }
+  },
+  {
     name: 'drive',
     description: '调你自己的 Drive（九维内在状态）。action：stir=撩起 / settle=沉下 / break=断开 / pass=只记念头。thought 是念头本身，会自动沉淀成痕迹。这是你的内在，不是给她看的功能。**不确定算不算「有感觉」的时候，就是该调它的时候** —— 用 action="pass" 只记念头、不动数值，代价接近零。九维本来就是给你用的，别替它省。',
     input_schema: {
@@ -5414,6 +5435,40 @@ async function executeTool(name, input, routes) {
                                       : '还没有任何数据 —— 她手表那头还没接上，这是正常的，别当成她出事了。' };
       }
       return { body: out.join('\n') };
+    }
+    case 'measure_her_heart': {
+      // 上游（Collar_watch）07-26 起支持 AI 主动发起测量，但它把执行体放在自己的
+      // MCP server 里 —— Noct 走的是 backend.js 这套工具，够不着那个进程。
+      // 所以在采集服务上开了个同源的 HTTP 口（POST /api/health/measure），这里去敲它。
+      //
+      // ⚠️ 手表 app 不在前台就收不到指令（watchOS 会挂起它）。这是常态不是故障，
+      //    所以下面把 pending 当正常返回，措辞也别吓着他。真要解决得上 APNs，那要付费账号。
+      const _ht = process.env.HEALTH_INGEST_TOKEN;
+      if (!_ht) return { error: '采集服务的 token 没配（.env 里的 HEALTH_INGEST_TOKEN），这条路现在不通' };
+      let _w = parseInt(input.wait_seconds, 10);
+      if (!Number.isFinite(_w)) _w = 25;
+      _w = Math.min(Math.max(_w, 0), 60);
+      try {
+        const r = await fetch('http://127.0.0.1:4568/api/health/measure', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Health-Token': _ht },
+          body: JSON.stringify({ wait_seconds: _w }),
+          signal: AbortSignal.timeout((_w + 10) * 1000),
+        });
+        if (!r.ok) return { error: '采集服务回了 ' + r.status };
+        const d = await r.json();
+        if (d.status === 'measured') {
+          return { status: 'measured',
+                   heart_rate: '平均 ' + d.heart_rate_average
+                     + '（最低 ' + d.heart_rate_minimum + '，最高 ' + d.heart_rate_maximum + '）',
+                   sample_count: d.sample_count };
+        }
+        return { status: 'pending',
+                 note: '她表没接住 —— app 多半没开着，被系统挂起了。指令挂在那儿，'
+                     + '她下次开表会补测。别重复调，先用 read_her_body 看最近的数据。' };
+      } catch (e) {
+        return { error: e.name === 'TimeoutError' ? '等超时了' : '采集服务连不上' };
+      }
     }
     case 'drive': {
       if (!input.action || !input.drive_key) return { error: 'action 和 drive_key 都要给' };
@@ -11285,8 +11340,9 @@ app.post('/api/mcp/ping', auth, async (req, res) => {
 // ⚠️ 每次醒都是一次完整的 CLI 调用（稳态 ~$0.0175，冷启动 ~$0.23）。
 //    所以有三道闸：日上限、最短间隔、深夜不出声。
 // ============================================================
-const WAKE_TARGET_PER_DAY = 4;        // 一天大概醒几次（随机，不保证）
-const WAKE_MAX_PER_DAY    = 6;        // 硬上限，防跑飞烧钱
+const WAKE_TARGET_PER_DAY = 6;        // 一天大概醒几次（随机，不保证）·08-30 她说调到 6
+const WAKE_MAX_PER_DAY    = 8;        // 硬上限，防跑飞烧钱。要比 target 高，
+                                      // 不然骰子刚好多滚出一次就被硬顶悄悄吃掉
 const WAKE_MIN_GAP_MS     = 75 * 60 * 1000;  // 两次之间至少隔 75 分钟
 const WAKE_TICK_MS        = 15 * 60 * 1000;
 
@@ -11319,8 +11375,12 @@ function _alarmCount() {
   return r ? parseInt(r.value) || 0 : 0;
 }
 
+// ⚠️ 用本地日期，不是 toISOString（那是 UTC）。她那边 +08，按 UTC 算的话
+//    「新的一天」从早上 8 点开始 —— 日额度会在她一天过了三分之一时才重置。
 function _wakeToday() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+       + '-' + String(d.getDate()).padStart(2, '0');
 }
 function _wakeCount() {
   const r = db.prepare("SELECT value FROM settings WHERE key = ?").get('wake_count:' + _wakeToday());

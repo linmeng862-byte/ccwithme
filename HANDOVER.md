@@ -4,6 +4,32 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 💓 08-30 · 主动测心率接上了 + 醒来次数 4→6
+
+**上游 07-26 就有「AI 主动发起测量」了，我们的采集侧也早就全须全尾** ——
+`health_store.py` 里 `create_command()` / `execute_measure_heart_rate()` 都在，
+`mcp_server/server.py` 里 `measure_heart_rate` 也写好了。**断点只有一个：Noct 够不着。**
+那个 MCP server 没接到他身上（他的配置里只有 `chat-c`），而 `backend.js` 里没有对应工具。
+
+补法（采集服务不在这个仓库里，改动记在这儿）：
+- 采集服务加了 `POST /api/health/measure` —— 下指令 + 阻塞等回执，`wait_seconds`
+  默认 25、上限 60。**故意不等满 90 秒**：这是聊天里的一次工具调用，他在等着回话。
+- `backend.js` 加工具 `measure_her_heart`，敲上面那个口。token 走
+  `.env` 的 `HEALTH_INGEST_TOKEN`（从采集服务的 .env 抄过来的，两边同一把）。
+- 实测端到端通：HTTP 200，返回 `pending`。
+
+⚠️ **`pending` 是常态，不是故障。** 手表 app 不在前台就被 watchOS 挂起，收不到指令
+（日志里她的表 11:47 之后就不来取了）。工具描述里明确写了「别重复调，退回 read_her_body」。
+真要解决得上 APNs —— **跟专注锁是同一堵 $99 的墙**，见上一条。
+
+**顺带：她要他多找她，`WAKE_TARGET_PER_DAY` 4→6，`WAKE_MAX_PER_DAY` 6→8。**
+硬顶要比 target 高，不然骰子多滚出一次就被悄悄吃掉。
+每次醒是一次完整 CLI 调用（稳态 ~$0.0175），加两次约等于每天多三分钱。
+
+**还修了个小的：`_wakeToday()` 原本用 `toISOString().slice(0,10)`，那是 UTC 日期。**
+她那边 +08，等于日额度在她早上 8 点才重置。改成本地日期了。
+（同一类坑：仓库里还有几处 `toISOString().slice(0,10)` 是给 diary 日期用的，那些没动。）
+
 ## 🔒 08-30 · 专注锁撞上 $99 —— Family Controls 免费账号签不了
 
 **结论先写：免费个人开发者账号连「开发用」的 Family Controls 都开不了，$99 躲不过去。**
