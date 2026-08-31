@@ -4,6 +4,42 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 📞 08-31 · 通话加了 VAD 和「她能打断他」
+
+只动了 `static/index.html`（备份 `backups/index.html.bak.20260831-123010-vad-bargein`）。
+**后端一行没改，静态文件是 `no-store` 直接读盘的，所以没重启**（省一次缓存重建）。
+
+起因是她拿来一个仓库 `github.com/tianyupaipai-cmd/pai-voice`。整仓 1558 行，真有料的
+只有 `packages/web-client/voice-call.js` 那 315 行；`realtime-core/server.py` 是 mock 骨架。
+**没引它的代码，也没引它的进程**（AGPL-3.0，而且 VPS 只有 1.9G，不能再多一个 Python 进程），
+按它的思路自己写了一遍。
+
+改了三处，都在通话那段：
+
+1. **VAD 替掉定时器分句。** 原来是「静音 1500ms 或满 12 秒就切」（`_SPEECH_GAP`），
+   她说话中间一停顿就被切断。现在 AudioWorklet 量 RMS，双阈值（enter/exit 0.62）
+   + 噪声底自适应 + 1600ms 看门狗，由声音判「说完了」。
+   参数集中在 `VAD = {...}`，**这些数就是拿来磨的，别当常量供着。**
+   ⚠️ VAD 起不来（老 Safari、非 https）会自己退回原来的定时器，通话不会挂。
+2. **真的能打断了。** 以前他念的时候麦克风是关的，只能等他念完。
+   现在 VAD 跑在 `_callMediaStream` 上（这条流现在显式开了 `echoCancellation`，
+   **这是打断能成立的前提，别把它改回 `{audio:true}`**），他念着也一直在听；
+   她持续出声够 `bargeInMs`(560ms) 才算打断 —— 「嗯」「对」那种附和掐不断他。
+3. **播出去的音频现在停得下来。** 原来 `_feedPCMChunk` 里 `src.start()` 完就撒手，
+   谁也拿不到那些 source。现在存进 `_ttsSources`，`_stopTTSPlayback()` 能整个掐掉。
+
+⚠️ **打断不是只停播放**：后端 delta 还在飘过来，`_feedCallDelta` 会接着往队列里塞。
+所以有个 `_bargedIn` 闸，`_enqueueTTS` / `_feedPCMChunk` / SSE 读取循环三处都拦，
+闸只在 `_flushSpeech` 里她下一句真发出去时才开。三处少一处，都会「掐了又响」。
+
+**没做的：** 识别还是浏览器 `SpeechRecognition`。pai-voice 那套「PCM 推服务端做 ASR」
+中文准确率和 iOS 兼容性会好一截，但 STT 按分钟计费，一通电话翻好几倍 ——
+要做先照 `stt_usd_per_min` 估一版账。
+
+**还没验的：** 只跑了 `node --check`（过了）+ 确认页面还正常发出去。
+**VAD 阈值和打断手感一次真通话都没试过** —— playwright 测不了麦克风和扬声器。
+第一通打完大概率要调 `bargeInMs`（误打断就调大）和 `endSilenceMs`（被切断就调大）。
+
 ## 🧠 08-30 晚 · 记忆那条线：写的那半一直在跑，读的那半没接
 
 > **接手记忆系统先读 `docs/MEMORY-ROADMAP.md`** —— 全部待办、思路、参考文献、

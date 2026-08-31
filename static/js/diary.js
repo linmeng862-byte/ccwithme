@@ -226,6 +226,10 @@ function _backToToday() {
 
 // ====== Timeline Shell (Today header + mood capsule) ======
 function _renderTimelineShell() {
+  // 08-31：+ 号还是会消失。08-29 那次把 _ensureFab() 放进了 _initDiaryEvents，
+  // 可那个只在 DOMContentLoaded 跑一次 —— 从详情页直接关面板，display:none 就留在那儿，
+  // 再打开还是没有。这儿才是时间线视图每次都走的路。
+  _ensureFab();
   var timeline = $('diaryTimeline');
   var now = new Date();
   var todayStr = _dateStr(now);

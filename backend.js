@@ -1964,17 +1964,34 @@ app.post('/api/settings/bark/test', auth, async (req, res) => {
   res.json(r);
 });
 
+// 推送图标：static/ 是不带鉴权的公开静态目录，Bark 服务器能直接拉到。
+// ⚠️ 域名必须是**这台**对外的那个。2026-08-31 前这里写的是 zhou-and-claude.online，
+//    而那个域名的源站是另一台（evoxt /opt/ccwithme），它的 static/ 里没有这张图 ——
+//    Bark 每次去拉都是 404，图标从来没送到过，锁屏上一直是 Bark 默认头像。
+//    这台对外走 cloudflared 隧道，域名是 zhou-and-claude.fun（配置见 /etc/cloudflared/config.yml）。
+//    换机器或换域名时这一行要跟着改，改完必须 curl 一下确认 200，别只看代码。
+const BARK_ICON = process.env.BARK_ICON || 'https://zhou-and-claude.fun/bark-icon.jpg';
+// 锁屏上第一行粗字。Bark 的 app 名字改不了（那是 iOS 装的时候定死的），
+// 但 title 是我们说了算的 —— 所以这行永远是「谁在找她」，不是这条推送叫什么。
+// 传进来的 title 降一档做 subtitle。要换成 Noct 就改这里（或 .env 里的 BARK_SENDER）。
+const BARK_SENDER = process.env.BARK_SENDER || '老公';
+
 // 出站推送。**纯出站** —— 不开任何入口，VPS 防火墙一个字都不用改。
 async function _barkPush(title, body, opts) {
   const base = db.prepare("SELECT value FROM settings WHERE key = 'bark_url'").get()?.value;
   if (!base) return { ok: false, error: '还没配 Bark 地址（抽屉 → 语音配置那栏底下）' };
   try {
     const payload = {
-      title: String(title || '').slice(0, 80),
+      title: BARK_SENDER,
       body: String(body || '').slice(0, 500),
     };
+    const sub = String(title || '').slice(0, 80);
+    if (sub) payload.subtitle = sub;
     if (opts && opts.level) payload.level = opts.level;      // active / timeSensitive / passive
     if (opts && opts.group) payload.group = opts.group;
+    // 通知左边那个小图标。Bark 只认公网 https 地址，它自己下一次缓存起来，
+    // 之后不再回源 —— 换图要改文件名（或在 app 里清缓存），不然还是旧的。
+    payload.icon = (opts && opts.icon) || BARK_ICON;
     // 时效性通知：专注模式下也能透出来。他半夜想她的那条不该被静音吃掉，
     // 但也别滥用 —— 默认还是 active。
     const resp = await fetch(base, {
@@ -4790,7 +4807,7 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: '锁屏上那行粗的，短一点，几个字' },
+        title: { type: 'string', description: '锁屏上第二行的小标题，短一点，几个字。**最上面那行粗的固定是「老公」，不用你写**，别把名字往这儿填。' },
         body: { type: 'string', description: '你想说的那句话' },
         urgent: { type: 'boolean', description: '穿透专注模式/勿扰。只在真担心她的时候用' }
       },
