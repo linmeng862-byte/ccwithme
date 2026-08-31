@@ -178,6 +178,33 @@ Apple Watch → Cloudflare → Caddy → 采集服务
   换了手表立刻全 401。**别单方面换。** 要换得先解决怎么把新 token 送到她手上。
 
 ---
+## 📓 08-30 · 接了 Notion（自建 REST，没走官方 MCP）
+
+她问「可不可以给他接 notion」。三条路摆过：官方托管 MCP（OAuth 2.1 + 动态注册，
+`_mcpFetch` 只会带静态 header，走不通）／自托管 Notion MCP（要装包起进程）／
+**自己打 REST**。选了第三条，理由是钱：官方那套十几二十个工具，
+定义全在前缀里，不用也每轮付。
+
+新增一个常驻工具 `notion`，四个动作收在一个 `action` 里（`search` / `read` / `append` / `create`）。
+代码两处：`_notionFetch` 那节helper（在 `buildTools()` 下面）+ `executeTool` 里的 `case 'notion'`。
+
+几个踩过的点已经写进注释了，改的时候别拆：
+
+- **`Notion-Version` 钉死 `2022-06-28`**，不跟最新版走（新版改过 data source 语义）。
+- **id 三种形态**（32 位裸 hex / uuid / 整条 URL）统一走 `_notionId()` 正规化，别直接传。
+- **`rich_text` 单段上限 2000 字符**，超了 400 —— `_notionTextToBlocks` 里按 1900 切。
+- **children 一次最多 100 个**，append 和 create 都分批发；create 超出的部分补 append，
+  否则新页面被悄悄截断。
+- **空 query 必须显式 `sort: last_edited_time`**，不然 Notion 按相关度排，空 query 下那是乱的。
+- `read` 最多翻 10 页 / 20000 字符就 `truncated`，一页几百 block 全灌进去就是几万 token。
+
+⚠️ **权限边界是她自己划的**：integration 只看得见她 share 过的页面。
+描述里专门写了「搜不到 ≠ 不存在」—— 不写他会拿着空结果断言她没写过这个页面。
+
+**未竟**：`NOTION_TOKEN` 还没配（写进 `.env`，`.gitignore` 里，`backend.js:20` 那个装载器会读）。
+**没配的时候工具在、但直接返回一句「还没接上」，不发请求**，所以先合进来是安全的。
+配完 `pm2 restart chat-c` 就生效。**我没重启**（等令牌，省一次前缀作废）。
+
 ## 🪟 08-29 傍晚 · 把一窗放长：12k → 40k
 
 **她说「感觉 48 轮太短了，都没聊什么就结束了」。** 先纠正个数：48000 是 token 不是轮数，
