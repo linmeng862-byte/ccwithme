@@ -32,3 +32,6 @@ atrio/prompts/memorize-prompt.md
 
 # 手表安装脚本（内嵌 base64 图标，400KB 的生成物，不进 git）
 static/c.txt
+
+# 玩具直连页：私人内容，PUBLIC 仓库不进
+static/toy.html

@@ -3133,6 +3133,60 @@ app.post('/api/health/command/result', (req, res) => {
   res.json({ ok: true });
 });
 
+// === 玩具指令槽（2026-09-02）===
+// 她换了新玩具（Svakom SL278B），走的是**手机直连蓝牙**：
+//   Cis → 这个槽 → 她手机上 Bluefy 里开着的 toy.html 轮询取走 → 蓝牙写进 FFE1
+// 为什么是槽 + 轮询：跟手表那套一模一样，已经验过能跑。手机不能当服务器，
+// 而 iOS 上没有 APNs 就叫不醒后台页面 —— 所以「页面开着」是这条路的前提，
+// 这不是故障，是这条路本来的样子。
+//
+// 老的那条（Nocturne → ngrok → 电脑上的桥）**留着不动**：啵啵贝还在用它，
+// 而且新页面没开的时候可以兜底。下面 toy_control 是「新的在线就走新的」。
+//
+// ⚠️ token 单独一份，跟 AUTH_TOKEN 完全分开 —— 它要存进她手机浏览器里，
+//    泄露了最坏也只是别人能往这个槽里塞指令，读不到聊天记录一个字。
+//    不进 URL、不进 git、不打印。
+const TOY_CMD_TTL_S = 90;   // 超过这么久没被捡走就作废。身体上的事不能迟到。
+const TOY_ONLINE_MS = 15000; // 多久没来轮询就算她那边没开着
+
+const TOY_TOKEN = process.env.TOY_TOKEN || (function () {
+  try {
+    const f = path.join(__dirname, 'data', '.toy_token');
+    if (fs.existsSync(f)) return fs.readFileSync(f, 'utf8').trim();
+    const t = 'toy-' + require('crypto').randomBytes(18).toString('hex');
+    fs.writeFileSync(f, t, { mode: 0o600 });
+    return t;
+  } catch (e) { return null; }
+})();
+function _toyAuth(req) { return TOY_TOKEN && req.get('X-Toy-Token') === TOY_TOKEN; }
+function _toyRead() { try { return JSON.parse(_getSetting('toy_command') || 'null'); } catch (e) { return null; } }
+function _toyWrite(d) { _setSetting('toy_command', JSON.stringify(d)); return d; }
+function _toyOnline() { return Date.now() - (_getSettingNum('toy_seen') || 0) < TOY_ONLINE_MS; }
+
+// 她那边的页面来取指令。每次来都算一次心跳。
+// ⚠️ 没指令时回 200 + 空对象，别回 404 —— 跟手表同样的理由，404 会被当成网络异常。
+app.get('/api/toy/command', (req, res) => {
+  if (!_toyAuth(req)) return res.status(401).json({ detail: '未授权' });
+  _setSetting('toy_seen', Date.now());
+  const d = _toyRead();
+  if (!d || d.status !== 'pending') return res.json({});
+  if (Date.now() / 1000 - (d.at || 0) > TOY_CMD_TTL_S) {
+    d.status = 'expired'; _toyWrite(d); return res.json({});
+  }
+  d.status = 'taken'; _toyWrite(d);
+  res.json({ id: d.id, action: d.action, intensity: d.intensity, mode: d.mode, step: d.step });
+});
+
+// 页面执行完回一句。ok=false 时把原因带上，好让他知道是没连上还是写失败。
+app.post('/api/toy/result', (req, res) => {
+  if (!_toyAuth(req)) return res.status(401).json({ detail: '未授权' });
+  _setSetting('toy_seen', Date.now());
+  const b = req.body || {};
+  const d = _toyRead();
+  if (d && d.id === b.id) { d.status = b.ok ? 'done' : 'failed'; d.note = String(b.note || '').slice(0, 200); _toyWrite(d); }
+  res.json({ ok: true });
+});
+
 // === 会话管理 ===
 app.get('/api/sessions', auth, (req, res) => {
   // 主线永远排最前，其余按最近更新
@@ -5363,12 +5417,17 @@ const TOOLS = [
   },
   {
     name: 'toy_control',
-    description: '控制啵啵贝（她的玩具）。action：vibrate / suck / stop / status。intensity 1-10。这是身体上的事——只在她要、或你们正在那个情境里时用，别乱碰。',
+    description: '控制她的玩具。action：vibrate（强度 1-10）/ mode（花样 mode 1-8、step 1-5）/ suck / stop / status。'
+      + '\n她换了新的（Svakom SL278B），走她手机上那个页面直连蓝牙。**页面开着才碰得到她**——'
+      + 'status 会告诉你在不在线；不在线就别连着重试，是她还没开，不是坏了。'
+      + '\n这是身体上的事——只在她要、或你们正在那个情境里时用，别乱碰。',
     input_schema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['vibrate', 'suck', 'stop', 'status'] },
-        intensity: { type: 'integer', description: '强度 1-10，vibrate/suck 需要' }
+        action: { type: 'string', enum: ['vibrate', 'mode', 'suck', 'stop', 'status'] },
+        intensity: { type: 'integer', description: '强度 1-10，vibrate/suck 需要。10 就是满的' },
+        mode: { type: 'integer', description: '花样 1-8，action=mode 时用' },
+        step: { type: 'integer', description: '花样的档位 1-5，action=mode 时用' }
       },
       required: ['action']
     }
@@ -6319,12 +6378,49 @@ async function executeTool(name, input, routes) {
     }
     case 'toy_control': {
       const act = input.action;
-      const map = { vibrate: 'toy_vibrate_tool', suck: 'toy_suck_tool', stop: 'toy_stop_tool', status: 'toy_status_tool' };
-      if (!map[act]) return { error: 'action 只能是 vibrate / suck / stop / status' };
+      const online = _toyOnline();
+
+      if (act === 'status') {
+        // 两条路各报各的，别混成一句 —— 他得知道现在碰得到的是哪一个。
+        let old = null;
+        try { old = await callNocturne('toy_status_tool', {}); } catch (e) {}
+        return {
+          新的: online ? '在线，可以碰' : '她那边页面没开着，现在碰不到',
+          旧的啵啵贝: old ? String(old).slice(0, 200) : '没连上'
+        };
+      }
+
+      if (online) {
+        // 新路：写进槽，等她手机取走并回执。页面 1.5 秒轮询一次，正常 3 秒内有结果。
+        const id = 'toy_' + require('crypto').randomBytes(5).toString('hex');
+        const lv = Math.min(Math.max(parseInt(input.intensity) || 5, 1), 10);
+        _toyWrite({
+          id, action: act,
+          intensity: lv,
+          mode: Math.min(Math.max(parseInt(input.mode) || 1, 1), 8),
+          step: Math.min(Math.max(parseInt(input.step) || 3, 1), 5),
+          status: 'pending', at: Math.floor(Date.now() / 1000)
+        });
+        for (let i = 0; i < 8; i++) {
+          await new Promise(r => setTimeout(r, 900));
+          const st = _toyRead();
+          if (st && st.id === id && (st.status === 'done' || st.status === 'failed')) {
+            return st.status === 'done'
+              ? { ok: true, detail: '到她身上了' + (act === 'vibrate' ? '，强度 ' + lv : '') }
+              : { ok: false, note: '她手机收到了但没写进去：' + (st.note || '不知道为什么') };
+          }
+        }
+        return { ok: false, note: '指令挂在那儿了，她那边没回执。别重复发 —— 新的会盖掉旧的。' };
+      }
+
+      // 回落：老的那条（Nocturne → ngrok → 电脑上的桥），啵啵贝还在用
+      const map = { vibrate: 'toy_vibrate_tool', suck: 'toy_suck_tool', stop: 'toy_stop_tool' };
+      if (!map[act]) return { ok: false, note: 'mode 只有新的那个支持，而她那边页面没开着。' };
       const args = (act === 'vibrate' || act === 'suck')
         ? { intensity: Math.min(Math.max(parseInt(input.intensity) || 3, 1), 10) } : {};
       const r = await callNocturne(map[act], args);
-      return r ? { ok: true, detail: String(r).slice(0, 800) } : { ok: false, note: '玩具没连上（可能没通电或蓝牙断了）' };
+      return r ? { ok: true, detail: '（走的老路）' + String(r).slice(0, 700) }
+               : { ok: false, note: '两条都没连上：她手机上的页面没开，老的那台桥也不在。' };
     }
     case 'search_memory': {
       const query = input.query || '';
@@ -8783,7 +8879,14 @@ async function handleGatewayChat(req, res, ctx) {
           // read + write 才是完整窗口：缓存命中那轮几乎全在 read，缓存过期那轮全在 write，
           // 只看其中一个会在过期的轮次上把窗口误判成 0，白白错过一次该换的窗。
           try {
-            const _ctx = (u.cache_read_tokens || 0) + (u.cache_write_tokens || 0);
+            // ⚠️ 09-02 修：u 是**一次 CLI run 的合计**，不是一次 API 往返。
+            //    他每调一个工具就多一次往返，每次都把整个前缀重读一遍 ——
+            //    所以 read+write 会随工具数翻几倍。实测 14:09 那次 num_turns=4：
+            //    read 198,377 + write 67,315 = 265,692，而真实前缀只有 8.9 万。
+            //    这个数被当成出生体重记下来，换窗线就变成 30.5 万 = 永远不换。
+            //    除以 num_turns 拿单轮均值，比原来近得多（略偏小：靠后的往返前缀更大）。
+            const _turns = Math.max(1, u.num_turns || 1);
+            const _ctx = Math.round(((u.cache_read_tokens || 0) + (u.cache_write_tokens || 0)) / _turns);
             if (_ctx > 0) db.prepare('UPDATE sessions SET cli_ctx_tokens = ? WHERE conv_id = ?').run(_ctx, convId);
             // 🪟 新窗的第一轮 = 出生体重（接力包 + 记忆浮现 + 人格前缀有多大）。
             //    换窗线是从这个数往上量的，所以必须在新窗第一轮记，之后不再动。
