@@ -6549,7 +6549,14 @@ async function executeTool(name, input, routes) {
       if (!content) return { error: '内容不能为空' };
       const args = { content, kind: input.kind || 'memory', importance: input.importance || 5 };
       if (input.drive) args.drive = input.drive;
-      if (input.drives) args.drives = input.drives;
+      // ⚠️ schema 里 drives 是逗号分隔的字符串，但 Nocturne 的 hold 要的是列表。
+      //    直接转发字符串会被远端 pydantic 顶回来（Input should be a valid list）。
+      //    这里切成数组：他填字符串就按逗号拆，已经是数组就照收。
+      if (input.drives) {
+        args.drives = Array.isArray(input.drives)
+          ? input.drives
+          : String(input.drives).split(/[,，]/).map(function (s) { return s.trim(); }).filter(Boolean);
+      }
       if (input.tags) args.tags = input.tags;
       // ⚠️ 只加 schema 不在这儿转发 = 等于没加（他填了，到不了 Nocturne）。
       //    signal 用 != null 判断，不用真值判断：0 是**声明了「这一维没有」**，

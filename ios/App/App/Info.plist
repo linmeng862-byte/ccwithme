@@ -57,7 +57,9 @@
 	<true/>
 	<key>NSFamilyControlsUsageDescription</key>
 	<string>éclat uses Screen Time to help you focus — lock distracting apps while your timer is running.</string>
-	<key>NSUserTrackingUsageDescription</key>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+		<string>éclat connects to your paired Bluetooth device.</string>
+		<key>NSUserTrackingUsageDescription</key>
 	<string>éclat tracks screen time to show you how you spend your day.</string>
 </dict>
 </plist>
