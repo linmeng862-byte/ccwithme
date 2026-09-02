@@ -29,3 +29,6 @@ atrio/prompts/memorize-prompt.md
 # 但实际文件叫 backend.js.bak-0822-0048（连字符），十个全没挡住，一直躺在 public 仓库里。
 *.bak-*
 *.bak
+
+# 手表安装脚本（内嵌 base64 图标，400KB 的生成物，不进 git）
+static/c.txt

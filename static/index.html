@@ -276,6 +276,7 @@
            走 data-icon 同一条渲染路径。文字也一并 usage→Usage、workplace→Workplace，
            跟 Calendar/Atrio/Memory 对齐首字母大写。 -->
       <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon" data-icon="usage"></span><span>Usage</span></button>
+      <button class="mobile-sidebar-nav-item" id="openCamera" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="18" height="18"><path d="M3 8.5A2.5 2.5 0 015.5 6h1.7l1.1-1.6A1 1 0 019.1 4h5.8a1 1 0 01.8.4L16.8 6h1.7A2.5 2.5 0 0121 8.5v8A2.5 2.5 0 0118.5 19h-13A2.5 2.5 0 013 16.5z"/><circle cx="12" cy="12.5" r="3.2"/></svg></span><span>Camera</span></button>
 
 <div class="drawer-api-section" style="padding:12px 16px;border-top:1px solid var(--bg-sunken)">
 <div class="drawer-api-header" style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" id="drawerApiToggle" onclick="var f=document.getElementById('drawerApiForm');f.style.display=f.style.display==='block'?'none':'block';var c=document.getElementById('drawerApiChevron');if(c)c.style.transform=f.style.display==='block'?'rotate(180deg)':''"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16"><circle cx="8" cy="5" r="3"/><path d="M3 14v-1a4 4 0 018 0v1"/></svg><span style="flex:1;font:500 13px var(--font-sans);color:var(--text-secondary)">语音配置</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" id="drawerApiChevron"><path d="M4 6l4 4 4-4"/></svg></div>
@@ -342,6 +343,19 @@
   </header>
   <div id="usageBody" style="flex:1;overflow-y:auto;padding:16px 18px calc(env(safe-area-inset-bottom) + 24px)">
     <div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载中…</div>
+  </div>
+</section>
+
+<!-- 摄像头：只做「点一下看一眼」，不做连续轮询 -->
+<section id="cameraPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden">
+  <header class="panel-head-floating" style="display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 18px 12px;flex:0 0 auto">
+    <button id="closeCamera" class="glass-btn" aria-label="关闭" style="width:32px;height:32px;border-radius:50%;color:var(--text-primary);font:20px/1 var(--font-sans);cursor:pointer">×</button>
+    <div style="flex:1;font:600 16px var(--font-sans)">camera</div>
+    <button id="refreshCamera" class="glass-btn" aria-label="刷新" style="width:32px;height:32px;border-radius:50%;color:var(--text-primary);cursor:pointer"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15" style="vertical-align:-2px"><path d="M14 8a6 6 0 11-1.8-4.3M13 1v3h-3"/></svg></button>
+  </header>
+  <div id="cameraBody" style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:12px 14px calc(env(safe-area-inset-bottom) + 20px)">
+    <div id="cameraHint" style="color:var(--text-faint);font:14px var(--font-sans);text-align:center">点右上角刷新看一眼</div>
+    <img id="cameraImg" alt="摄像头快照" style="display:none;max-width:100%;max-height:100%;border-radius:14px">
   </div>
 </section>
 
@@ -5204,6 +5218,36 @@ if($('openUsage'))$('openUsage').onclick=function(){try{closeDrawer()}catch(e){}
 // 顶栏那个一按就开的（2026-08-22）——她说「加个按钮一按就相当于打了 /usage」。
 // 抽屉里那个入口还留着，两个都通向同一个面板。
 if($('usageTopBtn'))$('usageTopBtn').onclick=function(){openUsagePanel()};
+
+// === 摄像头 ===
+// <img src> 带不了 Authorization 头，所以走 api() 取 blob 再 objectURL。
+// 只在打开面板和点刷新时请求一次 —— 不做定时轮询。
+var _camUrl=null,_camBusy=false;
+function _camSetHint(t){var h=$('cameraHint');if(h){h.textContent=t;h.style.display=''}$('cameraImg').style.display='none'}
+async function loadCameraSnapshot(){
+  if(_camBusy)return;_camBusy=true;
+  _camSetHint('拍一张…');
+  try{
+    var r=await api('/api/camera/snapshot',{cache:'no-store'});
+    if(!r.ok){
+      var d={};try{d=await r.json()}catch(e){}
+      _camSetHint(d.detail||('取不到快照（'+r.status+'）'));
+      return;
+    }
+    var b=await r.blob();
+    if(_camUrl)URL.revokeObjectURL(_camUrl);
+    _camUrl=URL.createObjectURL(b);
+    var img=$('cameraImg');img.src=_camUrl;img.style.display='';
+    $('cameraHint').style.display='none';
+  }catch(e){
+    _camSetHint('取不到快照');
+  }finally{_camBusy=false}
+}
+function openCameraPanel(){var p=$('cameraPanel');p.style.display='flex';p.setAttribute('aria-hidden','false');loadCameraSnapshot()}
+function closeCameraPanel(){var p=$('cameraPanel');p.style.display='none';p.setAttribute('aria-hidden','true');if(_camUrl){URL.revokeObjectURL(_camUrl);_camUrl=null;$('cameraImg').removeAttribute('src')}_camSetHint('点右上角刷新看一眼')}
+if($('openCamera'))$('openCamera').onclick=function(){try{closeDrawer()}catch(e){}openCameraPanel()};
+if($('closeCamera'))$('closeCamera').onclick=closeCameraPanel;
+if($('refreshCamera'))$('refreshCamera').onclick=loadCameraSnapshot;
 if($('closeUsage'))$('closeUsage').onclick=closeUsagePanel;
 if($('refreshUsage'))$('refreshUsage').onclick=loadUsage;
 ['profileSave','profileSaveMemories','profileSavePreferences'].forEach(id=>$(id).onclick=async()=>{try{await saveProfile()}catch(e){toast('保存失败')}});
