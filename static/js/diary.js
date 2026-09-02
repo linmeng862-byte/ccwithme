@@ -226,6 +226,7 @@ function _backToToday() {
 
 // ====== Timeline Shell (Today header + mood capsule) ======
 function _renderTimelineShell() {
+  _ensureFab();   // 详情页把 + 藏了。这儿是回到时间线的必经之路（开面板、切 tab 都走这），一律还回来
   var timeline = $('diaryTimeline');
   var now = new Date();
   var todayStr = _dateStr(now);
@@ -1222,14 +1223,16 @@ function _initDiaryEvents() {
   var searchIcon = document.querySelector('#diarySearchBar .diary-search-icon');
   if (searchIcon) searchIcon.innerHTML = icon ? icon('search') : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 
-  // Floating add button
+  // Floating add button —— 建出来。之后每次渲染时间线都会再确认一遍（见 _renderTimelineShell）
   _ensureFab();
 }
 
 function _ensureFab() {
   // 详情页把它 display:none 了（见 _renderDetail）。只有 _backToTimeline 会还回来 ——
   // 从详情页直接关掉面板再打开，就还不回来了，+ 号永久消失（08-29 她报的）。
-  // 这里是时间线视图的必经之路，一律把它显出来。
+  // ⚠️ 08-31：那次的修法没生效 —— 这行原来只挂在 _initDiaryEvents 里，
+  // 而那个函数整页只跑一次，openDiaryPanel 根本不调它。真正的必经之路是
+  // _renderTimelineShell（开面板 / 切 tab / 返回时间线都过它），已挪到那儿。
   var _exist = document.getElementById('diaryFab');
   if (_exist) { _exist.style.display = ''; return; }
   var fab = document.createElement('button');

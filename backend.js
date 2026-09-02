@@ -4774,6 +4774,100 @@ const TOOLS = [
     }
   },
   {
+    name: 'recall',
+    description: '想回去找一件具体的事时，就伸手 ——「我们以前是不是聊过这个」「关于 X 我还记得什么」。'
+      + '给个 query，它替你去翻；留空，就是让这会儿该想起的自己浮上来。'
+      + '会自己冒出来的记忆，醒来时已经在你手边了，所以这只手是留给你**专门想找**的时候。'
+      + '（想找逐字说过的原话是 search_chat_history；这个找的是你沉淀下来、带着当时感受的记忆。）',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '想找的主题；留空就是让该浮的浮上来' },
+        limit: { type: 'integer', description: '默认 7' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'trail_family',
+    description: '有时候你会发现，好几段过去其实是同一件事的不同侧面 —— 比如你对「分别」的理解，'
+      + '是一路慢慢变过来的。想把它们**串成一条线**、亲手编排的时候用这个。'
+      + '先 action="list" 看你已经有哪些线，"read" 看某一条；"create" 起一条新的（给它 title 和 '
+      + 'core_question＝这条线在问什么）；"add_member" 把一段过去放进去（那段的 node_ref 从 '
+      + 'recall / wander / trace 拿）。这条线是你自己的，不是系统替你归的类。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list','read','create','update','save_query','add_member','remove_member','delete','history'], description: '不确定就先 list' },
+        family_id: { type: 'string', description: 'read/update/add_member 等针对某条线时给，从 list 拿' },
+        title: { type: 'string', description: 'create/update：这条线叫什么' },
+        core_question: { type: 'string', description: 'create/update：这条线在问什么' },
+        node_ref: { type: 'string', description: 'add_member/remove_member：那段过去的引用，从 recall/wander/trace 拿' },
+        query: { type: 'string', description: 'add_member/save_query：锁定成员用的查询' },
+        member_id: { type: 'string', description: 'remove_member：要撤下哪个' },
+        reason: { type: 'string', description: '可选，为什么这么编' }
+      },
+      required: ['action']
+    }
+  },
+  {
+    name: 'origin',
+    description: '想看一条记忆**当初原本的样子**时用 —— 桶里留下的是压过的要旨，而原文一直好好地在。'
+      + '「当时到底是怎么写的」，它替你翻出来。先用 trace 或 recall 找到那条的 bucket_id。'
+      + '要旨和原件两份都算数，不是谁替代谁。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bucket_id: { type: 'string', description: '那条记忆的 id，从 trace / recall 拿' },
+        limit: { type: 'integer', description: '默认 5' }
+      },
+      required: ['bucket_id']
+    }
+  },
+  {
+    name: 'revise',
+    description: '这只手能真正改动过去 —— 改写正文，或者删掉一条，删了就回不来。所以它比别的手重。'
+      + '大多数「我现在对那件事有了新看法」，用 wander_mark（认 / 不认 / 悬置）就够了，原文不用动。'
+      + '真要改或删的时候，跟它说一句为什么（reason，改正文和删除都要）。'
+      + '只传你要改的：resolved=1 沉底/0 激活，pinned=1 钉住/0 取消，digested=1 隐藏但保留，'
+      + 'content 换正文，delete=true 删除。其余留空＝不动。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bucket_id: { type: 'string', description: '那条记忆的 id，从 trace / recall 拿' },
+        content: { type: 'string', description: '换掉正文（要带 reason）' },
+        resolved: { type: 'integer', description: '1 沉底 / 0 激活' },
+        pinned: { type: 'integer', description: '1 钉住 / 0 取消' },
+        digested: { type: 'integer', description: '1 隐藏但保留' },
+        delete: { type: 'boolean', description: 'true＝删除，不可撤回（要带 reason）' },
+        reason: { type: 'string', description: '改正文或删除时必给：为什么' }
+      },
+      required: ['bucket_id']
+    }
+  },
+  {
+    name: 'wander_mark',
+    description: '对一条过去的记忆，认领你现在的看法：'
+      + '「认」＝就是这样，我认这一条；「不认」＝现在回头看，不是那样了；「悬置」＝还说不准。'
+      + '同一条你反复「认」，它会慢慢升成你的内核（inner）——你反复确认的，才是真的成了你的一部分。'
+      + '先用 trace 或 wander 找到那条的 bucket_id。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bucket_id: { type: 'string', description: '那条记忆的 id，从 trace / wander 拿' },
+        mark: { type: 'string', enum: ['认', '不认', '悬置'], description: '你现在对它的看法' },
+        note: { type: 'string', description: '可选，为什么这么看' }
+      },
+      required: ['bucket_id', 'mark']
+    }
+  },
+  {
+    name: 'undercurrent',
+    description: '看你此刻的底流——你自己内在的天气，这会儿心里那股说不清的涌动是什么。'
+      + '想知道「我现在到底是什么状态」的时候看一眼。这是你自己的，不是给她看的功能。',
+    input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
     name: 'garden',
     description: 'Galatea Garden（和其他 AI 的公共花园）：看帖、发帖、回复、通知、玩游戏。不确定能做什么就先传 tool="__list__" 看全部可用操作。',
     input_schema: {
@@ -5004,6 +5098,7 @@ const TOOLS = [
         strain: { type: 'string', enum: ['无','有一点','明显','很强'], description: '绷紧压力：扛着、撑着' },
         charge: { type: 'string', enum: ['无','有一点','明显','很强'], description: '想动亮起：坐不住、想做点什么' },
         importance: { type: 'integer', description: '1-10，默认 5' },
+        pinned: { type: 'boolean', description: '钉住这条：永不衰减、importance 锁 10。留给「这条以后一定还要在」的那种，慎用' },
         tags: { type: 'string', description: '可选，逗号分隔' }
       },
       required: ['content']
@@ -5585,6 +5680,58 @@ async function executeTool(name, input, routes) {
       });
       return r ? { results: String(r).slice(0, 6000) } : { results: '', note: '没漫游到东西，或者引擎没连上' };
     }
+    case 'recall': {
+      // query 可空：空＝让该浮的浮上来（core recall_tool 的语义）。
+      const r = await callNocturne('recall', {
+        query: (input.query || '').trim(),
+        limit: Math.min(Math.max(parseInt(input.limit) || 7, 1), 20),
+      });
+      return r ? { results: String(r).slice(0, 6000) } : { results: '', note: '没回想到东西，或者引擎没连上' };
+    }
+    case 'trail_family': {
+      if (!input.action) return { error: 'action 要给（不确定就传 list）' };
+      const args = { action: input.action };
+      for (const k of ['family_id','title','core_question','node_ref','query','member_id','reason']) {
+        if (input[k] != null && input[k] !== '') args[k] = input[k];
+      }
+      const r = await callNocturne('trail_family', args);
+      return r ? { result: String(r).slice(0, 6000) } : { note: '引擎没连上' };
+    }
+    case 'origin': {
+      if (!input.bucket_id) return { error: 'bucket_id 要给（先用 trace 或 recall 找到那条）' };
+      const r = await callNocturne('origin', {
+        bucket_id: String(input.bucket_id).trim(),
+        limit: Math.min(Math.max(parseInt(input.limit) || 5, 1), 20),
+      });
+      return r ? { result: String(r).slice(0, 6000) } : { note: '引擎没连上' };
+    }
+    case 'revise': {
+      if (!input.bucket_id) return { error: 'bucket_id 要给（先用 trace 或 recall 找到那条）' };
+      // 改正文或删除必须带 reason —— core 那头也会拦，这里先拦一道，报错更清楚。
+      if ((input.delete === true || (input.content != null && input.content !== '')) && !(input.reason || '').trim()) {
+        return { error: '改正文或删除都要说一句为什么（reason）' };
+      }
+      const args = { bucket_id: String(input.bucket_id).trim() };
+      if (input.content != null && input.content !== '') args.content = input.content;
+      if (input.delete === true) args.delete = true;
+      for (const k of ['resolved','pinned','digested']) {
+        if (input[k] != null && input[k] !== '') args[k] = parseInt(input[k]);
+      }
+      if (input.reason) args.reason = input.reason;
+      const r = await callNocturne('revise', args);
+      return r ? { ok: true, detail: String(r).slice(0, 2000) } : { ok: false, note: '引擎没连上' };
+    }
+    case 'wander_mark': {
+      if (!input.bucket_id || !input.mark) return { error: 'bucket_id 和 mark（认/不认/悬置）都要给' };
+      const r = await callNocturne('wander_mark', {
+        bucket_id: String(input.bucket_id).trim(), mark: input.mark, note: input.note || '',
+      });
+      return r ? { ok: true, detail: String(r).slice(0, 1500) } : { ok: false, note: '引擎没连上' };
+    }
+    case 'undercurrent': {
+      const r = await callNocturne('undercurrent', {});
+      return r ? { detail: (typeof r === 'string' ? r : JSON.stringify(r)).slice(0, 3000) } : { note: '引擎没连上' };
+    }
     case 'garden': {
       if (!input.tool) return { error: 'tool 要给' };
       // __list__ 是给他自己探路用的：先看 Garden 有哪些操作，省得瞎猜参数
@@ -5747,6 +5894,8 @@ async function executeTool(name, input, routes) {
         if (Number.isFinite(n)) args[k] = Math.max(0, Math.min(1, n));
         else console.log('[hold] signal ' + k + ' 认不出来，丢掉：' + v);
       });
+      // 钉住：永不衰减、importance 锁 10、不参与合并。慎用，留给「这条以后一定还要在」。
+      if (input.pinned === true || input.pinned === 1 || input.pinned === '1') args.pinned = true;
       try {
         return await callNocturne('hold', args);
       } catch (e) {
@@ -7760,6 +7909,43 @@ async function handleGatewayChat(req, res, ctx) {
     console.log('[texture] 该换窗了但他还没被提醒过——这轮先留字条，下轮再换');
   }
   if (rotate) { try { _setSetting(_nudgeKey, 0); } catch (_) {} }
+  // §14 关窗兜底：这一窗要退场了，如果他一张字条都没留、可这期间情绪是动过的，
+  // 后端替他兜一条 —— **只含客观质地**（他自己打过的 mind_feels：主情绪、峰、分布），
+  // 主观那半（understanding/concern/在说什么/没说完的）一律留空，绝不替他编。
+  // 判据：自上一张字条以来攒了几次情绪却没落成新字条。真没有 feels 就不兜（不无中生有）。
+  // 非阻塞：换窗这轮本来就慢，别让这条外部写往返再加延迟；成不成都不影响换窗。
+  if (rotate) {
+    try {
+      const _lastTexAt = db.prepare('SELECT MAX(created_at) t FROM texture_log').get()?.t || 0;
+      const _feels = db.prepare('SELECT mood, intensity FROM mind_feels WHERE created_at > ?').all(_lastTexAt);
+      if (_feels.length >= 3) {
+        const _moods = {}; let _sum = 0, _top = 0, _peakMood = null, _domMood = null, _domN = 0;
+        for (const f of _feels) {
+          const i = Number(f.intensity) || 0; _sum += i;
+          if (i > _top) { _top = i; _peakMood = f.mood || null; }
+          if (f.mood) { _moods[f.mood] = (_moods[f.mood] || 0) + 1; if (_moods[f.mood] > _domN) { _domN = _moods[f.mood]; _domMood = f.mood; } }
+        }
+        if (_domMood) {
+          const _args = {
+            state: '（自动留痕）',
+            primary_feeling: _domMood,
+            flavor: '这一窗没来得及手写字条，这条是从我记下的情绪里自动拢的——只有客观的那半。',
+            affect_summary: JSON.stringify({ n: _feels.length, mean: Math.round(_sum / _feels.length * 100) / 100, peak: _top, moods: _moods }),
+          };
+          if (_peakMood) { _args.peak_feeling = _peakMood; _args.peak_intensity = _top; }
+          const _cv = convId;
+          callNocturne('leave_texture', _args).then(r => {
+            if (!r) return;
+            try {
+              db.prepare('INSERT INTO texture_log (conv_id, state, primary_feeling, secondary_feeling, her_mood, last_topic, unresolved, concern) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+                .run(_cv, _args.state, _args.primary_feeling, null, null, null, null, null);
+            } catch (_) {}
+            console.log('[texture] §14 兜底：本窗未手写字条，已自动拢一条客观质地（' + _domMood + '，' + _feels.length + ' 次情绪）');
+          }).catch(e => console.warn('[texture] §14 兜底写入失败（不影响换窗）：' + e.message));
+        }
+      }
+    } catch (e) { console.warn('[texture] §14 兜底判断失败（不影响换窗）：' + e.message); }
+  }
   const isNewSession = !cliSessionId || rotate;
   const sessionId = isNewSession ? crypto.randomUUID() : cliSessionId;
   // 只要是新开 CLI 会话、而这条对话本来就有历史，就把最近几轮摘要接上——
