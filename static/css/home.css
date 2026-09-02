@@ -42,7 +42,7 @@
   --anno-replied-hover:linear-gradient(transparent 52%,rgba(137,174,197,.62) 52%)
 }
 :root{
-  --claude-sidebar-bg:rgba(252,250,245,.88);--claude-main-surface:#FCFAF5;--claude-main-surface-soft:#F3EFE7;
+  --claude-sidebar-bg:rgba(253,249,243,.88);--claude-main-surface:#FDF9F3;--claude-main-surface-soft:#F3EFE7;
   --claude-text-primary:#171717;--claude-text-secondary:#777670;--claude-text-muted:#A6A49D;
   --claude-selected-bg:#E9E8E2;--claude-selected-bg-dim:#D0CFCB;--claude-border-soft:#E1E0DA;
   --claude-pill-bg:#2A2928;--claude-pill-text:#F0F0EC;--claude-pill-shadow:rgba(0,0,0,.22);
