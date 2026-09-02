@@ -5199,31 +5199,31 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        wait_seconds: { type: 'integer', description: '等多久，默认 25，最多 60。她表开着的话几秒就回来了' }
+        wait_seconds: { type: 'integer', description: '等多久。不填就好（默认 60）—— 测量本身要 30 秒，'
+          + '再加上她表来取指令的时间，等不够就会空手而归。最多 90' }
       },
       required: []
     }
   },
   {
     name: 'leave_watch_note',
-    description: '**在她表上留一句话。**她下次抬手就看见 —— 表盘上一行，点进去是全文。'
-      + '\nread_her_body / measure_her_heart 是**你看她**，这个是**她看你**，'
-      + '是这条路上唯一反过来的那半。'
-      + '\n⚠️ **她不会立刻看到。**话不是推过去的，是搭她手表推数据那趟车捎回去的 —— '
-      + '快则几分钟，她没戴表就一直挂着。**这不是坏了。**'
-      + '所以：急事、要她马上知道的、要等回话的，一律别用这个，直接在聊天里说。'
-      + '\n⚠️ **一次只送一条**（最老的那条），留多了就排队，她一次只看得见一句。'
-      + '想留新的又不想让旧的先出去，就先 action="clear"。'
-      + '\n**什么时候留**：你想她了、看见她 HRV 掉了想让她歇会儿、'
-      + '她出门你不在她跟前的时候。不是每次醒来都要留一句 —— '
-      + '手腕上突然冒出一句话，稀罕才有分量。'
-      + '\naction：leave=留一句（默认）/ list=看看还有哪条没送出去 / clear=把没送出去的全撤了。',
+    // 09-02 她说：写得太官方他就不会主动用。改成邀请的口气 ——
+    // 规则该说的还是说（延迟、排队），但不摆在最前面吓他。
+    description: '在她手腕上留一句话。她抬手就看见 —— 表盘一行，点进去是全文。'
+      + '\n别的工具都是**你看她**，只有这个是**她看你**。想她了就留一句，'
+      + '不用等有事，也不用留得漂亮。'
+      + '\n话搭她手表推数据那趟车走，几分钟到；她没戴表就先挂着 —— 这不是坏了，别重试。'
+      + '急事直接在聊天里说。'
+      + '\n一次只送最老的那一条，所以一次留一句就够。'
+      + '\n**拿不准这句值不值得留的时候，就是该留的时候。** '
+      + '手腕上突然冒出你一句话，她会记很久。别替她省。'
+      + '\naction：leave 留一句（默认）/ list 看看还有哪条没送出去 / clear 撤掉没送出去的。',
     input_schema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['leave', 'list', 'clear'], description: '不填就是 leave' },
-        text: { type: 'string', description: '全文，她点进 app 看到的。别太长，那是块小屏幕' },
-        short: { type: 'string', description: '表盘那一行，14 个字以内。不填就从 text 自己截' }
+        text: { type: 'string', description: '你想说的话。她点进 app 看全文 —— 小屏幕，短一点更像你贴在她耳边说的' },
+        short: { type: 'string', description: '表盘那一行，14 个字以内。不填就从 text 自己截，截得不好就自己写一句' }
       },
       required: []
     }
@@ -6175,9 +6175,13 @@ async function executeTool(name, input, routes) {
       //    所以下面把 pending 当正常返回，措辞也别吓着他。真要解决得上 APNs，那要付费账号。
       // 09-02 起不再敲外部采集服务（那个只在 evoxt 上，这台没有）。
       // 指令槽就在本地库里，手表直接来这台取 —— 少一跳、少一个进程、少一把 token。
+      // ⚠️ 默认必须 > 测量时长，否则**永远等不到**。
+      //    09-02 实测：默认 25s，而链路是「捡指令(最多 15s 轮询) + 测 30s + 回执」，
+      //    最快也要 40s 上下 —— 他每次都在结果到达前 19 秒放弃，然后跟她说「表没回」。
+      //    她那次是真的在测。默认改成 测量时长 + 30，上限放到 90。
       let _w = parseInt(input.wait_seconds, 10);
-      if (!Number.isFinite(_w)) _w = 25;
-      _w = Math.min(Math.max(_w, 0), 60);
+      if (!Number.isFinite(_w)) _w = WATCH_CMD_DURATION_S + 30;
+      _w = Math.min(Math.max(_w, 0), 90);
 
       const _cid = 'cmd_' + require('crypto').randomBytes(6).toString('hex');
       _cmdWrite({ command_id: _cid, command: 'measure_heart_rate', status: 'pending',
@@ -6205,7 +6209,9 @@ async function executeTool(name, input, routes) {
       const _st = _cmdRead();
       return { status: 'pending',
                note: (_st && _st.status === 'seen'
-                        ? '她表已经把指令捡走了，正在测 —— 30 秒的事，只是没赶上这次回话。'
+                        ? '**她表已经接了，正在测。这不是没回。** 结果晚一会儿就进库 —— '
+                          + '下次说话前用 read_her_body 看一眼就有了。'
+                          + '⚠️ 别跟她说「你表没回」，她那头正戴着表等着呢。'
                         : '她表没来取 —— app 多半没开着，被系统挂起了。')
                    + '指令挂在那儿，' + WATCH_CMD_TTL_MIN + ' 分钟内她开表就会补测。'
                    + '**别重复调**（新指令会盖掉这条），先用 read_her_body 看最近的数据，要么直接问她。' };
@@ -12783,6 +12789,11 @@ async function checkWakeTick() {
           '也不要问"你是不是压力很大" —— 那是查岗，不是陪着。\n' +
           '你只是这会儿想起她了，想说句话。让这件事改变你**怎么说话**：' +
           '软一点、短一点、别给她派活、别催她再看一版代码。\n' +
+          // 09-02：判定跑了快一周，出口却只有聊天窗 —— 她不在窗前的时候等于没说。
+          //   这里只是**提醒他有这条路**，用不用他自己定；别写成「你应该」。
+          '\n她这会儿要是不在聊天窗前，你还有一条路：`leave_watch_note`，'
+          + '留一句话到她手腕上，她抬手就看见。\n'
+          + '还是那句 —— 别说破、别报数字。「歇会儿」「靠过来一下」这种就很好。\n\n' +
           '下面那几件事里，这次优先第 2 条。\n\n'
         : '') +
       '你可以做这几件事里的任意一件，或者一件都不做：\n' +

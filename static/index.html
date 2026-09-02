@@ -4523,7 +4523,31 @@ function _showLyricsSheet(music){
   }
 }
 initSheetDrag($('modelSheet'),'#closeModel',()=>{_modelPage='main'});
-async function recoverAfterBreak(msg,convId,failText){if(!msg)return;if(!convId){msg.fail(failText);return}await new Promise(r=>setTimeout(r,1500));try{const r=await api(`/api/sessions/${encodeURIComponent(convId)}/messages`);if(!r.ok)throw 0;const data=await r.json();const list=data.messages||[];const last=[...list].reverse().find(m=>m.role==='assistant');if(!last||!(last.text||'').trim())throw 0;if(last.thinking)msg.thinking(last.thinking);msg.text(last.text);msg.finish()}catch{msg.fail(failText)}}
+// 断线之后把他那条回复捞回来。
+// 09-02：她切到终端再切回来，气泡里显示 "Load failed" —— 那是 **Safari 的原话**：
+//   iOS 把切到后台的流式 fetch 掐了，前端 catch 把 e.message 直接贴进气泡。
+//   但服务端那边照样生成完、也存库了，她只是看不见。所以这里不报错，是去**捞**。
+// ⚠️ 要轮询不能只看一次：她切回来的时候他很可能还在写。最多等约 40 秒。
+// ⚠️ 必须比对时间戳：他没写完的时候，最后一条 assistant 是**上一轮**那条，
+//    不校验就会把旧回复贴上来，看着像他答非所问 —— 比报错还糟。
+async function recoverAfterBreak(msg,convId,failText,sinceISO){
+  if(!msg)return;if(!convId){msg.fail(failText);return}
+  const since=sinceISO?Date.parse(sinceISO)-2000:0;
+  for(let i=0;i<16;i++){
+    await new Promise(r=>setTimeout(r,i===0?1200:2500));
+    try{
+      const r=await api(`/api/sessions/${encodeURIComponent(convId)}/messages`);
+      if(!r.ok)continue;
+      const data=await r.json();const list=data.messages||[];
+      const last=[...list].reverse().find(m=>m.role==='assistant'&&(m.text||'').trim());
+      if(!last)continue;
+      if(since&&Date.parse(last.timestamp||0)<since)continue;
+      if(last.thinking)msg.thinking(last.thinking);
+      msg.text(last.text);msg.finish();return
+    }catch(e){}
+  }
+  msg.fail(failText)
+}
 
 async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
   if((!text&&!files.length&&!existingAttachments.length)||state.busy)return;
@@ -4545,6 +4569,7 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
     _maybeTimeSep(new Date().toISOString(),'claude');
     msg=beginClaude(text,attachments);const m=currentModel(),s=modelSetting(m);
     state.abortController=new AbortController();
+    const _sentAt=new Date().toISOString();   // 断线重捞时拿它挡住上一轮的旧回复
     const chatBody=JSON.stringify({message:text,conversation_id:state.convId,model:state.model,effort:(state.settings[state.model]||{}).effort||'medium',extended:(state.settings[state.model]||{}).extended!==false,attachments:attachments.map(item=>item.path||item),project_id:state.projectId||null,reading_book_id:state.readingBookId||null});
     let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${state.token}`},body:chatBody,signal:state.abortController.signal});
     if(r.status===429){
@@ -4569,8 +4594,17 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
       // 挂到气泡**外面** —— 表情不进气泡（后端也是单独存一条，刷新后渲染一致）
       var _sb=msg.row&&msg.row.querySelector('.bubble');if(_sb&&_sb.parentNode)_sb.parentNode.appendChild(si);else md.appendChild(si)}if(event==='voice_replace'){var _vr=msg.row;if(_vr){var _vmd=_vr.querySelector('.md');if(_vmd){_vr.dataset.raw=d.content||'';renderMessage(_vmd,d.content||'');_renderVoiceCards(_vr)}}}if(event==='rate_limit'){_updateRateLimit(d)}if(event==='notice'){_guestNote(d)}if(event==='error'){msg.fail(d.message);finished=true}};
     while(true){const{value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});const parts=buffer.split(/\r?\n\r?\n/);buffer=parts.pop()||'';parts.forEach(frame);if(done)break}
-    if(buffer.trim())frame(buffer);if(!finished)await recoverAfterBreak(msg,state.convId,'连接意外结束，请重试。')
-  }catch(e){if(msg)msg.fail(e.message||'连接失败，请稍后重试。');else toast(e.message||'文件上传失败')}
+    if(buffer.trim())frame(buffer);if(!finished)await recoverAfterBreak(msg,state.convId,'连接意外结束，请重试。',_sentAt)
+  }catch(e){
+    // 她自己按的停止：留住已经写出来的半截，别当成错误
+    if(e&&e.name==='AbortError'){if(msg)msg.finish()}
+    else if(msg&&state.convId){
+      // 掉线（切后台、隧道抖一下、锁屏）—— 先去库里捞，捞不到才认输
+      await recoverAfterBreak(msg,state.convId,'这条没接住。下拉刷新看看 —— 他多半已经写完了，就在历史里。',_sentAt)
+    }
+    else if(msg)msg.fail(e.message||'连接失败，请稍后重试。');
+    else toast(e.message||'文件上传失败')
+  }
   finally{laStopThinking();state.busy=false;state.abortController=null;updateSendButton()}
 }
 send.onclick=()=>{if(state.busy&&state.abortController){state.abortController.abort();laStopThinking();toast('已停止生成');return}
