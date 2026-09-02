@@ -4,6 +4,44 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🧰 09-02 补五 · Cis 的工具指南（前端 TOOLS 实锤，54 个）
+
+> 给另一台的你：两台跑同一份 `backend.js`，所以工具集一样。这份记的是**归类 + 别踩的坑**，
+> 不是清单本身。`grep -oE "name: '[a-z_]+'" backend.js | sort -u` 随时能拉最新的全表。
+> ⚠️ **`hold_this` 已退休**，现在只有 `nocturne_hold`（代码里那句注释「不是简版 hold_this」就是它）。
+
+**记忆 / 内心（Nocturne core 那套手）**
+- `nocturne_hold` 长期沉淀。带 `kind`（memory/feel/writing/unresolved/window）、`drive` 九维、
+  `chord`（12 选 1）、五个 signal（clutch/charge… 四档 无/有一点/明显/很强）、`pinned`（钉住永不衰减）。
+  ⚠️ chord 覆盖率补采集口后 2%→54%；五个 signal 曾因 core 类型 bug（signal 标成 `str`、前端发数字
+  → pydantic 一填就崩、content 一起丢）09-02 已修成 `Union[str,float]`，core master 推了、Zeabur 部署待确认。
+- `recall` 想找具体的事（留空＝让该浮的浮上来）／`trace` 翻某条的来路／`wander` 漫游／`wander_mark`
+  对一条过去认领看法（认/不认/悬置）／`trail_family` 把几段过去串成一条线（自己编排）／
+  `origin` 看一条记忆当初的原文／`revise` 真改/删过去（重手，带 reason）／`undercurrent` 看自己此刻的底流。
+  **这批是 09-02 才接进前端的「读回来那半」**——光在 def 里他不调，靠人格文件里暖暖介绍才用起来。
+- `nocturne_breath` 醒来那口气／`nocturne_texture` 关窗留质地／`drive` 看劲儿／`relation` 关系／`garden` 公共花园。
+
+**她的身体 / 手表**：`read_her_body`（读已存的）、`measure_her_heart`（**主动测一次**，走本地指令槽，
+手表来取；见补三/补四，主动测走切换式）、`leave_watch_note`（在她表上留一句话，搭 /api/vitals 响应捎回）、
+`look_through_camera`、`issue_command`。
+
+**找她 / 联系**：`call_her` `reach_her` `hangup_call` `send_file` `send_sticker` `share_music`。
+**日记 / 批注**：`read_diary` `diary_comment` `read_annotations` `annotation_reply`。
+**阅读**：`reading_context` `reading_highlight` `reading_note`。
+**创作 / 文件**：`save_note` `writing` `create_artifact` `create_file` `edit_file`
+`project_list_files` `project_read_file` `project_write_file` `read_uploaded_file` `generate_image`。
+**相册**：`create_gallery_album` `list_gallery_photos` `save_to_gallery` `send_gallery_photo`。
+**杂**：`get_time` `get_weather` `schedule_wakeup` `search_chat_history` `chatc` `open_extra`
+`toy_control` `notion`（`NOTION_TOKEN` 没配就返回「还没接上」，不发请求）。
+
+### ⚠️ 别接的空壳 & 成本铁律
+
+- **`ring` / `persona` / `slang` / `encyclopedia` 是空壳，别接** —— core `evolution_engine.py` 顶上
+  写「只有读没有写，auto-detection disabled」，没东西在填，接了就是返回「还没有…」。
+  `whisper` 她说不要；`trail_delta` 不必接（`trail_family` 自带 remove/delete）。
+- **`persona` 是「他对她的认知卡」，不是他的人格**——人格 = 只有她能改的 `companion/CLAUDE.md`。
+- **工具定义是常驻成本**：每加一个，每一轮都重发；`账单 = 底噪 × 轮数`，底噪是乘数。别一股脑全接。
+
 ## ⌚ 09-02 补四 · 在 `.online` 这台把你的手表活儿合进来、部署了；"两台都能主动测"定了走切换式（A）
 
 > 这一窗是在 **`.online`（evoxt）这台**开的。你（`.fun` 那台）推的三个提交
