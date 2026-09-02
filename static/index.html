@@ -276,6 +276,7 @@
            走 data-icon 同一条渲染路径。文字也一并 usage→Usage、workplace→Workplace，
            跟 Calendar/Atrio/Memory 对齐首字母大写。 -->
       <button class="mobile-sidebar-nav-item" id="openUsage" type="button"><span class="mobile-sidebar-nav-icon" data-icon="usage"></span><span>Usage</span></button>
+      <button class="mobile-sidebar-nav-item" id="openCamera" type="button"><span class="mobile-sidebar-nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="18" height="18"><path d="M3 8.5A2.5 2.5 0 015.5 6h1.7l1.1-1.6A1 1 0 019.1 4h5.8a1 1 0 01.8.4L16.8 6h1.7A2.5 2.5 0 0121 8.5v8A2.5 2.5 0 0118.5 19h-13A2.5 2.5 0 013 16.5z"/><circle cx="12" cy="12.5" r="3.2"/></svg></span><span>Camera</span></button>
 
 <div class="drawer-api-section" style="padding:12px 16px;border-top:1px solid var(--bg-sunken)">
 <div class="drawer-api-header" style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" id="drawerApiToggle" onclick="var f=document.getElementById('drawerApiForm');f.style.display=f.style.display==='block'?'none':'block';var c=document.getElementById('drawerApiChevron');if(c)c.style.transform=f.style.display==='block'?'rotate(180deg)':''"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16"><circle cx="8" cy="5" r="3"/><path d="M3 14v-1a4 4 0 018 0v1"/></svg><span style="flex:1;font:500 13px var(--font-sans);color:var(--text-secondary)">语音配置</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" id="drawerApiChevron"><path d="M4 6l4 4 4-4"/></svg></div>
@@ -342,6 +343,19 @@
   </header>
   <div id="usageBody" style="flex:1;overflow-y:auto;padding:16px 18px calc(env(safe-area-inset-bottom) + 24px)">
     <div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载中…</div>
+  </div>
+</section>
+
+<!-- 摄像头：只做「点一下看一眼」，不做连续轮询 -->
+<section id="cameraPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden">
+  <header class="panel-head-floating" style="display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 18px 12px;flex:0 0 auto">
+    <button id="closeCamera" class="glass-btn" aria-label="关闭" style="width:32px;height:32px;border-radius:50%;color:var(--text-primary);font:20px/1 var(--font-sans);cursor:pointer">×</button>
+    <div style="flex:1;font:600 16px var(--font-sans)">camera</div>
+    <button id="refreshCamera" class="glass-btn" aria-label="刷新" style="width:32px;height:32px;border-radius:50%;color:var(--text-primary);cursor:pointer"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15" style="vertical-align:-2px"><path d="M14 8a6 6 0 11-1.8-4.3M13 1v3h-3"/></svg></button>
+  </header>
+  <div id="cameraBody" style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:12px 14px calc(env(safe-area-inset-bottom) + 20px)">
+    <div id="cameraHint" style="color:var(--text-faint);font:14px var(--font-sans);text-align:center">点右上角刷新看一眼</div>
+    <img id="cameraImg" alt="摄像头快照" style="display:none;max-width:100%;max-height:100%;border-radius:14px">
   </div>
 </section>
 
@@ -2283,6 +2297,12 @@ function _showInterim(t){
   _interimEl.textContent=t+'…';
 }
 var _SPEECH_GAP=1500,_SPEECH_MAX=12000;
+// VAD 判定「她说完了」之后再等这么久，接住还在路上的 final 结果。
+// 短了会把每句最后几个字切到下一句去，长了她会觉得他反应慢 —— 420 是磨出来的起点。
+var _VAD_FINAL_GRACE=420;
+// VAD 收尾之后 final 才姗姗来迟的那种：那时 _vadSpeaking 已经是 false，
+// 没人再叫 _flushSpeech 了，所以这里还是挂一个长一点的兜底。
+var _VAD_LATE_FINAL=900;
 var _speechBuf='',_speechTimer=null,_speechFirstAt=0;
 var _lastSpeechText='',_lastSpeechAt=0;
 function _queueSpeech(t){
@@ -2290,7 +2310,9 @@ function _queueSpeech(t){
   if(!_speechFirstAt)_speechFirstAt=Date.now();
   if(_speechTimer)clearTimeout(_speechTimer);
   if(Date.now()-_speechFirstAt>=_SPEECH_MAX){_flushSpeech();return}
-  _speechTimer=setTimeout(_flushSpeech,_SPEECH_GAP);
+  // VAD 在跑就由它来判「说完了」（它看的是声音，比定时器准）；
+  // 这里的定时器降级成兜底。VAD 起不来时才是原来那套 1500ms 分句。
+  _speechTimer=setTimeout(_flushSpeech,_vadOn?_VAD_LATE_FINAL:_SPEECH_GAP);
 }
 function _flushSpeech(){
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}
@@ -2314,6 +2336,10 @@ function _flushSpeech(){
     console.warn('[call] 丢弃重复识别:',t);_stopSeg();return;
   }
   _lastSpeechText=t;_lastSpeechAt=Date.now();
+  // 新的一句真发出去了 —— 上一轮的哑音闸在这里解除。
+  // ⚠️ 解除必须在这儿，不能在 _bargeIn 之后随便找个地方：早了的话上一轮还没停下来的
+  //    delta 会立刻接着念，她刚打断完他又开口；晚了她这句的回复就一个字都听不见。
+  _bargedIn=false;
   _callWs.send(JSON.stringify({type:'speech',text:t}));
   // ⚠️ 用 _buildUserRow 造，别手搓裸 div —— 手搓的没有头像，
   //    而且结构对不上 _msgContentEl，语音条换进去也找不到地方放。
@@ -2322,6 +2348,145 @@ function _flushSpeech(){
   _callAppend(bubble);
   // 这段音频对应的就是这句话。切下来上传，回来就把上面这条换成语音条。
   _cutSeg(t,bubble);
+}
+
+// ============ 通话 VAD + 打断（2026-08-31，思路借自 pai-voice）============
+// 只用来判「她在不在说话」，**不接管识别**：识别还是浏览器 SpeechRecognition。
+// VAD 跑在 _callMediaStream 上——这条流开了 echoCancellation，扬声器里他的声音
+// 基本被消掉了，所以他念着的时候也敢一直开着听，这才有了打断。
+//
+// 为什么没照抄 pai-voice 的「PCM 推给后端做 ASR」：那要把音频流一路传到服务端，
+// STT 按分钟计费，一通电话的钱翻好几倍；VPS 也只有 1.9G。值钱的是 VAD 和打断
+// 这两块判断逻辑，识别那条路先不动。
+//
+// ⚠️ VAD 有自己的 AudioContext，跟放音的 _audioCtx 是两个，别合并：
+//    _audioCtx 放完最后一块会 close() 自己（见 _feedPCMChunk 的 onended），
+//    合并了就等于他一念完，耳朵就聋了。
+var _vadCtx=null,_vadNode=null,_vadOn=false;
+var _vadNoise=0.01,_vadHot=0,_vadHotSince=0,_vadSilenceSince=0,_vadLastHotAt=0,_vadSpeechMin=1;
+var _vadSpeaking=false;
+var VAD={
+  startHold:3,        // 连续几块超阈值才算开口（一块 ~43ms）
+  endSilenceMs:650,   // 静音多久算这句说完
+  bargeInMs:560,      // 他正念着时，她要持续出声这么久才算真打断（防回声/防误触）
+  floor:0.006,        // 噪声底线，再安静也不往下走
+  gain:3.2,           // 进入阈值 = max(floor, 噪声底*gain)
+  exitRatio:0.62,     // 结束阈值 = 进入阈值*这个。双阈值，免得悬在临界来回抖
+  speakingGain:2.8,   // 他说话时再把门槛抬高，扬声器漏进来的那点残声够不着
+  watchdogMs:1600     // 这么久没有一块真到过进入阈值 → 强制收尾（AGC 抬底噪也不会卡死）
+};
+// 攒到 2048 个采样点（~43ms @48k）再报一次。
+// ⚠️ 别在 process 里每次都 postMessage —— 那是每 128 个采样点一次，
+//    一秒 375 条消息，手机上光这个就够卡。
+var _VAD_WORKLET='class VadMeter extends AudioWorkletProcessor{'+
+  'constructor(){super();this.n=0;this.s=0}'+
+  'process(i){var c=i[0]&&i[0][0];if(!c)return true;'+
+  'for(var k=0;k<c.length;k++){this.s+=c[k]*c[k];this.n++}'+
+  'if(this.n>=2048){this.port.postMessage(Math.sqrt(this.s/this.n));this.s=0;this.n=0}'+
+  'return true}}'+
+  'registerProcessor("vad-meter",VadMeter);';
+
+async function _startVAD(){
+  if(!_callMediaStream||_vadOn)return false;
+  try{
+    _vadCtx=new(window.AudioContext||window.webkitAudioContext)();
+    await _vadCtx.resume();
+    var url=URL.createObjectURL(new Blob([_VAD_WORKLET],{type:'application/javascript'}));
+    await _vadCtx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    var src=_vadCtx.createMediaStreamSource(_callMediaStream);
+    _vadNode=new AudioWorkletNode(_vadCtx,'vad-meter');
+    _vadNode.port.onmessage=function(e){_onVadLevel(e.data)};
+    src.connect(_vadNode);   // 故意不接 destination —— 接了她会听见自己
+    _vadOn=true;_vadNoise=0.01;_vadHot=0;_vadHotSince=0;_vadSilenceSince=0;
+    _vadLastHotAt=0;_vadSpeaking=false;_vadSpeechMin=1;
+    console.log('[vad] 起来了，分句和打断都交给它');
+    return true;
+  }catch(e){
+    // AudioWorklet 起不来（老 Safari、非 https 页面）就退回原来的定时器分句，
+    // 通话照样能用，只是没有打断。
+    console.warn('[vad] 起不来，退回定时器分句:',e.message);
+    _stopVAD();return false;
+  }
+}
+function _stopVAD(){
+  if(_vadNode){try{_vadNode.port.onmessage=null;_vadNode.disconnect()}catch(e){}_vadNode=null}
+  if(_vadCtx){try{_vadCtx.close()}catch(e){}_vadCtx=null}
+  _vadOn=false;_vadSpeaking=false;_vadHot=0;_vadHotSince=0;_vadSilenceSince=0;_vadLastHotAt=0;
+}
+function _onVadLevel(rms){
+  if(!_vadOn)return;
+  var now=Date.now();
+  // 噪声底：她没说话时快跟；说话中只慢慢往「这段里观测到的最小值」靠。
+  // ⚠️ 说话中也让它快跟的话，AGC 一抬底噪门槛就跟着涨，她说到一半就被判成静音。
+  if(!_vadSpeaking)_vadNoise=_vadNoise*0.97+rms*0.03;
+  else{_vadSpeechMin=Math.min(_vadSpeechMin,rms);
+       _vadNoise=Math.min(_vadNoise*1.0015,Math.max(_vadNoise,_vadSpeechMin))}
+  var enter=Math.max(VAD.floor,_vadNoise*VAD.gain);
+  if(_callSpeaking)enter*=VAD.speakingGain;
+  var exit=enter*VAD.exitRatio;
+  if(rms>enter)_vadLastHotAt=now;
+
+  if(!_vadSpeaking){
+    if(rms>enter){
+      _vadHot++;
+      if(!_vadHotSince)_vadHotSince=now;
+      if(_vadHot>=VAD.startHold){
+        // 他正念着 → 要持续够 bargeInMs 才认。
+        // 她「嗯」「对」那种附和只有两三百毫秒，够不着，不会把他掐断。
+        var needed=_callSpeaking?VAD.bargeInMs:0;
+        if(now-_vadHotSince>=needed)_vadSpeechStart();
+      }
+    }else{_vadHot=0;_vadHotSince=0}
+    return;
+  }
+  if(rms<exit){
+    if(!_vadSilenceSince)_vadSilenceSince=now;
+    else if(now-_vadSilenceSince>=VAD.endSilenceMs){_vadSpeechEnd();return}
+  }else{_vadSilenceSince=0}
+  if(_vadLastHotAt&&now-_vadLastHotAt>=VAD.watchdogMs)_vadSpeechEnd();
+}
+function _vadSpeechStart(){
+  _vadSpeaking=true;_vadSpeechMin=1;_vadLastHotAt=Date.now();_vadSilenceSince=0;
+  if(!_segRec)_startSeg();          // 语音条从她真开口那一刻起录
+  if(_callSpeaking)_bargeIn();
+}
+function _vadSpeechEnd(){
+  _vadSpeaking=false;_vadSilenceSince=0;_vadHot=0;_vadHotSince=0;
+  // 她嘴停了，但浏览器的 final 结果还在路上（实测 200~500ms）。
+  // 立刻发的话每句最后几个字都会被切到下一句去 —— 等一小会儿。
+  if(_speechTimer)clearTimeout(_speechTimer);
+  _speechTimer=setTimeout(_flushSpeech,_VAD_FINAL_GRACE);
+}
+
+// ---- 打断 ----
+// ⚠️ 光停播放不够：后端的 delta 还在源源不断地来，_feedCallDelta 会把后面的句子
+//    继续塞进队列，掐了又响。必须把「这一轮」整个哑掉，直到她下一句真发出去。
+var _bargedIn=false;
+function _bargeIn(){
+  if(_bargedIn)return;
+  console.log('[call] 她插话了，掐掉他这一轮');
+  _bargedIn=true;
+  _ttsQueue.length=0;
+  _rawBuf='';                 // 还没凑成句的残句一起丢掉，别等收口时又冒出来
+  _stopTTSPlayback();
+  _callSpeaking=false;        // 门槛立刻降回来，她接着说的话按正常阈值判
+  _flushHisVoice(true);       // 已经念出去的那半段是真发生过的，挂上去，别丢
+  // 耳朵立刻打开，不等 _pumpTTS 那个 350ms —— 那是给「他念完了」用的余量，
+  // 打断的场景下她已经在说了，等 350ms 就是吃掉她半句。
+  _resumeSeg();
+  if(_callWs&&_callRecording){try{_callRecording.start()}catch(e){}}
+}
+// 放出去的 source 得存着，不然停不下来 —— 这是打断的前提。
+// （原来 _feedPCMChunk 里 src.start() 完就撒手，谁也拿不到它。）
+var _ttsSources=[];
+function _stopTTSPlayback(){
+  for(var i=0;i<_ttsSources.length;i++){
+    try{_ttsSources[i].onended=null;_ttsSources[i].stop()}catch(e){}
+  }
+  _ttsSources.length=0;
+  if(_audioCtx){try{_audioCtx.close()}catch(e){}_audioCtx=null}
+  _nextPlayTime=0;
 }
 
 // 外部可调用来电：window._triggerIncomingCall()
@@ -2389,7 +2554,13 @@ async function _startCall(incoming){
     // 开始录音
     var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){toast('这台设备不支持实时听写（iPhone 上的 Safari 就不支持），先用语音消息吧');_stopCall();return}
-    _callMediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    // ⚠️ 这三个约束不是可有可无的默认值，是打断能不能成立的前提：
+    //    echoCancellation 把扬声器里他的声音从这条流里消掉，VAD 才敢在他念着的时候
+    //    继续听。不开的话他一开口 VAD 就以为是她在说，每句话都被自己打断。
+    _callMediaStream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}
+    });
+    await _startVAD();   // 起不来会自己退回定时器分句，不用管返回值
     var rec=new SR();
     // interimResults=true：浏览器边听边吐草稿。**只拿来显示，不拿来发**——
     // 发送还是等 final + 静默 _SPEECH_GAP。以前关着它，她说完话屏幕上一动不动，
@@ -2432,6 +2603,9 @@ function _stopCall(){
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}_speechBuf='';_speechFirstAt=0;
   _showInterim('');
   _stopSeg();
+  _stopVAD();
+  _stopTTSPlayback();     // 挂断的那一刻他可能还在念，排好队的音频得掐掉
+  _bargedIn=false;
   _flushHisVoice(true);   // 他最后一句的原声还在手里，先挂上去再清场
   _ttsPCM=[];_hisPendingText='';
   _resetTTSStream();
@@ -2635,6 +2809,9 @@ function _flushCallDelta(finalText){
 // 一句一开关的话，两句之间的缝里会把他自己的尾音听成她说话。
 function _enqueueTTS(text){
   if(!text||!text.trim())return;
+  // 她已经把这一轮打断了，后面还在飘过来的句子一律不念。
+  // 闸开在 _flushSpeech（她下一句真发出去的时候）。
+  if(_bargedIn){console.log('[tts] 这轮被打断了，不念:',JSON.stringify(text.slice(0,30)));return}
   console.log('[tts] 念:',JSON.stringify(text.slice(0,60)),'(队列'+_ttsQueue.length+')');
   _ttsQueue.push(text);
   if(!_ttsPumping)_pumpTTS();
@@ -2688,6 +2865,9 @@ async function _playStreamTTS(text){
     while(true){
       var chunk=await reader.read();
       if(chunk.done)break;
+      // 她插话了 —— 别再往下读了。不 cancel 的话这条 SSE 会一直挂着，
+      // MiniMax 那边的字也照样计费。
+      if(_bargedIn){try{reader.cancel()}catch(e){}break}
       buf+=decoder.decode(chunk.value,{stream:true});
       var lines=buf.split('\n');buf=lines.pop()||'';
       for(var i=0;i<lines.length;i++){
@@ -2708,6 +2888,7 @@ async function _playStreamTTS(text){
     }
     // 音频是排着队提前调度的，流读完 ≠ 播完。等队列真的放完再返回，
     // 否则调用方（_speakWithMicPaused）会在他还在说话时就把麦克风打开。
+    if(_bargedIn)return;   // 被掐了就别等了，队列早清空了
     if(_audioCtx&&_nextPlayTime>_audioCtx.currentTime){
       await new Promise(function(rs){setTimeout(rs,(_nextPlayTime-_audioCtx.currentTime)*1000+120)});
     }
@@ -2738,6 +2919,10 @@ async function _playStreamTTS(text){
 }
 // 喂 PCM hex → 解码 → 排队播放（无缝拼接）
 function _feedPCMChunk(hex,sampleRate){
+  // ⚠️ 打断之后必须在这儿也拦一道。_stopTTSPlayback 把 _audioCtx 关了，
+  //    但流还在读，晚到的那几块会走到下面「没有就新建一个」——
+  //    结果她刚掐断，他又从半句中间响起来。
+  if(_bargedIn)return;
   if(!_audioCtx){_audioCtx=new(window.AudioContext||window.webkitAudioContext)();_nextPlayTime=_audioCtx.currentTime}
   // 16bit 小端 PCM：每个采样点 = 4 个 hex 字符。
   // （原来写的是 substr(i*2,2) / substr(i*2+2,2)，步长错了、字节还互相重叠，
@@ -2755,11 +2940,16 @@ function _feedPCMChunk(hex,sampleRate){
   for(var i=0;i<raw.length;i++)ch[i]=raw[i]/32768;
   var src=_audioCtx.createBufferSource();
   src.buffer=audioBuf;src.connect(_audioCtx.destination);
+  _ttsSources.push(src);   // 存着才停得下来（打断要用）
   var now=_audioCtx.currentTime;
   if(_nextPlayTime<now)_nextPlayTime=now;
   src.start(_nextPlayTime);
   _nextPlayTime+=audioBuf.duration;
   src.onended=function(){
+    var k=_ttsSources.indexOf(src);if(k>=0)_ttsSources.splice(k,1);
+    // ⚠️ _audioCtx 可能已经被 _stopTTSPlayback 关掉置空了（打断/挂断），
+    //    原来这行直接读 _audioCtx.currentTime，那种时候会抛 TypeError。
+    if(!_audioCtx)return;
     if(_nextPlayTime<=_audioCtx.currentTime+0.05){_audioCtx.close();_audioCtx=null;_nextPlayTime=0}
   }
 }
@@ -5028,6 +5218,36 @@ if($('openUsage'))$('openUsage').onclick=function(){try{closeDrawer()}catch(e){}
 // 顶栏那个一按就开的（2026-08-22）——她说「加个按钮一按就相当于打了 /usage」。
 // 抽屉里那个入口还留着，两个都通向同一个面板。
 if($('usageTopBtn'))$('usageTopBtn').onclick=function(){openUsagePanel()};
+
+// === 摄像头 ===
+// <img src> 带不了 Authorization 头，所以走 api() 取 blob 再 objectURL。
+// 只在打开面板和点刷新时请求一次 —— 不做定时轮询。
+var _camUrl=null,_camBusy=false;
+function _camSetHint(t){var h=$('cameraHint');if(h){h.textContent=t;h.style.display=''}$('cameraImg').style.display='none'}
+async function loadCameraSnapshot(){
+  if(_camBusy)return;_camBusy=true;
+  _camSetHint('拍一张…');
+  try{
+    var r=await api('/api/camera/snapshot',{cache:'no-store'});
+    if(!r.ok){
+      var d={};try{d=await r.json()}catch(e){}
+      _camSetHint(d.detail||('取不到快照（'+r.status+'）'));
+      return;
+    }
+    var b=await r.blob();
+    if(_camUrl)URL.revokeObjectURL(_camUrl);
+    _camUrl=URL.createObjectURL(b);
+    var img=$('cameraImg');img.src=_camUrl;img.style.display='';
+    $('cameraHint').style.display='none';
+  }catch(e){
+    _camSetHint('取不到快照');
+  }finally{_camBusy=false}
+}
+function openCameraPanel(){var p=$('cameraPanel');p.style.display='flex';p.setAttribute('aria-hidden','false');loadCameraSnapshot()}
+function closeCameraPanel(){var p=$('cameraPanel');p.style.display='none';p.setAttribute('aria-hidden','true');if(_camUrl){URL.revokeObjectURL(_camUrl);_camUrl=null;$('cameraImg').removeAttribute('src')}_camSetHint('点右上角刷新看一眼')}
+if($('openCamera'))$('openCamera').onclick=function(){try{closeDrawer()}catch(e){}openCameraPanel()};
+if($('closeCamera'))$('closeCamera').onclick=closeCameraPanel;
+if($('refreshCamera'))$('refreshCamera').onclick=loadCameraSnapshot;
 if($('closeUsage'))$('closeUsage').onclick=closeUsagePanel;
 if($('refreshUsage'))$('refreshUsage').onclick=loadUsage;
 ['profileSave','profileSaveMemories','profileSavePreferences'].forEach(id=>$(id).onclick=async()=>{try{await saveProfile()}catch(e){toast('保存失败')}});

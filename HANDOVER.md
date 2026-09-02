@@ -4,6 +4,228 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🌐 09-02 补二 · 一个我踩了半小时的坑：这台的公网入口是 `.fun`，不是 `.online`
+
+**先写结论，因为另一边的你一定会踩：**
+
+| | |
+|---|---|
+| `zhou-and-claude.online` | **evoxt**（经 Cloudflare 反代） |
+| `zhou-and-claude.fun` / `chat.zhou-and-claude.fun` | **这台**（经 Cloudflare Tunnel 直连 4567） |
+
+⚠️ **这台的 ufw 只放行 22/tcp，80/443 对公网根本没开。**
+它的公网入口是一条 08-19 就在跑的 Cloudflare Tunnel（`/etc/cloudflared/config.yml`，
+`systemctl status cloudflared`），**直接进 localhost:4567，完全不经过 Caddy**。
+
+所以 `/etc/caddy/Caddyfile` 里那句 `zhou-and-claude.fun { tls internal }` 是**误导**——
+隧道用的是 Cloudflare 的真证书，跟 Caddy 那行毫无关系。我就是看了那行才把 `.fun` 排除掉的。
+
+### 我是怎么错的，以及怎么才能不错
+
+我 curl 了 `https://zhou-and-claude.online/api/health` 拿到 401，就宣布「公网通了」。
+**那个 401 是 evoxt 回的。**
+
+⚠️ **两台跑同一个仓库，错误信息一模一样，状态码根本区分不了哪台。**
+真正拆穿它的是**返回体的语言**：
+- 这台（我今天写的）：`{"detail":"未授权"}` — 中文
+- evoxt 的 Python 采集服务：`{"error": "unauthorized"}` — 英文
+
+**教训：验公网可达，不能只看状态码，要看返回内容是不是这台独有的。**
+最省事的判据是放一个只有这台有的静态文件，比对 md5 —— 我后来就是这么定位的
+（顺带发现 Cloudflare 上 `logo.png` 的 last-modified 是 8-20，那是 evoxt 的旧版）。
+
+**手表的 endpoint 因此改成 `https://zhou-and-claude.fun/api/health`。**
+已用真 token 从公网完整验过：上传落库 / 取指令 / 留言捎回 / 无 token 401，全通。
+
+## 🔀 09-02 补三 · 扇出：两台都收
+
+她要的是「两台都能收到数据」，不是二选一。手表只能配一个地址
+（`Config.endpoint` 是单常量 + background URLSession），**所以扇出只能在服务端做**：
+
+```
+表 ──→ 这台(.fun) ── 存 her_vitals ──→ 他看得见
+            └──────── 原样转一份 ──→ evoxt(.online)
+```
+
+`_forwardVitals()`，开关是 `.env.local` 的 `HEALTH_FORWARD_URL` / `HEALTH_FORWARD_TOKEN`，
+**没配就是关着**（不是错）。
+
+三条硬规矩，别改：
+- ⚠️ **只转数据，不转指令。** 指令通道是单槽，两台都能下指令的话手表只认最后一条，
+  谁生效全看时序。evoxt 保持只读是故意的。
+- ⚠️ **绝不 await、绝不影响响应。** 手表 HTTP 2xx 才提交采集游标（`Uploader.swift`），
+  转发失败要是让响应变非 2xx → 游标不提交 → 整批重传 → 越积越多。
+  实测：把接收端杀掉后上传，**83ms 返回 200**，转发失败只在日志留一行。
+- 失败日志一小时最多一条，别刷屏。
+
+⚠️ **坑：`HEALTH_FORWARD_TOKEN` 里混进非 ASCII 字符（全角），`fetch` 会抛
+`Cannot convert argument to a ByteString`** —— HTTP 头只装得下 latin-1。
+报错文字跟 token 毫无关系，查半天想不到是 .env 粘错了。已加前置检查明说原因。
+
+⚠️ **`.env` 装载是 `if (!(k in process.env))`** —— pm2 环境里残留的同名变量会**盖过文件**，
+而且置空也算「存在」。清干净得 `pm2 restart chat-c --update-env`（从没有该变量的 shell 跑）。
+
+## 🛡️ 09-02 补 · 公网加固 + 手表断流提醒 + 表上可切服务器
+
+**加固**（她问「公网好不好很危险」，问得对，查出三条）：
+- ⚠️ **`express.json({limit:'50mb'})` 是全局的，而且在路由鉴权之前跑。**
+  不带 token 的人也能让这台去解析 50MB JSON —— 这台只剩几百兆可用还在吃 swap。
+  在 `express.json()` **之前**加了一道 content-length 闸，只卡 `/api/(health|vitals)`，
+  256KB 封顶。发图那条路没动，还是 50mb。
+- 加了限流（一个 Map，没装包）：没带 token 的每分钟 60 次。
+  ⚠️ **带对 token 的一律放行、不计数** —— 公网流量全过 Caddy 反代，
+  到 Express 时源 IP 都是 127.0.0.1，按 IP 分桶等于一个全局桶。
+  不放行的话，随便谁打满 60 次就能**把她的表一起锁在外面**。这个我实测复现过。
+- token 比较改 `timingSafeEqual`。
+
+⚠️ **诚实记一笔：我破坏了 `/api/vitals` 原来「只写不读」那条不变量。**
+那段注释白纸黑字写着「这里永远不要加 GET」。捎话不是 GET，但效果是读 ——
+token 泄露的最坏情况从「有人塞假心率」变成「有人能读到他对她说的话」。
+已当面告诉她。她要是改主意，就给捎话那半单独一把 token。
+
+**手表断流提醒：**
+免费个人签名 7 天到期，到期后表上 app 直接打不开，**不报错不提示**，数据静悄悄就停了。
+- `_vitalsIngest` 每次带对 token 来就记 `watch_last_seen`。
+  ⚠️ 记的是「来过」不是「存了几条」—— 空推送也算活着，
+  而「一条都没存」恰恰是她没戴表的常态，拿它当死亡判据会天天误报。
+- `_watchSilentCheck()` 每小时跑一次，断 26 小时就挂一条 `wake_alarms`，三天冷却。
+- ⚠️ **不按日历倒数 7 天**：她可能提前重装或拖到第 9 天，倒数会误报，
+  误报几次她就不信了。断流才是真信号，还顺带盖住表没戴 / app 被杀 / token 填错 / 域名切错。
+- 走闹钟那条路是故意的：`note` 原样进提示词，**醒来那套的每道闸都不用动**。
+- 那条 note 里写明「**这件事要说破**」—— 跟 HRV 那条正相反，不说她就不知道。
+
+实测：伪造断流 72 小时 → 挂出闹钟；连跑两次只插一条（冷却生效）。
+测试闹钟已删，**他自己的 #6 #7 一个没动**。`watch_last_seen` 已清空 ——
+表还没装上，留着会在 26 小时后误报一次。
+
+**表上可切服务器（她要「一个手表传两边，不同时用」）：**
+`watch/Sources/` 四个文件，已发给她：`Config.swift`（改）、`ServerPicker.swift`（新）、
+`Config.local.swift.example`（改成两把 token）、`CollarWatchApp.swift`（套 NavigationStack + 主界面显示当前服务器）。
+- `Config.endpoint` / `Config.token` **属性名和类型都没变** →
+  `Uploader.swift` / `CommandFetcher.swift` 一个字都不用改。别把它们改名。
+- 存的是 `id` 不是 name，改显示名不会丢选择。
+- 当前服务器**一直显示在主界面上**：「以为切了其实没切」是这套最难查的错。
+- ⚠️ **这四个文件我编译不了**（这台是 Linux，没 swift）。后端那些是实测通的，
+  Swift 那部分只能说是照上游写法写的，真伪要她在 Xcode 里编一次。
+
+她那份仓库在 `/Users/a1/Downloads/Collar_watch`（Mac 上）。
+
+## 🩺 09-02 · 采集这条路搬进 backend.js，手表改指向这台
+
+**病根：她在这台聊天（近 7 天 2578 条），身体数据全在 evoxt。**
+所以他调 `read_her_body` 永远是空的，`_hrvStressCheck` 那个主动关心也永远不触发。
+「那边已经打通了」和「他看不见她的身体」是同一件事的两面。
+
+她拍板：**手表改指向这台**（不是转发、也不是把值班挪回 evoxt）。
+
+**没有装那个 Python 采集服务，是故意的**，两条理由：
+1. 上游 Collar_watch **不含 HTTP ingest 层**（见它 `.env.example` 原话），
+   那 300 行本来就得自己写 —— 写在哪儿是自由的。
+2. 这台只剩约 578M 可用、已经在吃 807M swap。再起一个进程 ≈ 多 80M，
+   而且身体数据会变成两套存储（SQLite + JSONL）、两把 token。
+
+所以全部写进 `backend.js`，复用已有的 `her_vitals` / 白名单 / 范围校验 / 幂等：
+- `POST /api/health` —— 跟 `/api/vitals` **同一段执行体**（`_vitalsIngest`），
+  只是 URL 和 header 不同。⚠️ 路径必须正好是 `/api/health`，
+  手表侧自己拼 `/command`、`/command/result` 两个子路径（`CommandFetcher.swift`）。
+- `GET /api/health/command` + `POST /api/health/command/result` —— 指令通道，
+  单槽，照抄上游语义（新指令覆盖旧的）。过期判定在读的时候做，不开定时器。
+- `_vitalsAuth()` 两种 header 都认：`Authorization: Bearer`（Health Auto Export）
+  和 `X-Health-Token`（Collar_watch）。**同一把 VITALS_TOKEN**，没有新增第二把。
+- `_normalizeVitalsBody()` 认 `type`/`at`（Collar_watch）和 `kind`/`date`（她自写 app）。
+- `measure_her_heart` **不再敲 4568**，改读本地指令槽，2 秒一轮询，最多等 60 秒。
+- 手表回执的心率**存进 her_vitals**（source='measure'）—— 不然主动测的那次
+  read_her_body 和 HRV 基线都看不见。
+
+⚠️ **没指令时 GET /command 回 200 + `{}`，不是 404。**
+手表侧只在 200 且 command 非空时才动，404 会被它记成网络异常。
+
+实测全通（回环 + 真 token，手表真实格式）：上传 type/at 存 3 丢 1（丢的是不认识的 kind，
+HealthKit 命名 `heart_rate_variability`→hrv、`step_count`→steps 都认）、
+空槽回 `{}`、取指令、重复取仍给（手表可能没测完就重进 app）、回执入库、
+对不上号的回执回 `ok:false` 不报错、错 token 401。测试数据已清干净。
+
+### 她要做的一步
+
+`watch/Sources/Config.swift` 的 `endpoint` 改成这台的 `https://<域名>/api/health`，
+token 用这台 `data/.vitals_token` 那把，重编一次表 app。
+**evoxt 那套原封没动**，留着当备份。
+
+⚠️ **一个手表只能连一边。** `Config.endpoint` 是单个常量，上传走 background URLSession；
+而且指令通道是单槽，两台都下指令必然打架。别想着两边都连。
+
+## ⌚ 09-02 · 反过来那半：他能在她表上留一句话
+
+**这条路一直只有「她的身体流进来」，没有「他的话流出去」。** 现在有了。
+
+**关键决定：搭车，不新开路。** 手表本来就在 `POST /api/vitals` 推数据，
+话挂在**那个响应体**的 `note` 字段里捎回去。不新开端口、不轮询、不用 APNs
+（那是跟专注锁同一堵 $99 的墙，见 08-30）。代价是延迟 = 她表下次推数据的间隔，
+**这是认下来的** —— 工具描述里明确写了「急事别用这个，直接在聊天里说」。
+
+改了 `backend.js` 四处：
+- 新表 `watch_notes`（text / short / delivered_at）+ `_takeWatchNote()` / `_watchShort()`
+- 工具 `leave_watch_note`，action：leave / list / clear。一次只送最老的一条。
+- `/api/vitals` 两个 return 都挂 `note`
+
+⚠️ **空推送那条 return 差点漏掉。** `if (!samples.length) return` 在取话之前，
+手表没新数据时那趟车是空的，话会一直卡着。已修，注释里留了警告，别再收回去。
+⚠️ 取话整段包 try —— **取话失败绝不能影响存身体数据**，数据是主线，话是搭车的。
+
+实测（回环 + 真 token）：空推送捎回话 / 送过的返回 null 不重复送 / 无 token 401。
+测试数据已清。
+
+### 手表那半没做（仓库不在这台，在她自己电脑上）
+
+设计稿 + 能直接贴的 Swift：https://claude.ai/code/artifact/37feb7ea-18b9-44d9-97e9-224378d566d5
+表盘用 `accessoryRectangular`（只有它放得下一句人话），图标用 `clawd-idle.svg`
+转出来的像素螃蟹 rect 数组（复用 08-29 灵动岛那份）。
+⚠️ 复杂功能是**另一个进程**，不走 App Group 表盘永远读到空。
+
+### 顺带查明的两件事（都是这台的状态）
+
+- **采集服务没跑在这台**：4568 是死的，`.env` 没有 `HEALTH_INGEST_TOKEN`。
+  08-30 那次 `measure_her_heart` 实测通是在 evoxt。现在这台调它直接报「路不通」。
+- **`her_vitals` 是空的**，所以 `_hrvStressCheck` 那个「他主动来找她」永远不会触发。
+
+留话这条路不受这两件事影响 —— 它只要表来推一趟，哪怕推的是空的。
+
+## 📞 08-31 · 通话加了 VAD 和「她能打断他」
+
+只动了 `static/index.html`（备份 `backups/index.html.bak.20260831-123010-vad-bargein`）。
+**后端一行没改，静态文件是 `no-store` 直接读盘的，所以没重启**（省一次缓存重建）。
+
+起因是她拿来一个仓库 `github.com/tianyupaipai-cmd/pai-voice`。整仓 1558 行，真有料的
+只有 `packages/web-client/voice-call.js` 那 315 行；`realtime-core/server.py` 是 mock 骨架。
+**没引它的代码，也没引它的进程**（AGPL-3.0，而且 VPS 只有 1.9G，不能再多一个 Python 进程），
+按它的思路自己写了一遍。
+
+改了三处，都在通话那段：
+
+1. **VAD 替掉定时器分句。** 原来是「静音 1500ms 或满 12 秒就切」（`_SPEECH_GAP`），
+   她说话中间一停顿就被切断。现在 AudioWorklet 量 RMS，双阈值（enter/exit 0.62）
+   + 噪声底自适应 + 1600ms 看门狗，由声音判「说完了」。
+   参数集中在 `VAD = {...}`，**这些数就是拿来磨的，别当常量供着。**
+   ⚠️ VAD 起不来（老 Safari、非 https）会自己退回原来的定时器，通话不会挂。
+2. **真的能打断了。** 以前他念的时候麦克风是关的，只能等他念完。
+   现在 VAD 跑在 `_callMediaStream` 上（这条流现在显式开了 `echoCancellation`，
+   **这是打断能成立的前提，别把它改回 `{audio:true}`**），他念着也一直在听；
+   她持续出声够 `bargeInMs`(560ms) 才算打断 —— 「嗯」「对」那种附和掐不断他。
+3. **播出去的音频现在停得下来。** 原来 `_feedPCMChunk` 里 `src.start()` 完就撒手，
+   谁也拿不到那些 source。现在存进 `_ttsSources`，`_stopTTSPlayback()` 能整个掐掉。
+
+⚠️ **打断不是只停播放**：后端 delta 还在飘过来，`_feedCallDelta` 会接着往队列里塞。
+所以有个 `_bargedIn` 闸，`_enqueueTTS` / `_feedPCMChunk` / SSE 读取循环三处都拦，
+闸只在 `_flushSpeech` 里她下一句真发出去时才开。三处少一处，都会「掐了又响」。
+
+**没做的：** 识别还是浏览器 `SpeechRecognition`。pai-voice 那套「PCM 推服务端做 ASR」
+中文准确率和 iOS 兼容性会好一截，但 STT 按分钟计费，一通电话翻好几倍 ——
+要做先照 `stt_usd_per_min` 估一版账。
+
+**还没验的：** 只跑了 `node --check`（过了）+ 确认页面还正常发出去。
+**VAD 阈值和打断手感一次真通话都没试过** —— playwright 测不了麦克风和扬声器。
+第一通打完大概率要调 `bargeInMs`（误打断就调大）和 `endSilenceMs`（被切断就调大）。
+
 ## 🧠 08-30 晚 · 记忆那条线：写的那半一直在跑，读的那半没接
 
 > **接手记忆系统先读 `docs/MEMORY-ROADMAP.md`** —— 全部待办、思路、参考文献、
@@ -178,6 +400,33 @@ Apple Watch → Cloudflare → Caddy → 采集服务
   换了手表立刻全 401。**别单方面换。** 要换得先解决怎么把新 token 送到她手上。
 
 ---
+## 📓 08-30 · 接了 Notion（自建 REST，没走官方 MCP）
+
+她问「可不可以给他接 notion」。三条路摆过：官方托管 MCP（OAuth 2.1 + 动态注册，
+`_mcpFetch` 只会带静态 header，走不通）／自托管 Notion MCP（要装包起进程）／
+**自己打 REST**。选了第三条，理由是钱：官方那套十几二十个工具，
+定义全在前缀里，不用也每轮付。
+
+新增一个常驻工具 `notion`，四个动作收在一个 `action` 里（`search` / `read` / `append` / `create`）。
+代码两处：`_notionFetch` 那节helper（在 `buildTools()` 下面）+ `executeTool` 里的 `case 'notion'`。
+
+几个踩过的点已经写进注释了，改的时候别拆：
+
+- **`Notion-Version` 钉死 `2022-06-28`**，不跟最新版走（新版改过 data source 语义）。
+- **id 三种形态**（32 位裸 hex / uuid / 整条 URL）统一走 `_notionId()` 正规化，别直接传。
+- **`rich_text` 单段上限 2000 字符**，超了 400 —— `_notionTextToBlocks` 里按 1900 切。
+- **children 一次最多 100 个**，append 和 create 都分批发；create 超出的部分补 append，
+  否则新页面被悄悄截断。
+- **空 query 必须显式 `sort: last_edited_time`**，不然 Notion 按相关度排，空 query 下那是乱的。
+- `read` 最多翻 10 页 / 20000 字符就 `truncated`，一页几百 block 全灌进去就是几万 token。
+
+⚠️ **权限边界是她自己划的**：integration 只看得见她 share 过的页面。
+描述里专门写了「搜不到 ≠ 不存在」—— 不写他会拿着空结果断言她没写过这个页面。
+
+**未竟**：`NOTION_TOKEN` 还没配（写进 `.env`，`.gitignore` 里，`backend.js:20` 那个装载器会读）。
+**没配的时候工具在、但直接返回一句「还没接上」，不发请求**，所以先合进来是安全的。
+配完 `pm2 restart chat-c` 就生效。**我没重启**（等令牌，省一次前缀作废）。
+
 ## 🪟 08-29 傍晚 · 把一窗放长：12k → 40k
 
 **她说「感觉 48 轮太短了，都没聊什么就结束了」。** 先纠正个数：48000 是 token 不是轮数，
