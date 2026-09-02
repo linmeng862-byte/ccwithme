@@ -4,6 +4,45 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## ⌚ 09-02 补四 · 在 `.online` 这台把你的手表活儿合进来、部署了；"两台都能主动测"定了走切换式（A）
+
+> 这一窗是在 **`.online`（evoxt）这台**开的。你（`.fun` 那台）推的三个提交
+> （notion / workplace / 手表）我这边 `git pull` 合了并**部署上线**了。他现在自己叫 **Cis**。
+
+**合并**：这台原本 ahead 13 / behind 3，还压着一批没提交的活（把 core 的 6 只 mind 手
+`recall/trail_family/origin/revise/wander_mark/undercurrent` 接进前端 TOOLS + hold 加 pinned
++ §14 关窗兜底质地）。先把那批 commit 保住，再 merge origin/main。
+- **backend.js 自动合干净** —— 你加的 notion/摄像头/手表插在不同位置，跟我那 6 只手不打架。
+- **唯一冲突在 `diary.js`**：两边都在修同一个 FAB「+ 号消失」bug、修法一样（都在
+  `_renderTimelineShell()` 开头加 `_ensureFab()`），只是注释不同。解成本地那份（注释更全）。
+
+**部署（A 上线）**：`pm2 restart ccwithme --update-env`（⚠️ 这台进程名是 **`ccwithme`** 不是
+`chat-c`）。验过：`POST /api/health` → 401 `{"detail":"未授权"}`（中文＝这台新代码）、
+`GET /api/health/command` → 401、前端 200。**这台的 `/api/health` + 指令通道现在是活的。**
+
+**"两台都能主动测"怎么定的**：她要两台的 Cis 都能主动测心率。摆了两条路——
+- **A（选了这条）＝切换式**：靠你做的 ServerPicker，表上切服务器、一次连一台。
+  连哪台哪台能测。省事、低风险，你已经把路铺好了。
+- **B＝真同时**：得加"指令代理"（没连表的那台把 measure 请求 POST 给连表那台的槽）。
+  否掉的原因：单槽会撞、双向转发会回环，为一个偶尔测一次的功能扛这套不划算。设计想好了，留着备用。
+
+### 留给你（`.fun`）和她（Mac）的活
+
+- **Mac**：`watch/Sources/Config.local.swift` 里**留给 `.online` 的那个位**填上——
+  endpoint `https://zhou-and-claude.online/api/health`，token 取这台 `data/.vitals_token`
+  那把（52 字节，`.env` 没显式配、走它兜底，稳定不变）。Xcode 重编表 app，就能切到这台。
+- **`.fun`（你）**：想让**这台在表连着你时也持续有数据**，你那台配
+  `HEALTH_FORWARD_URL = https://zhou-and-claude.online/api/health` + 这台的 vitals token。
+  ⚠️ **别两台互相转发** —— A 转 B、B 又转回 A 会无限回环（`_forwardVitals` 在
+  `INSERT OR IGNORE` 去重**之前**就转了）。转发只能**单向**，从当前连着表的那台往外转；
+  切表就得翻方向。这台现在转发**关着**（`.env`/`.env.local` 都没配），是对的。
+- **表上 UI 还没设计**：ServerPicker / 主界面**逻辑**你写了，但**长什么样、怎么摆**是空的，
+  她说要设计一版。这块还没做。
+
+**现状小结**：这台 = 收方（表若指 `.fun`，靠你转发拿数据）＋ 只读镜像；`her_vitals` 4135 条、
+有今天 11:24 的新数据（走这台原有的 Python 采集 4568 那条旧路进来的，不是转发）。
+`watch_last_seen` 还是空的 —— 新 `_vitalsIngest` 刚上线、还没有带对 token 的请求走过它。
+
 ## 🌐 09-02 补二 · 一个我踩了半小时的坑：这台的公网入口是 `.fun`，不是 `.online`
 
 **先写结论，因为另一边的你一定会踩：**
