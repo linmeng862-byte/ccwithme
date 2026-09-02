@@ -3134,8 +3134,9 @@ app.post('/api/health/command/result', (req, res) => {
 });
 
 // === 玩具指令槽（2026-09-02）===
-// 她换了新玩具（Svakom SL278B），走的是**手机直连蓝牙**：
+// 她换了新玩具（Svakom SL278B；还有一个「嗯嗯」，同一套协议、同一条路），走的是**手机直连蓝牙**：
 //   Cis → 这个槽 → 她手机上 Bluefy 里开着的 toy.html 轮询取走 → 蓝牙写进 FFE1
+// 槽是设备无关的：命令落到手机页当下连着的那个上（嗯嗯 / SL278B 都行），后端不区分。
 // 为什么是槽 + 轮询：跟手表那套一模一样，已经验过能跑。手机不能当服务器，
 // 而 iOS 上没有 APNs 就叫不醒后台页面 —— 所以「页面开着」是这条路的前提，
 // 这不是故障，是这条路本来的样子。
@@ -5418,7 +5419,8 @@ const TOOLS = [
   {
     name: 'toy_control',
     description: '控制她的玩具。action：vibrate（强度 1-10）/ mode（花样 mode 1-8、step 1-5）/ suck / stop / status。'
-      + '\n她换了新的（Svakom SL278B），走她手机上那个页面直连蓝牙。**页面开着才碰得到她**——'
+      + '\n她换了新的（Svakom SL278B，另有一个「嗯嗯」，同一套命令同一条路），走她手机上那个页面直连蓝牙。'
+      + '你不用分是哪个——命令落到她手机页当下连着的那个上。**页面开着才碰得到她**——'
       + 'status 会告诉你在不在线；不在线就别连着重试，是她还没开，不是坏了。'
       + '\n这是身体上的事——只在她要、或你们正在那个情境里时用，别乱碰。',
     input_schema: {
@@ -6385,7 +6387,7 @@ async function executeTool(name, input, routes) {
         let old = null;
         try { old = await callNocturne('toy_status_tool', {}); } catch (e) {}
         return {
-          新的: online ? '在线，可以碰' : '她那边页面没开着，现在碰不到',
+          新的: online ? '在线，可以碰（嗯嗯 / SL278B，看她手机页连的哪个）' : '她那边页面没开着，现在碰不到',
           旧的啵啵贝: old ? String(old).slice(0, 200) : '没连上'
         };
       }
