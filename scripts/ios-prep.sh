@@ -25,6 +25,9 @@
 #
 # 需要：gem install xcodeproj
 
+# ⚠️ macOS 自带的是 bash 3.2（2007 年那个）。`$VAR` 后面紧跟中文标点时，
+#    它会把那几个字节当成变量名的一部分，配上 set -u 就报 unbound variable。
+#    所以这份里凡是后面接中文的变量，一律写 ${VAR}。在 Linux 的 bash 5 上试不出来。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,9 +42,9 @@ fi
 # 1. 玩具页
 if [ -f "$TOY_HTML" ]; then
   cp "$TOY_HTML" "$PUBLIC/toy.html"
-  echo "✅ toy.html 已放进 app（来源：$TOY_HTML）"
+  echo "✅ toy.html 已放进 app（来源：${TOY_HTML}）"
 else
-  echo "⚠️  没找到 toy.html（找的是 $TOY_HTML）—— 这次编出来的 app 里没有玩具页。"
+  echo "⚠️  没找到 toy.html（找的是 ${TOY_HTML}）—— 这次编出来的 app 里没有玩具页。"
   echo "    它在 .gitignore 里，不进 PUBLIC 仓库；要么放回 static/，要么用 TOY_HTML=路径 指过来。"
 fi
 
