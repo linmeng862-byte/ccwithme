@@ -5762,6 +5762,9 @@ function initLiveActivity(){
         // 两个都要真，不然每次发消息都白调一遍插件。
         _laSupported=r.supported===true&&r.liveActivitiesEnabled!==false;
         console.log('LiveActivity supported:',_laSupported);
+        // ⚠️ 挂常驻卡必须在这里面 —— _laSupported 是异步才知道的，
+        //    在外面调等于每次都拿到 false，卡永远起不来。
+        if(_laSupported)laPresenceStart();
       }).catch(function(){_laSupported=false});
     }
   }catch(e){_laSupported=false;}
@@ -5789,8 +5792,37 @@ var _laActive=false,_laPose='idle',_laDetail='',_laDetailRaw='',_laTimer=null;
 function laStartThinking(){
   if(!_laSupported)return;
   _laActive=true;_laPose='idle';_laDetail='';
-  try{Capacitor.Plugins.LiveActivity.laStartThinking({pose:'idle',detail:''}).catch(function(){})}catch(e){}
+  try{Capacitor.Plugins.LiveActivity.laStartThinking({pose:'idle',detail:'',heart:_laHeart}).catch(function(){})}catch(e){}
 }
+
+// ── 常驻卡（2026-09-03）────────────────────────────────────────────
+// 以前这张卡是「她发消息才起、他说完就收」。现在改成开着 app 就一直在：
+// 灵动岛和锁屏上写 Still here / Cis · ONLINE / 状态 / 心率。
+//
+// ⚠️ 两条 iOS 的硬限制，写在这儿免得以后当 bug 查：
+//   1. Live Activity 系统只给 ~8 小时，之后自动消失。想自动重开只有推送（$99）。
+//      免费账号的现实是：**每次她打开 app，这里重新挂一次**。
+//   2. app 划掉之后卡上的数字**冻住** —— 没有进程能更新它。同样是推送才能解决。
+var _laHeart=0,_laPresenceTimer=null;
+function laPresenceStart(){
+  if(!_laSupported)return;
+  laStartThinking();              // 起一张，停在 idle =「Cis 小憩」
+  laPresenceTick();
+  if(_laPresenceTimer)clearInterval(_laPresenceTimer);
+  // 5 分钟一次。手表本来也不是秒级推上来的，问再密只是白费电。
+  _laPresenceTimer=setInterval(laPresenceTick,300000);
+}
+function laPresenceTick(){
+  if(!_laSupported)return;
+  fetch('/api/presence').then(function(r){return r.ok?r.json():null}).then(function(d){
+    if(!d)return;
+    if(typeof d.heart==='number'&&d.heart!==_laHeart){_laHeart=d.heart;_laPush()}
+  }).catch(function(){});
+}
+// 划走再回来：立刻补一次，别让她看见一个五分钟前的数。
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible')laPresenceTick();
+});
 // ActivityKit 对更新频率有限流，而 trace 每来一个 delta 就重绘一次 ——
 // 直接透传会被系统丢帧。所以变了才推，推也压到 900ms 一次（尾沿）。
 function _laPush(){
@@ -5798,7 +5830,7 @@ function _laPush(){
   _laTimer=setTimeout(function(){
     _laTimer=null;
     if(!_laActive)return;
-    try{Capacitor.Plugins.LiveActivity.laUpdateThinking({pose:_laPose,detail:_laDetail}).catch(function(){})}catch(e){}
+    try{Capacitor.Plugins.LiveActivity.laUpdateThinking({pose:_laPose,detail:_laDetail,heart:_laHeart}).catch(function(){})}catch(e){}
   },900);
 }
 // 由 setPhase 调。phase 认不出来就别动姿势，保持上一个 —— 总比闪回 idle 强。
@@ -5810,15 +5842,63 @@ function laSetPose(phase){
 }
 // 由 _renderTraceRowActive 调。传全串进来，先比全串再截断 ——
 // 绝大多数 delta 这行字根本没变，比一下就短路，一次分配都不用。
+// 卡上那行字：工具名 → 她要的话术。
+// 传进来的是工具的 title 或 toolName（read_diary 那种），直接挂上去太像日志。
+// 表里没有的保持原样 —— 宁可露出工具名，也不要一律写「Cis 在忙」把信息抹平。
+var _LA_TOOL_WORDS={
+  issue_command:'Cis 监视中',      // 番茄钟 / 指令胶囊
+  share_music:'Cis 沉浸中',
+  save_note:'Cis 在写日记',
+  read_diary:'Cis 在翻日记',
+  diary_comment:'Cis 在你日记上写字',
+  writing:'Cis 在写东西',
+  trace:'Cis 在想过去的事',
+  recall:'Cis 在想过去的事',
+  search_chat_history:'Cis 在翻你们说过的话',
+  nocturne_hold:'Cis 把这一刻收起来了',
+  nocturne_breath:'Cis 在回神',
+  nocturne_texture:'Cis 在留质地',
+  read_her_body:'Cis 在看你的身体',
+  measure_her_heart:'Cis 在把你的脉',
+  generate_image:'Cis 在画画',
+  create_artifact:'Cis 在做东西',
+  send_sticker:'Cis 想逗你',
+  call_her:'Cis 想听你说话',
+  reach_her:'Cis 想你了',
+  get_weather:'Cis 在看天气',
+  garden:'Cis 在院子里',
+  wander:'Cis 出去逛了',
+  drive:'Cis 在路上',
+  toy_control:'Cis 在碰你'
+};
 function laSetDetail(text){
   if(!_laSupported||!_laActive)return;
   text=text||'';
   if(text===_laDetailRaw)return;
-  _laDetailRaw=text;_laDetail=text.slice(0,60);_laPush();
+  _laDetailRaw=text;
+  var w=_LA_TOOL_WORDS[text];
+  _laDetail=(w||text).slice(0,60);_laPush();
 }
 var _laDetailRaw='';
+// 他说完话 —— ⚠️ 这里**不再收掉那张卡**了（以前是 laStopThinking）。
+// 卡是常驻的：回完话让螃蟹笑一下，再落回「Cis 小憩」，人一直在。
+// 真要撤掉整张卡走 laTeardown()，目前没人调 —— 留着是为了以后有需要时
+// 不用重新想一遍「怎么正确地结束一个活动」。
 function laStopThinking(){
+  if(!_laSupported)return;
   if(_laTimer){clearTimeout(_laTimer);_laTimer=null}
+  _laDetailRaw='';_laDetail='';
+  _laPose='happy';
+  try{Capacitor.Plugins.LiveActivity.laUpdateThinking({pose:'happy',detail:'',heart:_laHeart}).catch(function(){})}catch(e){}
+  // 笑 1.6 秒再躺下。直接切 idle 的话，那一下「说完啦」她根本看不见。
+  setTimeout(function(){
+    if(_laPose!=='happy')return;   // 这中间她又发了一条，别把新状态盖回去
+    _laPose='idle';_laPush();
+  },1600);
+}
+function laTeardown(){
+  if(_laTimer){clearTimeout(_laTimer);_laTimer=null}
+  if(_laPresenceTimer){clearInterval(_laPresenceTimer);_laPresenceTimer=null}
   _laActive=false;_laPose='idle';_laDetail='';_laDetailRaw='';
   if(!_laSupported)return;
   try{Capacitor.Plugins.LiveActivity.laStopThinking({}).catch(function(){})}catch(e){}

@@ -79,18 +79,20 @@ final class LiveActivityManager {
 
     // MARK: - Thinking
 
+    /// heart == -1 表示「这次别动心率」，沿用卡上已有的值。
+    /// 0 才是「没有数据」（那一格不画）。合成一个值的话，每次推姿势都会把心率抹掉。
     @available(iOS 16.2, *)
-    static func startThinking(pose: ClawdPose = .idle, detail: String = "") {
+    static func startThinking(pose: ClawdPose = .idle, detail: String = "", heart: Int = -1) {
         // 已经有一个在跑就只更新，别重复 request —— 同类型活动叠起来
         // 系统只显示最新那个，旧的会滞留在锁屏上不消失。
         guard thinkingActivity == nil else {
-            updateThinking(pose: pose, detail: detail)
+            updateThinking(pose: pose, detail: detail, heart: heart)
             return
         }
         do {
             thinkingActivity = try Activity<ThinkingLiveActivityAttributes>.request(
                 attributes: ThinkingLiveActivityAttributes(),
-                contentState: .init(pose: pose, detail: detail),
+                contentState: .init(pose: pose, detail: detail, heart: max(0, heart)),
                 pushType: nil
             )
         } catch {
@@ -101,9 +103,10 @@ final class LiveActivityManager {
     /// 阶段变化时推一帧。ActivityKit 对更新频率有限流，
     /// 所以调用方要自己去抖（见 index.html 的 _laPush）。
     @available(iOS 16.2, *)
-    static func updateThinking(pose: ClawdPose, detail: String) {
+    static func updateThinking(pose: ClawdPose, detail: String, heart: Int = -1) {
         guard let activity = thinkingActivity else { return }
-        Task { await activity.update(using: .init(pose: pose, detail: detail)) }
+        let kept = heart < 0 ? activity.contentState.heart : heart
+        Task { await activity.update(using: .init(pose: pose, detail: detail, heart: kept)) }
     }
 
     /// 回完话先让螃蟹笑一下再收掉 —— 直接 .immediate 的话，

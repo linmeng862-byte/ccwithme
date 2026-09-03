@@ -13,6 +13,12 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "laUpdateTimer", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "laEndTimer", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "laStartThinking", returnType: CAPPluginReturnPromise),
+        // ⚠️ 2026-09-03 补：这一行以前**漏了**。方法在 .m 里注册了、Swift 里也实现了，
+        //    唯独不在这张表里 —— Capacitor 7 以这张表为准，不在表里的方法调下去
+        //    Promise 永远不 resolve 也不 reject，连 catch 都进不去，而且不报错。
+        //    表现就是「螃蟹姿势从来不变」。BleBridge 那边踩的是同一个坑。
+        //    加方法记得三处一起加：这张表、.m、Manager。
+        CAPPluginMethod(name: "laUpdateThinking", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "laStopThinking", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "laIsSupported", returnType: CAPPluginReturnPromise),
     ]
@@ -65,9 +71,11 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
     /// pose 是从 JS 过来的、唯一不受信的边界，就在这儿解一次。
     /// 往里走的 Swift 签名一律用 ClawdPose，不再传字符串。
     @available(iOS 16.2, *)
-    private func thinkingArgs(_ call: CAPPluginCall) -> (ClawdPose, String) {
+    private func thinkingArgs(_ call: CAPPluginCall) -> (ClawdPose, String, Int) {
         let pose = call.getString("pose").flatMap(ClawdPose.init(rawValue:)) ?? .idle
-        return (pose, call.getString("detail") ?? "")
+        // heart 不传就是 -1 = 「这次别动心率」，跟 0 =「没有数据」分开。
+        // 合成一个值的话，每次推姿势都会把心率抹掉。
+        return (pose, call.getString("detail") ?? "", call.getInt("heart") ?? -1)
     }
 
     @objc func laStartThinking(_ call: CAPPluginCall) {
@@ -75,8 +83,8 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve(["supported": false])
             return
         }
-        let (pose, detail) = thinkingArgs(call)
-        LiveActivityManager.startThinking(pose: pose, detail: detail)
+        let (pose, detail, heart) = thinkingArgs(call)
+        LiveActivityManager.startThinking(pose: pose, detail: detail, heart: heart)
         call.resolve(["success": true])
     }
 
@@ -85,8 +93,8 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve(["supported": false])
             return
         }
-        let (pose, detail) = thinkingArgs(call)
-        LiveActivityManager.updateThinking(pose: pose, detail: detail)
+        let (pose, detail, heart) = thinkingArgs(call)
+        LiveActivityManager.updateThinking(pose: pose, detail: detail, heart: heart)
         call.resolve(["success": true])
     }
 

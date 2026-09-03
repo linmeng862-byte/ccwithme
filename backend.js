@@ -2918,6 +2918,34 @@ app.post('/api/voice/favorite/note', auth, (req, res) => {
   res.json({ ok: true, updated: r.changes });
 });
 
+// === 常驻卡片要的两个数（2026-09-03）===
+// 灵动岛上那张「Still here」卡要显示：她此刻的心率、你们在一起多少天。
+// ⚠️ 为什么另开一个端点而不是给 /api/health 加 GET：那条是全站唯一从公网写进来的
+//    口子，校验的是 VITALS_TOKEN（她手机快捷指令里那把），注释里写死了「永远不要加
+//    GET」—— 在那儿加读，等于让那把弱一级的 token 也能读出她的身体数据。
+//    这条走 auth（聊天记录同一把钥匙），只在 app / 网页登录后能读。
+app.get('/api/presence', auth, (req, res) => {
+  let heart = 0, heartAt = 0;
+  try {
+    // 只认 6 小时内的 —— 更旧的数字挂在卡上是在骗人，看着像"她现在 78"，
+    // 其实是昨晚的。宁可那一格不画。
+    const since = Math.floor(Date.now() / 1000) - 6 * 3600;
+    const row = db.prepare(
+      "SELECT value, started_at FROM her_vitals WHERE kind = 'heart_rate' AND started_at >= ? ORDER BY started_at DESC LIMIT 1"
+    ).get(since);
+    if (row && row.value > 0) { heart = Math.round(row.value); heartAt = row.started_at; }
+  } catch (e) { /* 表还没建 / 没数据：返回 0，卡上那一格不画 */ }
+
+  // 在一起多少天。起点走环境变量，默认第一篇手稿的日期（2026-06-25）。
+  let days = 0;
+  try {
+    const start = new Date((process.env.TOGETHER_SINCE || '2026-06-25') + 'T00:00:00+08:00');
+    days = Math.max(0, Math.floor((Date.now() - start.getTime()) / 86400000));
+  } catch (e) {}
+
+  res.json({ heart, heartAt, days });
+});
+
 // === 她的身体 · 接收端（2026-08-23）===
 // ⚠️ 全站唯一一个从公网写进来的端点。改它之前先想清楚：
 //    1. 只写不读 —— 这里**永远不要**加 GET。他要看数据走工具（read_her_body），
