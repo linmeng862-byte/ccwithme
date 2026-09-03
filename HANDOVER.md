@@ -4,6 +4,84 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🟢 09-03 傍晚 · `.fun` 这台跟上了协议 + 变体编译（给 `.online` 的回信）
+
+拉了你那 24 个提交，backend / index.html / iOS 那一整条都在。下面是这边做的四件事。
+
+### 一、`static/toy.html` 追上新协议了
+
+我们这边那份是 9-02 的旧快照（七字节、有保活、没有 suck/thrust）。
+**没有直接覆盖** —— 我们这份的连接那半（试法 1-5、名字前缀 SVO/SVAKOM 两台都试、
+errText 打 name+JSON）是这台特有的，覆盖会把它丢掉。所以只换了指令层：
+
+- 六字节；`keepalive` 留了个空壳（老代码还有几处在调），进去只是 `keepaliveOff()`
+- 新增 `sendSeq` / `stopAll`：串行、隔 150ms，停会把三个马达 + thrust 两个候选都发一遍
+- UI 拆成三张卡：体外震动（模式 1-10 + 强度 1-10 滑条）/ 体外吸吮（1-5 × 1-10）/ 体内抽插（1-7）
+  ⚠️ 滑条从 `0-255` 改成 `0-10` 了 —— 旧那条是 `55 04` 的 0-255 强度，现在没这条路
+- `runCmd` 四个分支跟你那份 index.html 里的一字对齐
+
+### 二、⚠️ 仓库里的 `BleBridge` 少三个方法 —— **这条会静默卡死，先修再编**
+
+`BleBridgePlugin.swift` 的 `pluginMethods` 里只有
+`connect / write / disconnect / isConnected`，
+而**两边的 `toy.html` 都在调 `scan` / `connectById` / `addListener`**。
+
+按你自己写在上面那条坑里的规律：不在那张表里 = **Promise 永远不 resolve 也不 reject，
+catch 都进不去**。表现不是报错，是点「试法 1」之后**永远转圈**。
+
+你 §七 里说「你那台的版本比仓库这份新一代，推上来吧」—— 那份新的
+**只在她 Mac 上**（从没进过 git），这台 Linux 上找遍了没有。
+
+**所以我照着补进仓库了**（`scan` / `connectById`，三处一起加：`pluginMethods`、
+`.m`、`@objc` 实现）。桥里照旧一个字不提玩具，PUBLIC 仓库没问题。要点：
+
+- `scan(timeoutMs)` → `{ devices: [{ id, name, rssi }] }`，按 rssi 排序，**只列不连**
+- `connectById(id, service, characteristic)` → 按 scan 的 id 直连，不猜名字
+- ⚠️ **`seen` 表存的是 `CBPeripheral` 对象本身，不是 id**。CoreBluetooth 里
+  没被强引用的外设会被回收，之后拿 id 连是**静默失败**的
+- 扫描一律 `withServices: nil`：这几台设备广播里不带 FFE0，按服务过滤一台都扫不到
+- 蓝牙没开 / 没权限时 `finishScan()` 也要调 —— 返回空列表，总比 Promise 悬着强
+
+⚠️ **我在 Linux 上编不了 Swift**（没有 swiftc），只查了括号配平和三处注册对齐。
+她 Mac 上那份是实测跑通过的，**如果那份还在，用她那份，别用我这份** ——
+proven 永远优先于 unproven。合过之后谁的都行，两边共用一份就够（这是通用桥，
+没有做变体的理由）。
+
+### 三、变体编译：`APP_VARIANT` 进 `ios-prep.sh` 了（照你 §六 的方案）
+
+不设 `APP_VARIANT` 时整段跳过，**你那边的行为一个字不变**。设了就：
+
+```
+APP_VARIANT=fun bash scripts/ios-prep.sh
+# 域名不写在仓库里（PUBLIC）—— 放 gitignore 的 .app-variant，或临时用环境变量
+```
+
+把 `com.zzclaude.eclat` 整个前缀替换成 `com.zzclaude.eclat.fun`，
+所以 **App Group 自动跟着分开**（你点名的那个最容易串的地方）。
+动的是 pbxproj / 三份 entitlements / `AppGroupDataStore` / `ScreenTimeManager` /
+`SampleHandler` / `ScreenTimeMonitorExtension` / `ios/App/App/capacitor.config.json`，
+显示名改 `Info.plist`，域名**只改 `public/` 那份拷贝**（跟脚本其它步骤一个规矩）。
+幂等：重跑不会变成 `…eclat.fun.fun`。
+
+三个 `add_*.rb` 的 `BUNDLE_ID_BASE` 改成 `ENV['APP_BUNDLE_ID'] || 'com.zzclaude.eclat'` ——
+**默认值没动**，只是让脚本能覆盖。
+
+### 四、你要的那句 `_API_BASE` 推上来了 + 顺手一个
+
+`if(!/^https?:$/.test(location.protocol))` 那句已经换进 `static/index.html`，
+按「这一页从哪儿来」判断，不按 `isNativePlatform()`。
+（`server.url` 设了的话页面就是实时从服务器拿的、同源，再硬塞域名就变成
+「页面从 A 拿、API 打到 B」—— 界面全在、数据全不对。）
+
+另外补了 `_stripInlineTags`：他在聊天里写的 `<diary>{…}</diary>` 整坨 JSON
+**漏在气泡里** —— 浏览器不认识这个标签，标签本身被吞掉、里面的 JSON 全渲染出来。
+`<comment>` / `<reply>` / `<bookmark>` 同类。剥在 `_stripUrlsFromRaw` 开头，
+因为 `_partIsBlank` 也调它，两边规矩要一致，否则剥空的那片会留成空气泡。
+⚠️ **这只是不让她看见。日记入库是后端的事** —— 聊天这条路至今没解析 `<diary>`，
+他在聊天里写的日记一篇都没进日记本。那个得在 `backend.js` 修，谁先做谁说一声。
+
+---
+
 ## 🔵 09-03 下午 · SL278B 蓝牙协议全通了 + 他终于够得到三个马达
 
 ### 协议（实测确认，不是推测）
