@@ -7436,34 +7436,53 @@ $('stickerFileInput').onchange = async function() {
   function lvToByte(i) { return Math.round(Math.min(Math.max(i, 1), 10) / 10 * 255); }
 
   // ⚠️ 分支和回执话术跟 toy.html 的 runCmd 对齐 —— 改协议时两边一起改。
-  //    花样在第 6 字节，第 5 字节这型号没作用（toy.html 那边试出来的）。
+  //    2026-09-03 实测确认的三条（六字节，第 5 字节模式、第 6 字节强度）：
+  //      vibrate 体外  55 03 00 00 <模式 1-10> <强度 1-10>
+  //      suck    体外  55 09 00 00 <模式 1-5>  <强度 1-10>
+  //      thrust  体内  55 08 00 00 <模式 1-7>  FF   ← FF 是固定字段，不是强度
+  //    ⚠️ 一律不保活：设备自己保持状态，重发会把有节奏的花样打回开头。
   async function runCmd(c) {
     if (c.action === 'stop') {
       keepaliveOff();
-      await BLE.write({ value: hex([0x55, 0x04, 0x00, 0x00, 0x00, 0x00, 0xAA]) });
+      await stopAll();
       return { ok: true };
     }
-    if (c.action === 'mode') {
-      // 55 03 00 00 <模式 1-10> <强度 1-10> 00
-      // 云端抓包（85-3-0-0-MODE-STRENGTH）两格都是 1..10，跟常震那条的 0-255
-      // 不是一回事，别混用 lvToByte。
-      var m = clampInt(c.mode || c.step || 1, 1, 10);
-      var mlv = clampInt(c.intensity || 1, 1, 10);
-      // ⚠️ 六字节，无尾 00 —— 七字节实测无反应（2026-09-03）。也不保活。
+    // 'mode' 是旧名字，等于 vibrate —— 老指令槽里可能还躺着一条，一起认。
+    if (c.action === 'vibrate' || c.action === 'mode') {
+      var m = clampInt(c.mode || 1, 1, 10);
+      var mlv = clampInt(c.strength || c.intensity || 5, 1, 10);
       await BLE.write({ value: hex([0x55, 0x03, 0x00, 0x00, m, mlv]) });
       return { ok: true };
     }
     if (c.action === 'suck') {
-      // CMD 07（文档叫「拍打」，7 档）。还没实测过是不是吸吮那颗头。
-      var slv = clampInt(c.intensity ? Math.round(c.intensity * 0.7) : 4, 1, 7);
-      await BLE.write({ value: hex([0x55, 0x07, 0x00, 0x00, slv, 0x00, 0x00]) });
-      keepaliveOn([0x55, 0x07, 0x00, 0x00, slv, 0x00, 0x00]);
+      var sm = clampInt(c.mode || 1, 1, 5);
+      var slv = clampInt(c.strength || c.intensity || 5, 1, 10);
+      await BLE.write({ value: hex([0x55, 0x09, 0x00, 0x00, sm, slv]) });
       return { ok: true };
     }
-    var vb = lvToByte(c.intensity);
-    await BLE.write({ value: hex([0x55, 0x04, 0x00, 0x00, 0x01, vb, 0xAA]) });
-    keepaliveOn([0x55, 0x04, 0x00, 0x00, 0x01, vb, 0xAA]);
-    return { ok: true };
+    if (c.action === 'thrust') {
+      var tm = clampInt(c.mode || 1, 1, 7);
+      await BLE.write({ value: hex([0x55, 0x08, 0x00, 0x00, tm, 0xFF]) });
+      return { ok: true };
+    }
+    // 认不出来的动作：别猜着发字节到她身上，如实回执。
+    return { ok: false, note: '不认识这个动作：' + c.action };
+  }
+
+  // 停：串行发、每条隔 150ms —— 同步连发只有第一条出得去（真踩过）。
+  // ⚠️ thrust 的停没抓到，两个候选都发一遍。
+  async function stopAll() {
+    var seq = [
+      [0x55, 0x04, 0x00, 0x00, 0x00, 0x00, 0xAA],
+      [0x55, 0x03, 0x00, 0x00, 0x00, 0x00],
+      [0x55, 0x09, 0x00, 0x00, 0x00, 0x00],
+      [0x55, 0x08, 0x00, 0x00, 0x00, 0xFF],
+      [0x55, 0x08, 0x00, 0x00, 0x00, 0x00]
+    ];
+    for (var i = 0; i < seq.length; i++) {
+      try { await BLE.write({ value: hex(seq[i]) }); } catch (e) {}
+      await new Promise(function (r) { setTimeout(r, 150); });
+    }
   }
 
   function clampInt(v, lo, hi) { v = Math.round(+v || lo); return v < lo ? lo : (v > hi ? hi : v); }

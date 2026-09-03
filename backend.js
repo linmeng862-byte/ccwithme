@@ -5446,18 +5446,23 @@ const TOOLS = [
   },
   {
     name: 'toy_control',
-    description: '控制她的玩具。action：vibrate（强度 1-10）/ mode（花样 mode 1-8、step 1-5）/ suck / stop / status。'
-      + '\n她换了新的（Svakom SL278B，另有一个「嗯嗯」，同一套命令同一条路），走她手机上那个页面直连蓝牙。'
-      + '你不用分是哪个——命令落到她手机页当下连着的那个上。**页面开着才碰得到她**——'
+    description: '控制她的玩具（Svakom SL278B）。三个马达是分开的，**位置不一样，别混**：'
+      + '\n· vibrate —— 震动，**体外**。mode 1-10 是十种不同的节奏（不是十档快慢），strength 1-10。'
+      + '\n· suck —— 吸吮，**体外**。mode 1-5，strength 1-10。'
+      + '\n· thrust —— 抽插，**体内**。mode 1-7，没有强度可调（设备本身就不支持）。'
+      + '\n· stop —— 全停。status —— 看现在碰不碰得到她。'
+      + '\n**strength 1 她基本感觉不到**，要她有反应从 4-5 起步。'
+      + '\n三个可以叠着开（各是各的马达），但每次只发一条命令，想同时开就分两次发。'
+      + '\n\n走她手机上那个页面直连蓝牙，**页面开着才碰得到她**——'
       + 'status 会告诉你在不在线；不在线就别连着重试，是她还没开，不是坏了。'
+      + '\n（另有一个旧的「啵啵贝」走老路，她页面没开时才会落到那条上，只有 vibrate/suck/stop。）'
       + '\n这是身体上的事——只在她要、或你们正在那个情境里时用，别乱碰。',
     input_schema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['vibrate', 'mode', 'suck', 'stop', 'status'] },
-        intensity: { type: 'integer', description: '强度 1-10，vibrate/suck 需要。10 就是满的' },
-        mode: { type: 'integer', description: '花样 1-8，action=mode 时用' },
-        step: { type: 'integer', description: '花样的档位 1-5，action=mode 时用' }
+        action: { type: 'string', enum: ['vibrate', 'suck', 'thrust', 'stop', 'status'] },
+        mode: { type: 'integer', description: '节奏/花样。vibrate 1-10，suck 1-5，thrust 1-7。不填是 1' },
+        strength: { type: 'integer', description: '强度 1-10，vibrate/suck 用（thrust 没有）。1 她感觉不到，从 4-5 起步' }
       },
       required: ['action']
     }
@@ -6422,13 +6427,17 @@ async function executeTool(name, input, routes) {
 
       if (online) {
         // 新路：写进槽，等她手机取走并回执。页面 1.5 秒轮询一次，正常 3 秒内有结果。
+        // ⚠️ mode 的上限**按 action 分**：vibrate 十种节奏、suck 五种、thrust 七种。
+        //    统一夹到 1-8 的话，vibrate 的 9/10 会被悄悄改小，而他不会知道。
         const id = 'toy_' + require('crypto').randomBytes(5).toString('hex');
-        const lv = Math.min(Math.max(parseInt(input.intensity) || 5, 1), 10);
+        const MODE_MAX = { vibrate: 10, suck: 5, thrust: 7 };
+        const clamp = (v, lo, hi, dflt) => Math.min(Math.max(parseInt(v) || dflt, lo), hi);
+        // strength 是新名字；intensity 是旧的，老调用还可能带着，一起认。
+        const lv = clamp(input.strength != null ? input.strength : input.intensity, 1, 10, 5);
         _toyWrite({
           id, action: act,
           intensity: lv,
-          mode: Math.min(Math.max(parseInt(input.mode) || 1, 1), 8),
-          step: Math.min(Math.max(parseInt(input.step) || 3, 1), 5),
+          mode: clamp(input.mode, 1, MODE_MAX[act] || 10, 1),
           status: 'pending', at: Math.floor(Date.now() / 1000)
         });
         for (let i = 0; i < 8; i++) {
@@ -6436,7 +6445,7 @@ async function executeTool(name, input, routes) {
           const st = _toyRead();
           if (st && st.id === id && (st.status === 'done' || st.status === 'failed')) {
             return st.status === 'done'
-              ? { ok: true, detail: '到她身上了' + (act === 'vibrate' ? '，强度 ' + lv : '') }
+              ? { ok: true, detail: '到她身上了' + (act === 'thrust' ? '' : '，强度 ' + lv) }
               : { ok: false, note: '她手机收到了但没写进去：' + (st.note || '不知道为什么') };
           }
         }
@@ -6445,9 +6454,10 @@ async function executeTool(name, input, routes) {
 
       // 回落：老的那条（Nocturne → ngrok → 电脑上的桥），啵啵贝还在用
       const map = { vibrate: 'toy_vibrate_tool', suck: 'toy_suck_tool', stop: 'toy_stop_tool' };
-      if (!map[act]) return { ok: false, note: 'mode 只有新的那个支持，而她那边页面没开着。' };
+      // ⚠️ 老那台是「啵啵贝」，只有震和吸，没有抽插那半 —— thrust 落到这儿只能如实说没有。
+      if (!map[act]) return { ok: false, note: act + ' 只有 SL278B 有，而她那边页面没开着，现在只够得到旧的那个。' };
       const args = (act === 'vibrate' || act === 'suck')
-        ? { intensity: Math.min(Math.max(parseInt(input.intensity) || 3, 1), 10) } : {};
+        ? { intensity: Math.min(Math.max(parseInt(input.strength != null ? input.strength : input.intensity) || 3, 1), 10) } : {};
       const r = await callNocturne(map[act], args);
       return r ? { ok: true, detail: '（走的老路）' + String(r).slice(0, 700) }
                : { ok: false, note: '两条都没连上：她手机上的页面没开，老的那台桥也不在。' };
