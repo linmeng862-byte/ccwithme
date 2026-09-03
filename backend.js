@@ -851,7 +851,11 @@ app.use(express.json({ limit: '50mb' }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  // ⚠️ 自定义头必须逐个列进来，否则浏览器的预检（OPTIONS）过不去，
+  //    而失败长得像「网络断了」，一点都不像鉴权问题。
+  //    X-Toy-Token 漏了这一条，表现是：app 里玩具页蓝牙连着、他却说她不在页面；
+  //    Bluefy 里同源不预检，所以那边一直是好的，更难往这儿想。2026-09-03。
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Toy-Token');
   if (req.method === 'OPTIONS') return res.status(204).end();
   next();
 });
