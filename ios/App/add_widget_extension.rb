@@ -19,6 +19,7 @@ EXT_SOURCES = %w[
   TimerLiveActivityView.swift
   ThinkingLiveActivityView.swift
   ClawdSprite.swift
+  PresenceWidget.swift
 ]
 
 project = Xcodeproj::Project.open(PROJECT_PATH)

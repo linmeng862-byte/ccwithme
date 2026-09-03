@@ -31,7 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'ios/App/LiveActivityWidget/ClawdSprite.swift')
 
 # 灵动岛就那么大，姿势多了根本分不清。加姿势记得让 JS 那边也传得出这个名字。
-POSES = ['idle', 'thinking', 'streaming', 'happy']
+POSES = ['idle', 'thinking', 'streaming', 'happy', 'doze']
 
 # 螃蟹本体所在的行范围。装饰（思考泡、笔记本、zzz）都在 y < 6 的上方，
 # compact / minimal 区域太小，画上去糊成一团，所以只留这个范围里的矩形。

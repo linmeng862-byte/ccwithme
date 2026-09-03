@@ -20,7 +20,9 @@ struct TimerLiveActivityAttributes: ActivityAttributes {
 /// 以及 static/index.html 里 _CLAWD_ISLAND_POSE 那张表。
 @available(iOS 16.1, *)
 enum ClawdPose: String, Codable, Hashable {
-    case idle, thinking, streaming, happy
+    /// doze = 睡着的那只，**只给桌面小组件用**，不走 Live Activity ——
+    /// 卡上他是「醒着等你」，小组件上他是「在你桌面上睡着」。别混。
+    case idle, thinking, streaming, happy, doze
 
     /// 岛上那行字。label 是 pose 的函数，所以不走网络传 ——
     /// 两端各算一份的话，迟早出现「螃蟹在想、字写着在回复」。
@@ -36,6 +38,7 @@ enum ClawdPose: String, Codable, Hashable {
         case .thinking:  return "Cis 在想…"
         case .streaming: return "Cis 正在回复你…"
         case .happy:     return "说完啦"
+        case .doze:      return "Cis 睡着了"
         }
     }
 }

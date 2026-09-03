@@ -14,7 +14,7 @@ struct ClawdBatch {
 }
 
 // 姿势名必须和 LiveActivityAttributes.swift 里的 ClawdPose 对上：
-// idle / thinking / streaming / happy
+// idle / thinking / streaming / happy / doze
 
 enum ClawdSprite {
     // clawd-idle.svg — 10 个矩形，合成 3 批
@@ -384,6 +384,59 @@ enum ClawdSprite {
     ]
     static let happyBodyBounds = CGRect(x: 0, y: 6, width: 15, height: 10)
 
+    // clawd-doze.svg — 10 个矩形，合成 3 批
+    static let dozeFull: [ClawdBatch] = [
+        ClawdBatch(
+            color: Color(.sRGB, red: 0.0000, green: 0.0000, blue: 0.0000, opacity: 0.55),
+            rects: [
+                CGRect(x: 3, y: 15, width: 9, height: 1),
+            ]),
+        ClawdBatch(
+            color: Color(.sRGB, red: 0.8706, green: 0.5333, blue: 0.4275, opacity: 1),
+            rects: [
+                CGRect(x: 3, y: 12, width: 1, height: 3),
+                CGRect(x: 5, y: 12, width: 1, height: 3),
+                CGRect(x: 9, y: 12, width: 1, height: 3),
+                CGRect(x: 11, y: 12, width: 1, height: 3),
+                CGRect(x: 2, y: 6, width: 11, height: 7),
+                CGRect(x: 0, y: 9, width: 2, height: 2),
+                CGRect(x: 13, y: 9, width: 2, height: 2),
+            ]),
+        ClawdBatch(
+            color: Color(.sRGB, red: 0.0000, green: 0.0000, blue: 0.0000, opacity: 1),
+            rects: [
+                CGRect(x: 4, y: 8, width: 1, height: 2),
+                CGRect(x: 10, y: 8, width: 1, height: 2),
+            ]),
+    ]
+    static let dozeFullBounds = CGRect(x: 0, y: 6, width: 15, height: 10)
+    // clawd-doze.svg 的本体部分 — 10 个矩形，合成 3 批
+    static let dozeBody: [ClawdBatch] = [
+        ClawdBatch(
+            color: Color(.sRGB, red: 0.0000, green: 0.0000, blue: 0.0000, opacity: 0.55),
+            rects: [
+                CGRect(x: 3, y: 15, width: 9, height: 1),
+            ]),
+        ClawdBatch(
+            color: Color(.sRGB, red: 0.8706, green: 0.5333, blue: 0.4275, opacity: 1),
+            rects: [
+                CGRect(x: 3, y: 12, width: 1, height: 3),
+                CGRect(x: 5, y: 12, width: 1, height: 3),
+                CGRect(x: 9, y: 12, width: 1, height: 3),
+                CGRect(x: 11, y: 12, width: 1, height: 3),
+                CGRect(x: 2, y: 6, width: 11, height: 7),
+                CGRect(x: 0, y: 9, width: 2, height: 2),
+                CGRect(x: 13, y: 9, width: 2, height: 2),
+            ]),
+        ClawdBatch(
+            color: Color(.sRGB, red: 0.0000, green: 0.0000, blue: 0.0000, opacity: 1),
+            rects: [
+                CGRect(x: 4, y: 8, width: 1, height: 2),
+                CGRect(x: 10, y: 8, width: 1, height: 2),
+            ]),
+    ]
+    static let dozeBodyBounds = CGRect(x: 0, y: 6, width: 15, height: 10)
+
     /// bodyOnly = true 时只给本体那份（装饰已在生成期剔除）。
     static func sprite(for pose: ClawdPose, bodyOnly: Bool) -> ([ClawdBatch], CGRect) {
         switch (pose, bodyOnly) {
@@ -395,6 +448,8 @@ enum ClawdSprite {
         case (.streaming, true):  return (streamingBody, streamingBodyBounds)
         case (.happy, false): return (happyFull, happyFullBounds)
         case (.happy, true):  return (happyBody, happyBodyBounds)
+        case (.doze, false): return (dozeFull, dozeFullBounds)
+        case (.doze, true):  return (dozeBody, dozeBodyBounds)
         }
     }
 }
