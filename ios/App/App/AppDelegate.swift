@@ -7,7 +7,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 键盘顶起来时 webview 会被 resize，下面空出来那块露的是**窗口**、不是网页 ——
+        // capacitor.config.json 里的 backgroundColor 只管 webview 自己，管不到它下面
+        // 这一层，默认黑色。所以打字时页面下方有一条黑边。把窗口底色也刷成同一个
+        // 奶油白（#FDF9F3，跟 index.html 的 --bg-primary 是同一个值，改要一起改），
+        // 露出来也看不出接缝。
+        window?.backgroundColor = UIColor(red: 0.992, green: 0.976, blue: 0.953, alpha: 1.0)
         return true
     }
 
@@ -27,6 +32,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        // 保险：storyboard 那条路上 window 不一定在 didFinishLaunching 时就绪，
+        // 这里再刷一次，不然黑边会只在某些启动路径下出现，最难查。
+        window?.backgroundColor = UIColor(red: 0.992, green: 0.976, blue: 0.953, alpha: 1.0)
+        window?.rootViewController?.view.backgroundColor = UIColor(red: 0.992, green: 0.976, blue: 0.953, alpha: 1.0)
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
