@@ -26,10 +26,33 @@ project = Xcodeproj::Project.open(PROJECT_PATH)
 app_target = project.targets.find { |t| t.name == 'App' }
 abort('❌ App target not found in project') unless app_target
 
-# ── 0. Idempotency check ──
-if project.targets.any? { |t| t.name == EXT_NAME }
-  puts "⚠️  Target '#{EXT_NAME}' already exists — skipping creation."
-  puts "   Remove it from Xcode first if you need a fresh setup."
+# ── 0. Idempotency ──
+# ⚠️ 2026-09-03 改：以前这里是「target 已经在 → 整段 exit 0」。
+#    后果是**往 EXT_SOURCES 里新加的文件永远进不去已存在的 target** ——
+#    文件躺在磁盘上、Xcode 里看不见，编译报 "Cannot find 'X' in scope"，
+#    而脚本还打了一行绿色的「skipping」让人以为一切正常。
+#    （add_app_plugins.rb 一直是逐个文件补的，这个没跟上。）
+#    现在改成：target 在就只补缺的源文件，然后退出；不在才走下面整套创建流程。
+existing = project.targets.find { |t| t.name == EXT_NAME }
+if existing
+  puts "⚠️  Target '#{EXT_NAME}' already exists — 只补缺的源文件。"
+  ext_group = project.main_group.find_subpath(EXT_DIR, true)
+  ext_group.set_source_tree('SOURCE_ROOT')
+  ext_group.set_path(EXT_DIR)
+  added = 0
+  EXT_SOURCES.each do |filename|
+    already = existing.source_build_phase.files.any? { |f| f.file_ref && f.file_ref.path == filename }
+    if already
+      puts "   (skip) #{filename}"
+      next
+    end
+    file_ref = ext_group.files.find { |f| f.path == filename } || ext_group.new_file(filename)
+    existing.source_build_phase.add_file_reference(file_ref)
+    puts "   ➕ 补上 #{filename}"
+    added += 1
+  end
+  project.save if added > 0
+  puts added > 0 ? "✅ 补了 #{added} 个文件" : "   没有要补的"
   exit 0
 end
 
