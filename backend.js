@@ -3173,8 +3173,9 @@ app.post('/api/health/command/result', (req, res) => {
 // 而 iOS 上没有 APNs 就叫不醒后台页面 —— 所以「页面开着」是这条路的前提，
 // 这不是故障，是这条路本来的样子。
 //
-// 老的那条（Nocturne → ngrok → 电脑上的桥）**留着不动**：啵啵贝还在用它，
-// 而且新页面没开的时候可以兜底。下面 toy_control 是「新的在线就走新的」。
+// 2026-09-03：老的那条（Nocturne → ngrok → 电脑上的桥）**撤了**。
+// 旧玩具的协议她要重新抓，在那之前留着它只会把命令送进一个没人接的地方 ——
+// 那比明说「碰不到」更糟：他会以为发出去了。现在只有这一条路。
 //
 // ⚠️ token 单独一份，跟 AUTH_TOKEN 完全分开 —— 它要存进她手机浏览器里，
 //    泄露了最坏也只是别人能往这个槽里塞指令，读不到聊天记录一个字。
@@ -5459,7 +5460,6 @@ const TOOLS = [
       + '\n三个可以叠着开（各是各的马达），但每次只发一条命令，想同时开就分两次发。'
       + '\n\n走她手机上那个页面直连蓝牙，**页面开着才碰得到她**——'
       + 'status 会告诉你在不在线；不在线就别连着重试，是她还没开，不是坏了。'
-      + '\n（另有一个旧的「啵啵贝」走老路，她页面没开时才会落到那条上，只有 vibrate/suck/stop。）'
       + '\n这是身体上的事——只在她要、或你们正在那个情境里时用，别乱碰。',
     input_schema: {
       type: 'object',
@@ -6420,13 +6420,9 @@ async function executeTool(name, input, routes) {
       const online = _toyOnline();
 
       if (act === 'status') {
-        // 两条路各报各的，别混成一句 —— 他得知道现在碰得到的是哪一个。
-        let old = null;
-        try { old = await callNocturne('toy_status_tool', {}); } catch (e) {}
-        return {
-          新的: online ? '在线，可以碰（嗯嗯 / SL278B，看她手机页连的哪个）' : '她那边页面没开着，现在碰不到',
-          旧的啵啵贝: old ? String(old).slice(0, 200) : '没连上'
-        };
+        return online
+          ? { ok: true, detail: '在线，可以碰' }
+          : { ok: false, detail: '她那边页面没开着，现在碰不到' };
       }
 
       if (online) {
@@ -6456,15 +6452,10 @@ async function executeTool(name, input, routes) {
         return { ok: false, note: '指令挂在那儿了，她那边没回执。别重复发 —— 新的会盖掉旧的。' };
       }
 
-      // 回落：老的那条（Nocturne → ngrok → 电脑上的桥），啵啵贝还在用
-      const map = { vibrate: 'toy_vibrate_tool', suck: 'toy_suck_tool', stop: 'toy_stop_tool' };
-      // ⚠️ 老那台是「啵啵贝」，只有震和吸，没有抽插那半 —— thrust 落到这儿只能如实说没有。
-      if (!map[act]) return { ok: false, note: act + ' 只有 SL278B 有，而她那边页面没开着，现在只够得到旧的那个。' };
-      const args = (act === 'vibrate' || act === 'suck')
-        ? { intensity: Math.min(Math.max(parseInt(input.strength != null ? input.strength : input.intensity) || 3, 1), 10) } : {};
-      const r = await callNocturne(map[act], args);
-      return r ? { ok: true, detail: '（走的老路）' + String(r).slice(0, 700) }
-               : { ok: false, note: '两条都没连上：她手机上的页面没开，老的那台桥也不在。' };
+      // 2026-09-03：旧玩具那条备用路（Nocturne → ngrok → 电脑上的桥）撤了 ——
+      // 她要重新抓那台的协议，在那之前这条只会把命令送进一个没人接的地方。
+      // 现在只有一条路：她手机页开着 = 碰得到，没开 = 碰不到，别含糊。
+      return { ok: false, note: '她那边页面没开着，现在碰不到她。别连着重试 —— 是她还没开，不是坏了。' };
     }
     case 'search_memory': {
       const query = input.query || '';
