@@ -27,7 +27,15 @@ final class BleBridgeManager: NSObject {
 
     // 回调（连接是异步多步的，用闭包把结果送回插件）
     private var onConnect: ((_ ok: Bool, _ name: String?, _ err: String?) -> Void)?
-    private var connectTimer: Timer?
+
+    // ⚠️ **别用 Timer.scheduledTimer 做超时。** 它挂在「当前线程的 runloop」上，
+    //    而 Capacitor 的插件方法跑在后台队列，那儿没有 runloop 在转 ——
+    //    定时器永远不响。对 scan 来说定时器是唯一出口，于是 Promise 永远不
+    //    resolve 也不 reject，表现就是「点了没反应」，最难查的那种。
+    //    改成 DispatchQueue.main.asyncAfter；它不能 invalidate，所以用代次计数
+    //    作废旧的：每开一次新的就 +1，回调里对不上就直接 return。
+    private var connectGen = 0
+    private var scanGen = 0
 
     // 断开事件回传给 JS
     var onDisconnected: (() -> Void)?
@@ -40,7 +48,6 @@ final class BleBridgeManager: NSObject {
     private var seen: [String: CBPeripheral] = [:]
     private var seenInfo: [String: (name: String, rssi: Int)] = [:]
     private var onScan: (([[String: Any]]) -> Void)?
-    private var scanTimer: Timer?
 
     private override init() {
         super.init()
@@ -56,6 +63,14 @@ final class BleBridgeManager: NSObject {
 
     func connect(namePrefix: String?, service: String, characteristic: String,
                  timeoutMs: Int, completion: @escaping (_ ok: Bool, _ name: String?, _ err: String?) -> Void) {
+        DispatchQueue.main.async {
+            self._connect(namePrefix: namePrefix, service: service,
+                          characteristic: characteristic, timeoutMs: timeoutMs, completion: completion)
+        }
+    }
+
+    private func _connect(namePrefix: String?, service: String, characteristic: String,
+                          timeoutMs: Int, completion: @escaping (_ ok: Bool, _ name: String?, _ err: String?) -> Void) {
         if isConnected {
             completion(true, peripheral?.name, nil)
             return
@@ -65,9 +80,11 @@ final class BleBridgeManager: NSObject {
         wantNamePrefix = (namePrefix?.isEmpty == false) ? namePrefix : nil
         onConnect = completion
 
-        connectTimer?.invalidate()
-        connectTimer = Timer.scheduledTimer(withTimeInterval: Double(timeoutMs) / 1000.0, repeats: false) { [weak self] _ in
-            self?.finishConnect(ok: false, name: nil, err: "连接超时：没扫到设备（设备开机了吗？在一米内吗？）")
+        connectGen += 1
+        let gen = connectGen
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(timeoutMs) / 1000.0) { [weak self] in
+            guard let self = self, self.connectGen == gen else { return }
+            self.finishConnect(ok: false, name: nil, err: "连接超时：没扫到设备（设备开机了吗？在一米内吗？）")
         }
 
         if central.state == .poweredOn {
@@ -80,13 +97,22 @@ final class BleBridgeManager: NSObject {
     /// 为什么要这个：`connect(namePrefix:)` 是「猜名字、猜中才连」，
     /// 猜不中就只能干等超时，而人根本不知道设备到底叫什么。
     /// 列出来让人点一下，比猜可靠得多。
+    // ⚠️ 整个身体搬到主队列：CBCentralManager 是用 queue: nil 建的，所以它的
+    //    delegate 回调都在主队列；而插件方法是从后台队列叫进来的。
+    //    两边同时读写 seen / onScan 就是数据竞争 —— 偶发崩溃，最难复现的那种。
     func scan(timeoutMs: Int, completion: @escaping ([[String: Any]]) -> Void) {
+        DispatchQueue.main.async { self._scan(timeoutMs: timeoutMs, completion: completion) }
+    }
+
+    private func _scan(timeoutMs: Int, completion: @escaping ([[String: Any]]) -> Void) {
         seen.removeAll(); seenInfo.removeAll()
         onScan = completion
 
-        scanTimer?.invalidate()
-        scanTimer = Timer.scheduledTimer(withTimeInterval: Double(timeoutMs) / 1000.0, repeats: false) { [weak self] _ in
-            self?.finishScan()
+        scanGen += 1
+        let gen = scanGen
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(timeoutMs) / 1000.0) { [weak self] in
+            guard let self = self, self.scanGen == gen else { return }
+            self.finishScan()
         }
 
         if central.state == .poweredOn {
@@ -98,7 +124,7 @@ final class BleBridgeManager: NSObject {
     }
 
     private func finishScan() {
-        scanTimer?.invalidate(); scanTimer = nil
+        scanGen += 1             // 作废还在路上的那个超时
         if central.isScanning && onConnect == nil { central.stopScan() }
         // 信号强的排前面 —— 放手边那台通常最强
         let list = seenInfo
@@ -112,20 +138,30 @@ final class BleBridgeManager: NSObject {
     /// 找到之后的流程（连、找服务、找特征）完全一样，走同一条回调。
     func connect(id: String, service: String, characteristic: String,
                  timeoutMs: Int, completion: @escaping (_ ok: Bool, _ name: String?, _ err: String?) -> Void) {
+        DispatchQueue.main.async {
+            self._connect(id: id, service: service, characteristic: characteristic,
+                          timeoutMs: timeoutMs, completion: completion)
+        }
+    }
+
+    private func _connect(id: String, service: String, characteristic: String,
+                          timeoutMs: Int, completion: @escaping (_ ok: Bool, _ name: String?, _ err: String?) -> Void) {
         guard let target = seen[id] else {
             completion(false, nil, "这台不在刚才扫到的列表里了，重扫一次")
             return
         }
-        if isConnected { disconnect() }
+        if isConnected { _disconnect() }
 
         wantService = CBUUID(string: service)
         wantChar = CBUUID(string: characteristic)
         wantNamePrefix = nil          // 按 id 连，不再挑名字
         onConnect = completion
 
-        connectTimer?.invalidate()
-        connectTimer = Timer.scheduledTimer(withTimeInterval: Double(timeoutMs) / 1000.0, repeats: false) { [weak self] _ in
-            self?.finishConnect(ok: false, name: nil, err: "连接超时：这台没应答")
+        connectGen += 1
+        let gen = connectGen
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(timeoutMs) / 1000.0) { [weak self] in
+            guard let self = self, self.connectGen == gen else { return }
+            self.finishConnect(ok: false, name: nil, err: "连接超时：这台没应答")
         }
 
         if central.isScanning { central.stopScan() }
@@ -147,7 +183,7 @@ final class BleBridgeManager: NSObject {
     }
 
     private func finishConnect(ok: Bool, name: String?, err: String?) {
-        connectTimer?.invalidate(); connectTimer = nil
+        connectGen += 1          // 作废还在路上的那个超时
         if central.isScanning { central.stopScan() }
         let cb = onConnect; onConnect = nil
         cb?(ok, name, err)
@@ -156,6 +192,10 @@ final class BleBridgeManager: NSObject {
     // MARK: - Write
 
     func write(hex: String, completion: @escaping (_ ok: Bool, _ err: String?) -> Void) {
+        DispatchQueue.main.async { self._write(hex: hex, completion: completion) }
+    }
+
+    private func _write(hex: String, completion: @escaping (_ ok: Bool, _ err: String?) -> Void) {
         guard let p = peripheral, let c = writeChar, p.state == .connected else {
             completion(false, "还没连上"); return
         }
@@ -173,6 +213,10 @@ final class BleBridgeManager: NSObject {
     }
 
     func disconnect() {
+        DispatchQueue.main.async { self._disconnect() }
+    }
+
+    private func _disconnect() {
         if let p = peripheral {
             central.cancelPeripheralConnection(p)
         }
