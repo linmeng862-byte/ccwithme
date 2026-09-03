@@ -90,7 +90,17 @@ fi
 
 run_ext add_widget_extension.rb   LiveActivityWidget   # 灵动岛
 run_ext add_broadcast_extension.rb BroadcastUpload     # 共享屏幕
-run_ext add_screen_time_monitor.rb ScreenTimeMonitor   # 屏幕时间
+
+# 屏幕时间：**默认不建**。免费账号签不下来 —— 2026-08-30 Xcode 原话：
+#   Personal development teams do not support the Family Controls (Development) capability.
+# 这是三个扩展里唯一撞 $99 墙的那个，所以它是 opt-in，不是 opt-out。
+# 哪天买了开发者账号，跑 SCREEN_TIME=1 bash scripts/ios-prep.sh 就把它接回来。
+if [ "${SCREEN_TIME:-0}" = "1" ]; then
+  run_ext add_screen_time_monitor.rb ScreenTimeMonitor
+else
+  echo "   (skip) ScreenTimeMonitor —— 免费账号签不下来，默认不建（要的话 SCREEN_TIME=1）"
+fi
+
 ruby "$ROOT/ios/App/add_app_plugins.rb"                # ← 必须最后
 
-echo "✅ 扩展 target 都建好了，可以 xcodebuild / 在 Xcode 里编了"
+echo "✅ 扩展 target 建好了，可以 xcodebuild / 在 Xcode 里编了"
