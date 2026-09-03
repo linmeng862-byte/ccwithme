@@ -55,19 +55,26 @@ if [ ! -f "$INDEX" ]; then
   exit 1
 fi
 
+TOY_LABEL="${TOY_LABEL:-设备}"
 if grep -q "__TOY_ENTRY__" "$INDEX"; then
   echo "   (skip) 入口已经在了"
 else
-  cat >> "$INDEX" <<'EOF'
+  # 进入口做成 ⋯ 更多菜单里的一项（#moreMenu 里的 .menu-item），跟 New chat 那些并排。
+  # 第一版做成「右上角连点 5 下」是错的 —— 看不见的入口等于没有入口。
+  # 菜单项的名字从 TOY_LABEL 来，默认写「设备」：这个脚本在 PUBLIC 仓库里，
+  # 不往里写私人字眼。想改名字：TOY_LABEL=xxx bash scripts/ios-prep.sh
+  cat >> "$INDEX" <<EOF
 <script>/* __TOY_ENTRY__ 只存在于 app 这份拷贝里，static/ 原件没有这段 */
-(function(){var n=0,t=0;document.addEventListener('touchend',function(e){
-var p=(e.changedTouches&&e.changedTouches[0])||e;
-if(p.clientX<innerWidth-60||p.clientY>60){n=0;return;}
-var now=Date.now();if(now-t>2000)n=0;t=now;
-if(++n>=5){n=0;location.href='toy.html';}},true);})();
+(function(){function add(){var m=document.getElementById('moreMenu');if(!m)return false;
+if(document.getElementById('moreToy'))return true;
+var b=document.createElement('button');b.className='menu-item';b.id='moreToy';
+b.style.width='100%';b.textContent='${TOY_LABEL}';
+b.onclick=function(){location.href='toy.html'};
+m.appendChild(b);return true;}
+if(!add()){var n=0,t=setInterval(function(){if(add()||++n>40)clearInterval(t)},250);}})();
 </script>
 EOF
-  echo "✅ 入口已注入（右上角 2 秒内连点 5 下）"
+  echo "✅ 入口已注入：⋯ 更多菜单里多一项「${TOY_LABEL}」"
 fi
 
 # 3. 扩展 target
