@@ -7439,18 +7439,47 @@ $('stickerFileInput').onchange = async function() {
   //    花样在第 6 字节，第 5 字节这型号没作用（toy.html 那边试出来的）。
   async function runCmd(c) {
     if (c.action === 'stop') {
+      keepaliveOff();
       await BLE.write({ value: hex([0x55, 0x04, 0x00, 0x00, 0x00, 0x00, 0xAA]) });
       return { ok: true };
     }
     if (c.action === 'mode') {
-      var p = c.step || c.mode || 1;
-      await BLE.write({ value: hex([0x55, 0x03, 0x00, 0x00, 0x01, p, 0x00]) });
-      return { ok: true, note: c.mode && c.mode !== p ? 'mode 字节这型号没作用，只按花样 ' + p + ' 发了' : '' };
+      // 55 03 00 00 <模式 1-8> <强度 1-5> 00 —— ⚠️ 这里的强度只认 1-5，
+      // 跟常震那条的 0-255 不是一回事，别混用 lvToByte。
+      var m = clampInt(c.mode || c.step || 1, 1, 8);
+      var mlv = clampInt(c.intensity ? Math.round(c.intensity / 2) : 3, 1, 5);
+      await BLE.write({ value: hex([0x55, 0x03, 0x00, 0x00, m, mlv, 0x00]) });
+      keepaliveOn([0x55, 0x03, 0x00, 0x00, m, mlv, 0x00]);
+      return { ok: true };
     }
-    await BLE.write({ value: hex([0x55, 0x04, 0x00, 0x00, 0x01, lvToByte(c.intensity), 0xAA]) });
-    return c.action === 'suck'
-      ? { ok: true, note: 'suck 当成震动发的，这型号的吸吮指令还没逆出来' }
-      : { ok: true };
+    if (c.action === 'suck') {
+      // CMD 07（文档叫「拍打」，7 档）。还没实测过是不是吸吮那颗头。
+      var slv = clampInt(c.intensity ? Math.round(c.intensity * 0.7) : 4, 1, 7);
+      await BLE.write({ value: hex([0x55, 0x07, 0x00, 0x00, slv, 0x00, 0x00]) });
+      keepaliveOn([0x55, 0x07, 0x00, 0x00, slv, 0x00, 0x00]);
+      return { ok: true };
+    }
+    var vb = lvToByte(c.intensity);
+    await BLE.write({ value: hex([0x55, 0x04, 0x00, 0x00, 0x01, vb, 0xAA]) });
+    keepaliveOn([0x55, 0x04, 0x00, 0x00, 0x01, vb, 0xAA]);
+    return { ok: true };
+  }
+
+  function clampInt(v, lo, hi) { v = Math.round(+v || lo); return v < lo ? lo : (v > hi ? hi : v); }
+
+  // 保活：那份协议说指令要每 ~1.5 秒重发，不然设备自己停。
+  // ⚠️ 停的时候必须关掉，不然按了停它又被重新发起来。
+  var _kaBytes = null, _kaTimer = null;
+  function keepaliveOn(bytes) {
+    _kaBytes = bytes;
+    if (_kaTimer) return;
+    _kaTimer = setInterval(function () {
+      if (_kaBytes) { try { BLE.write({ value: hex(_kaBytes) }); } catch (e) {} }
+    }, 1200);
+  }
+  function keepaliveOff() {
+    _kaBytes = null;
+    if (_kaTimer) { clearInterval(_kaTimer); _kaTimer = null; }
   }
 
   async function tick() {
