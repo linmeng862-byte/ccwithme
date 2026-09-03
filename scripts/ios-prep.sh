@@ -158,6 +158,37 @@ if [ -n "${APP_VARIANT}" ]; then
       perl -pi -e "s/\Qzhou-and-claude.online\E/${APP_API_HOST}/g" "$f"
     done
   fi
+  # app 图标：变体可以换掉，仓库那张是另一台的。
+  #
+  # 放 static/app-icon-<变体>.png（**gitignore**，每台自己一份）。
+  # ⚠️ iOS 的硬要求：**1024x1024、RGB、不能有 alpha 通道**。
+  #    带 alpha 的话 Xcode 归档时才报错，编译阶段一声不吭 —— 白编一次。
+  #    这里先验一遍，不合格就明说并跳过，不悄悄塞一张会挂的进去。
+  ICON_SRC="$ROOT/static/app-icon-${APP_VARIANT}.png"
+  ICON_DST="$ROOT/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
+  if [ -f "${ICON_SRC}" ]; then
+    _icon_ok="$(node -e '
+      const fs=require("fs");
+      try{
+        const b=fs.readFileSync(process.argv[1]);
+        if(b.readUInt32BE(16)!==1024||b.readUInt32BE(20)!==1024){console.log("尺寸不是 1024x1024");process.exit(0)}
+        const ct=b[25];
+        if(ct!==2&&ct!==0){console.log("有 alpha 通道（颜色类型 "+ct+"），iOS 不收");process.exit(0)}
+        if(b.includes(Buffer.from("tRNS"))){console.log("有 tRNS 透明块，iOS 不收");process.exit(0)}
+        console.log("OK");
+      }catch(e){console.log("读不出来："+e.message)}
+    ' "${ICON_SRC}" 2>/dev/null || echo "node 跑不了，跳过检查")"
+    if [ "${_icon_ok}" = "OK" ]; then
+      cp "${ICON_SRC}" "${ICON_DST}"
+      echo "   ✎ app 图标换成变体版：$(basename "${ICON_SRC}")"
+    else
+      echo "   ⚠️ 图标没换 —— ${_icon_ok}"
+      echo "      （$(basename "${ICON_SRC}")，要 1024x1024 / RGB / 无 alpha）"
+    fi
+  else
+    echo "   (skip) app 图标 —— 没有 static/app-icon-${APP_VARIANT}.png"
+  fi
+
   # 小组件 / 灵动岛的长相：变体可以整份换掉，不改仓库里那份。
   #
   # 规矩：仓库里的 LiveActivityWidget/*.swift 是**另一台的**，别动。
