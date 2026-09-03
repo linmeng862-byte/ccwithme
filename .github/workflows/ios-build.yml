@@ -24,19 +24,15 @@ jobs:
       - name: Copy web assets
         run: npx cap copy ios
 
-      # 玩具页 + app 专属入口。CI 上没有 toy.html（在 .gitignore 里），
-      # 这一步会明确报「这次的包里没有玩具页」，不静默。
-      - name: Prep iOS web assets
-        run: bash scripts/ios-prep.sh
-
       - name: Setup Ruby xcodeproj
         run: gem install xcodeproj
 
-      - name: Create Widget Extension target
-        run: ruby ios/App/add_widget_extension.rb
-
-      - name: Add plugin sources to App target
-        run: ruby ios/App/add_app_plugins.rb
+      # 玩具页 + app 专属入口 + 三个扩展 target（灵动岛 / 共享屏幕 / 屏幕时间）。
+      # 原来这里是散着的两步 ruby，只建了 widget 一个；现在跟 Mac 走同一条路，
+      # 免得「CI 编出来的」和「她 Mac 上编出来的」不是同一个东西。
+      # CI 上没有 toy.html（在 .gitignore 里），脚本会明确报出来，不静默。
+      - name: Prep iOS (web assets + extension targets)
+        run: bash scripts/ios-prep.sh
 
       - name: Build
         run: |
