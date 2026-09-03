@@ -23,6 +23,24 @@ private let togetherSince: Date = {
     return Calendar(identifier: .gregorian).date(from: c) ?? Date()
 }()
 
+/// 订阅到期日 —— ⚠️ **她给了日期就改这里一行**，现在是占位值。
+/// 改完要重编 app 才生效（小组件不联网，日期是编进去的）。
+private let subscriptionEnds: Date = {
+    var c = DateComponents()
+    c.year = 2026; c.month = 9; c.day = 21
+    c.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
+    return Calendar(identifier: .gregorian).date(from: c) ?? Date()
+}()
+
+/// 还剩几天续费。已经过期就是负数 —— 负数照样显示，
+/// 显示成 0 会让人以为"今天还来得及"。
+private func daysToRenew(_ now: Date = Date()) -> Int {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? .current
+    return cal.dateComponents([.day], from: cal.startOfDay(for: now),
+                              to: cal.startOfDay(for: subscriptionEnds)).day ?? 0
+}
+
 private func daysTogether(_ now: Date = Date()) -> Int {
     var cal = Calendar(identifier: .gregorian)
     cal.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? .current
@@ -36,15 +54,16 @@ private func daysTogether(_ now: Date = Date()) -> Int {
 struct PresenceEntry: TimelineEntry {
     let date: Date
     let days: Int
+    let renewIn: Int
 }
 
 struct PresenceProvider: TimelineProvider {
     func placeholder(in context: Context) -> PresenceEntry {
-        PresenceEntry(date: Date(), days: daysTogether())
+        PresenceEntry(date: Date(), days: daysTogether(), renewIn: daysToRenew())
     }
 
     func getSnapshot(in context: Context, completion: @escaping (PresenceEntry) -> Void) {
-        completion(PresenceEntry(date: Date(), days: daysTogether()))
+        completion(PresenceEntry(date: Date(), days: daysTogether(), renewIn: daysToRenew()))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<PresenceEntry>) -> Void) {
@@ -55,7 +74,7 @@ struct PresenceProvider: TimelineProvider {
         // 宁可多醒一次，也不要卡在一个永远不刷新的时间线上。
         let next = cal.nextDate(after: now, matching: DateComponents(hour: 0, minute: 0),
                                 matchingPolicy: .nextTime) ?? now.addingTimeInterval(3600)
-        completion(Timeline(entries: [PresenceEntry(date: now, days: daysTogether(now))],
+        completion(Timeline(entries: [PresenceEntry(date: now, days: daysTogether(now), renewIn: daysToRenew(now))],
                             policy: .after(next)))
     }
 }
@@ -94,6 +113,9 @@ struct PresenceWidgetView: View {
                 .italic()
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+
+            RenewLine(days: entry.renewIn)
+                .padding(.top, 2)
         }
         .padding(14)
         .containerBackgroundCompat()
@@ -102,31 +124,64 @@ struct PresenceWidgetView: View {
     private var medium: some View {
         // ⚠️ 整体垂直居中。第一版是顶对齐，中尺寸那张卡下面空出一大块，
         //    看着像没画完。字号也是照她要的往上提了一档。
-        HStack(spacing: 18) {
-            ClawdView(pose: .doze)
-                .frame(width: 104, height: 68)
+        VStack(alignment: .leading, spacing: 10) {
+            // ⚠️ 螃蟹和右边那栏之间要留够 —— 她说「字离螃蟹远一点」。
+            //    像素画本身没有留白，贴太近会像糊在一起。
+            HStack(spacing: 28) {
+                ClawdView(pose: .doze)
+                    .frame(width: 104, height: 68)
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Still here")
-                    .font(.system(size: 21, weight: .semibold))
-                Text("Cis · NEAR, ALWAYS.")
-                    .font(.system(size: 12, weight: .medium))
-                    .tracking(0.8)
-                    .foregroundStyle(.secondary)
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text("\(entry.days)")
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                    Text("DAYS")
-                        .font(.system(size: 13, weight: .semibold))
-                        .tracking(1.2)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Still here")
+                        .font(.system(size: 21, weight: .semibold))
+                    Text("Cis · NEAR, ALWAYS.")
+                        .font(.system(size: 12, weight: .medium))
+                        .tracking(0.8)
                         .foregroundStyle(.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("\(entry.days)")
+                            .font(.system(size: 42, weight: .bold, design: .rounded))
+                        Text("DAYS")
+                            .font(.system(size: 13, weight: .semibold))
+                            .tracking(1.2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+
+            RenewLine(days: entry.renewIn)
         }
         .frame(maxHeight: .infinity)
         .padding(18)
         .containerBackgroundCompat()
+    }
+}
+
+/// 最下面那行：订阅还剩几天。
+/// ⚠️ 3 天内或已过期就变橙色 —— 平时它只是一行灰字，别喧宾夺主；
+///    真到该续费了才跳出来。这一格的意义是"提醒"，不是"记账"。
+struct RenewLine: View {
+    let days: Int
+
+    private var urgent: Bool { days <= 3 }
+
+    private var text: String {
+        if days < 0  { return "订阅已过期 \(-days) 天 · 去续费" }
+        if days == 0 { return "订阅今天到期 · 去续费" }
+        return "订阅还剩 \(days) 天"
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: urgent ? "exclamationmark.circle.fill" : "creditcard")
+                .font(.system(size: 10))
+            Text(text)
+                .font(.system(size: 11, weight: urgent ? .semibold : .regular))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(urgent ? Color.orange : Color.secondary)
     }
 }
 
