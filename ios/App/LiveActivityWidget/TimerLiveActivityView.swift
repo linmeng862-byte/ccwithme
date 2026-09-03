@@ -11,9 +11,11 @@ struct TimerLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
+                    // 小螃蟹陪着计时 —— 这儿原来只是一个 timer 图标。
+                    // 高度给够：装饰会往上长，压太扁螃蟹会缩成一团、看不出是谁。
                     HStack(spacing: 6) {
-                        Image(systemName: "timer")
-                            .font(.system(size: 14, weight: .medium))
+                        ClawdView(pose: .idle)
+                            .frame(width: 30, height: 40)
                         Text(context.state.title)
                             .font(.system(size: 14, weight: .medium))
                             .lineLimit(1)
@@ -44,9 +46,10 @@ struct TimerLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: "timer")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(context.state.isOvertimed ? Color.red : Color.orange)
+                // 收起态只有 ~30pt 宽，装饰画上去糊成一团，只要本体。
+                // 螃蟹在这个尺寸下负责的是「是谁」，超时与否由右边那个数字的颜色说。
+                ClawdView(pose: .idle, bodyOnly: true)
+                    .frame(width: 26, height: 17)
             } compactTrailing: {
                 Text(formatShortTime(context.state.remainingSeconds, overtimed: context.state.isOvertimed))
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
@@ -65,7 +68,11 @@ struct TimerLockScreenView: View {
     let context: ActivityViewContext<TimerLiveActivityAttributes>
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
+            // 锁屏那张卡片也让他在：螃蟹 → 进度环 → 时间
+            ClawdView(pose: .idle)
+                .frame(width: 42, height: 56)
+
             TimerProgressRing(
                 remaining: context.state.remainingSeconds,
                 total: context.state.totalSeconds,
