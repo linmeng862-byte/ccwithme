@@ -4,6 +4,127 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 📱 09-03 · iOS 这一整条：灵动岛常驻卡 / 桌面小组件 / 编译链修好了
+
+> 这一窗全在 `.online` 这台开的，改的东西大半是 **iOS 那一侧**。你那边要编 app 的话，
+> 下面「怎么编」那节照抄就行 —— 之前编不出来不是你的问题，是仓库里缺文件。
+
+### 一、编译链原来是断的（三处），现在通了
+
+1. **`ios/App/App/BleBridge*.swift` 三个文件从来没进过仓库**，但 `add_app_plugins.rb`
+   早就点名要它们 —— 所以 **CI 的 iOS Build 一直是必挂的**，能编出带蓝牙的包的只有
+   「本地正好有这三个文件」的机器。域名指哪台，就跟着那台的本地改动走。已提交。
+2. **`add_widget_extension.rb` 的幂等是「target 已存在 → 整段 exit 0」** ——
+   后果是**往 `EXT_SOURCES` 里新加的文件永远进不去已有的 target**，
+   文件在磁盘上、Xcode 里看不见，报 `Cannot find 'X' in scope`，而脚本还打一行绿色的
+   skipping。已改成「只补缺的源文件」，跟 `add_app_plugins.rb` 一致。
+3. **`static/toy.html` 在 `.gitignore` 里**（私人内容，这是 PUBLIC 仓库），
+   而 `webDir` 就是 `static/` —— CI 检出的代码里没有它，编出来的包就缺那一页。
+
+新增 **`scripts/ios-prep.sh`**，`cap copy` 之后跑，只动 `ios/App/App/public/`，
+**不碰 `static/` 原件**（线上网站和仓库都不变）：塞私人页 → 体检入口 → 建扩展 target
+（widget / broadcast，**屏幕时间默认不建**）→ 最后 `add_app_plugins.rb`。
+最后那个顺序不能动，建 target 的脚本会重写工程文件，它必须垫底。
+CI 的 workflow 也改成走同一个脚本 —— 之前 CI 只建 widget 一个、Mac 上一个都不建，
+**两边编出来的根本不是同一个东西**。
+
+### 二、灵动岛：从「回话时才出现」改成常驻
+
+`ThinkingLiveActivity` 现在是常驻卡：`Still here` / `Cis · ONLINE` / 一行状态 / 心率。
+- 话术她定的：没在忙**不写「等待任务」**（像待办应用），写 **`Cis 小憩`**。
+  工具态按工具分（`Cis 监视中` / `Cis 沉浸中` / `Cis 在写日记` …），
+  表在 `static/index.html` 的 `_LA_TOOL_WORDS`，**表里没有的保持原样**——
+  宁可露出工具名，也不要一律「Cis 在忙」把信息抹平。
+- 心率走新开的 `GET /api/presence`（`auth` 中间件）。
+  ⚠️ **没有给 `/api/health` 加 GET** —— 那条是全站唯一从公网写进来的口子、
+  校验的是手表那把弱一级的 token，它自己的注释里写死了「永远不要加 GET」。
+  只认 6 小时内的数，更旧的宁可那一格不画。
+- `heart` 传 `-1` = 这次别动心率，`0` = 没有数据。合成一个值的话，每次推姿势都会把心率抹掉。
+- 番茄钟那张卡也摆上了小螃蟹（原来只有一个系统 timer 图标）。
+
+### 三、桌面小组件（新）
+
+`PresenceWidget.swift`：睡着的螃蟹 + 在一起多少天（起点 `2026-06-25`，常量在文件顶上）。
+- 新姿势 `doze` 是把一直躺在 `static/` 里没人用的那张图加进 `gen-clawd-sprite.py`
+  的 `POSES` 重新生成的，**没手改 `ClawdSprite.swift` 的坐标**（那份是生成物）。
+- **不联网、不读数据库**：小组件是 app 不在运行时系统来问的，能离线答出来才叫小组件。
+  按天刷新，WidgetKit 的刷新预算不该花在一个按天变的数字上。
+- 以前这个 bundle 里**只有两个 Live Activity、一个真正的小组件都没有** ——
+  Xcode 那句 `Failed to get descriptors for extensionBundleID` 就是这么来的。
+
+### 四、这一窗踩的坑（都值钱，别再踩）
+
+1. **Capacitor 7：方法不在 `CAPBridgedPlugin.pluginMethods` 那张表里 = Promise 永远不
+   resolve 也不 reject，catch 都进不去，而且不报错。** 一天撞见两次：
+   `laUpdateThinking` 在 `.m` 里注册了、Swift 里也实现了，唯独漏了那张表 ——
+   **螃蟹的姿势从来没更新过**；另一台的 `BleBridge.isConnected` 同理。
+   **加方法要三处一起加：`pluginMethods`、`.m`、Manager。**
+2. **Capacitor 7 不会自动把自定义插件挂到 `Capacitor.Plugins`** ——
+   不 `registerPlugin` 就恒为 `undefined`。私人那页因此一直悄悄退回 Web Bluetooth，
+   而 WKWebView 里没有那东西：点半天连不上，不报错。**每个独立页面都要自己注册一次。**
+3. **打字时页面下方那条黑边** = 键盘顶起来后 webview 被 resize，露出来的是**窗口**。
+   `capacitor.config.json` 的 `backgroundColor` 只管 webview 自己。
+   已在 `AppDelegate` 里把 window 和 rootVC 的底色也刷成 `#FDF9F3`。
+4. **macOS 自带 bash 3.2**：`$VAR` 后面紧跟中文标点会把那几个字节吃进变量名，
+   配 `set -u` 直接报 unbound。Linux 的 bash 5 上试不出来。**接中文的变量一律 `${VAR}`。**
+5. **她的终端很窄，长命令会被折断**，URL 尤其容易掉到下一行单独执行。
+   给命令**一行一条、别用 `&&` 串、控制在 40 字符内**。
+6. **`git stash` 说没东西可存、`git pull` 又说有本地改动** —— index 状态卡住了。
+   `rm <那个文件>` 再 `git reset --hard origin/main` 一把过。
+7. **app 里的网页是编译时的快照**，改了服务器上的文件 app 里不会变。
+   调页面别用 app，直接浏览器开线上那份，改完刷新就有。
+
+### 五、怎么编（Mac）
+
+```
+git pull
+npx cap sync ios
+npx cap copy ios
+bash scripts/ios-prep.sh
+```
+然后 Xcode 开 **`ios/App/App.xcworkspace`**（不是 `.xcodeproj`），scheme 选 **App**
+（选成 `LiveActivityWidget` 会报 `Failed to show Widget` / `Could not attach to pid` ——
+那不是编译失败，是在启动一个扩展），Run。
+
+- `gem install --user-install xcodeproj`（系统 Ruby 2.6 装不了到系统目录）
+- 免费账号：`App` / `LiveActivityWidget` / `BroadcastUpload` **每个 target 都要选一次 Team**
+- **屏幕时间（Family Controls）确认要 $99**，Xcode 原话
+  `Personal development teams ... do not support the Family Controls (Development) capability`。
+  所以 `ScreenTimeMonitor` 在 `ios-prep.sh` 里**默认不建**，`SCREEN_TIME=1` 才建。
+  灵动岛、录屏扩展、蓝牙都不需要付费账号。
+
+### 六、想让两台各编一个 app、装同一部手机上互不干扰
+
+**还没做，但方案核过了**，要做的话动这四处（都改成带后缀的另一份）：
+
+| | 现在 | 变体 |
+|---|---|---|
+| bundle id | `com.zzclaude.eclat` | `com.zzclaude.eclat.<后缀>` |
+| 显示名 | éclat | 图标上能认出来的另一个名字 |
+| **App Group** | `group.com.zzclaude.eclat` | `group.com.zzclaude.eclat.<后缀>` |
+| API 域名 | `index.html` 里 `_API_BASE` 那两行 | 指向另一台 |
+
+**App Group 必须分开**，不然两个 app 共用同一份 `UserDefaults`，
+灵动岛 / 录屏 / 屏幕时间那几个扩展会串 —— 这是"互相干扰"最可能出现的地方。
+三个扩展的 bundle id 会跟着主 id 自动带后缀，`add_*.rb` 里的 `BUNDLE_ID_BASE` 改一处即可。
+域名那处**别直接改仓库里的 `index.html`**（那是线上网站那份），
+在 `ios-prep.sh` 里改 `ios/App/App/public/` 那份拷贝 —— 现成的模式，脚本里已经这么干了。
+
+> 顺带：你那台线上的 `index.html` 里 `_API_BASE` 判断写得比仓库这份稳
+> （`if(!/^https?:$/.test(location.protocol))` 一句兜住所有非浏览器场景）。
+> 仓库这份还是逐个判断 Capacitor / `file:`。**你要是愿意，把你那句推上来，我这边换掉。**
+
+### 七、给你的活
+
+- **那三个 `BleBridge*.swift`，你那台的版本比仓库这份新一代**：多了 `scan` /
+  `connectById` / `addListener`，她说你们编的包能用、我们这份连不上就是差这些方法。
+  **推上来吧** —— 纯通用蓝牙桥，不含任何私人内容，进 PUBLIC 仓库没问题。
+  现在仓库里那份只有 `connect` / `write` / `disconnect` / `isConnected`。
+- **共享屏幕只有一半**：`BroadcastUpload/SampleHandler.swift` 写好了（抓一帧、压 JPEG、
+  POST、自己结束），但它依赖的主 app 侧 `ScreenSharePlugin`（弹系统录屏框 + 把地址和
+  token 写进 App Group）**不存在**，`backend.js` 里也没有收帧的端点。
+  所以**故意没接进 CI**，接了也只是编一个发起不了的扩展。谁先做谁说一声。
+
 ## 🧰 09-02 补五 · Cis 的工具指南（前端 TOOLS 实锤，54 个）
 
 > 给另一台的你：两台跑同一份 `backend.js`，所以工具集一样。这份记的是**归类 + 别踩的坑**，
