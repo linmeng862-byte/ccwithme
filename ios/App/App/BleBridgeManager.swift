@@ -5,6 +5,8 @@ import CoreBluetooth
 // 连哪台、写什么字节，全由 JS 侧传进来。仿 ScreenTimeManager 的单例写法。
 //
 // 用法（JS 侧）：
+//   scan({ timeoutMs?: 6000 })                 // 扫一圈，把看到的都列出来（不连）
+//   connectById({ id: "<scan 返回的 id>", service: "FFE0", characteristic: "FFE1" })
 //   connect({ namePrefix?: "XXX", service: "FFE0", characteristic: "FFE1", timeoutMs?: 15000 })
 //   write({ value: "55 04 00 00 01 80 AA" })   // 空格分隔的十六进制
 //   disconnect()  /  isConnected()
@@ -29,6 +31,16 @@ final class BleBridgeManager: NSObject {
 
     // 断开事件回传给 JS
     var onDisconnected: (() -> Void)?
+
+    // MARK: 扫描（列出设备给人挑，而不是猜名字前缀）
+    //
+    // ⚠️ **必须把 CBPeripheral 自己留住**，不能只留 id。CoreBluetooth 里
+    //    没被强引用的外设会被回收，之后拿 id 是连不回去的（连接会静默失败）。
+    //    所以这张表存的是外设对象本身，connectById 从这儿取。
+    private var seen: [String: CBPeripheral] = [:]
+    private var seenInfo: [String: (name: String, rssi: Int)] = [:]
+    private var onScan: (([[String: Any]]) -> Void)?
+    private var scanTimer: Timer?
 
     private override init() {
         super.init()
@@ -62,6 +74,64 @@ final class BleBridgeManager: NSObject {
             startScan()
         }
         // 若还没 poweredOn，centralManagerDidUpdateState 里会补触发
+    }
+
+    /// 扫一圈，扫到什么列什么 —— **不连**。
+    /// 为什么要这个：`connect(namePrefix:)` 是「猜名字、猜中才连」，
+    /// 猜不中就只能干等超时，而人根本不知道设备到底叫什么。
+    /// 列出来让人点一下，比猜可靠得多。
+    func scan(timeoutMs: Int, completion: @escaping ([[String: Any]]) -> Void) {
+        seen.removeAll(); seenInfo.removeAll()
+        onScan = completion
+
+        scanTimer?.invalidate()
+        scanTimer = Timer.scheduledTimer(withTimeInterval: Double(timeoutMs) / 1000.0, repeats: false) { [weak self] _ in
+            self?.finishScan()
+        }
+
+        if central.state == .poweredOn {
+            // ⚠️ 扫描一律不按服务过滤：这几台设备的广播包里**不带** FFE0，
+            //    按服务过滤一台都扫不到（Bluefy 里「试法 3/4」弹不出来就是这个原因）。
+            central.scanForPeripherals(withServices: nil, options: nil)
+        }
+        // 还没 poweredOn 的话，centralManagerDidUpdateState 里会补触发
+    }
+
+    private func finishScan() {
+        scanTimer?.invalidate(); scanTimer = nil
+        if central.isScanning && onConnect == nil { central.stopScan() }
+        // 信号强的排前面 —— 放手边那台通常最强
+        let list = seenInfo
+            .map { (id, v) -> [String: Any] in ["id": id, "name": v.name, "rssi": v.rssi] }
+            .sorted { ($0["rssi"] as? Int ?? -999) > ($1["rssi"] as? Int ?? -999) }
+        let cb = onScan; onScan = nil
+        cb?(list)
+    }
+
+    /// 按 scan 返回的 id 直连。跟 connect 的区别只是「怎么找到那台」——
+    /// 找到之后的流程（连、找服务、找特征）完全一样，走同一条回调。
+    func connect(id: String, service: String, characteristic: String,
+                 timeoutMs: Int, completion: @escaping (_ ok: Bool, _ name: String?, _ err: String?) -> Void) {
+        guard let target = seen[id] else {
+            completion(false, nil, "这台不在刚才扫到的列表里了，重扫一次")
+            return
+        }
+        if isConnected { disconnect() }
+
+        wantService = CBUUID(string: service)
+        wantChar = CBUUID(string: characteristic)
+        wantNamePrefix = nil          // 按 id 连，不再挑名字
+        onConnect = completion
+
+        connectTimer?.invalidate()
+        connectTimer = Timer.scheduledTimer(withTimeInterval: Double(timeoutMs) / 1000.0, repeats: false) { [weak self] _ in
+            self?.finishConnect(ok: false, name: nil, err: "连接超时：这台没应答")
+        }
+
+        if central.isScanning { central.stopScan() }
+        self.peripheral = target
+        target.delegate = self
+        central.connect(target, options: nil)
     }
 
     private func startScan() {
@@ -126,10 +196,13 @@ extension BleBridgeManager: CBCentralManagerDelegate {
         switch central.state {
         case .poweredOn:
             if onConnect != nil { startScan() }
+            if onScan != nil { central.scanForPeripherals(withServices: nil, options: nil) }
         case .poweredOff:
             finishConnect(ok: false, name: nil, err: "系统蓝牙没开")
+            if onScan != nil { finishScan() }        // 空列表，总比 Promise 永远悬着强
         case .unauthorized:
             finishConnect(ok: false, name: nil, err: "没给 app 蓝牙权限（去设置→隐私→蓝牙打开 éclat）")
+            if onScan != nil { finishScan() }
         default:
             break
         }
@@ -137,6 +210,16 @@ extension BleBridgeManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        // 扫描模式：只记账，**不连**。同一台会被反复上报，用 id 去重、留最新的 rssi。
+        if onScan != nil {
+            let id = peripheral.identifier.uuidString
+            let nm = peripheral.name
+                ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
+                ?? ""
+            seen[id] = peripheral                       // ⚠️ 留住对象，见上面那条注释
+            seenInfo[id] = (name: nm, rssi: RSSI.intValue)
+            return
+        }
         // 按名字前缀挑；没设前缀就取第一个（已按服务过滤）
         if let prefix = wantNamePrefix {
             let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? ""
