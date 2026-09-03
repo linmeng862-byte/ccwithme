@@ -81,16 +81,16 @@ struct PresenceWidgetView: View {
 
             Spacer(minLength: 0)
 
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("\(entry.days)")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .font(.system(size: 44, weight: .bold, design: .rounded))
                 Text("DAYS")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .tracking(1.2)
                     .foregroundStyle(.secondary)
             }
             Text("Time, gently kept.")
-                .font(.system(size: 11, design: .serif))
+                .font(.system(size: 12, design: .serif))
                 .italic()
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -100,29 +100,32 @@ struct PresenceWidgetView: View {
     }
 
     private var medium: some View {
-        HStack(spacing: 16) {
+        // ⚠️ 整体垂直居中。第一版是顶对齐，中尺寸那张卡下面空出一大块，
+        //    看着像没画完。字号也是照她要的往上提了一档。
+        HStack(spacing: 18) {
             ClawdView(pose: .doze)
-                .frame(width: 92, height: 60)
+                .frame(width: 104, height: 68)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text("Still here")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 21, weight: .semibold))
                 Text("Cis · NEAR, ALWAYS.")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("\(entry.days)")
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .font(.system(size: 42, weight: .bold, design: .rounded))
                     Text("DAYS")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .tracking(1.2)
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(16)
+        .frame(maxHeight: .infinity)
+        .padding(18)
         .containerBackgroundCompat()
     }
 }
