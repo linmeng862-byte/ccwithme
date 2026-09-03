@@ -21,6 +21,15 @@
 #   TOY_HTML=~/toy.html bash scripts/ios-prep.sh   # 从别处拿
 #   SKIP_EXT="ScreenTimeMonitor" bash scripts/ios-prep.sh   # 跳过某个扩展（空格分隔）
 #
+#   两台机器各编一个 app、装同一部手机上互不干扰：
+#   APP_VARIANT=fun bash scripts/ios-prep.sh
+#   后端域名**不写在这个仓库里**（公开仓库，别把自己的机器暴露出去）。
+#   放在 gitignore 的 .app-variant 里，一行一个：
+#       fun
+#       api=你自己的域名
+#   或者临时用环境变量：APP_API_HOST=你的域名 APP_VARIANT=fun bash scripts/ios-prep.sh
+#   不设 APP_VARIANT 就跟以前一模一样，另一台的行为一个字不变。
+#
 # 没有 toy.html 就跳过第 1 步并**明确报出来**，不静默 —— 静默的话
 # 编出来的包缺一页，装到手机上才发现，白编一次。
 #
@@ -66,6 +75,118 @@ else
   echo "⚠️  app 那份 index.html 里没有 Bluetooth 入口 —— static/index.html 是旧的？"
 fi
 
+# 2.5 变体：两台各编一个 app，装同一部手机上互不干扰
+#
+# 不设 APP_VARIANT 时整段跳过 —— 仓库默认值属于另一台，别动它。
+#
+# ⚠️ **App Group 必须跟着分开**。这是「互相干扰」最可能出现的地方：
+#    两个 app 共用一份 UserDefaults 的话，灵动岛 / 录屏 / 屏幕时间那几个扩展
+#    读到的是对方写的数 —— 装上去能跑，显示的却是另一台的东西，最难查那种。
+#    所以下面是把 com.zzclaude.eclat 整个前缀替换掉，group.* 会自动跟着变。
+#
+# ⚠️ 域名只改 **public/ 那份拷贝**，不碰 static/ 原件（跟这个脚本其它步骤一个规矩）。
+#    仓库里的 index.html 是线上网站那份，改了会推给另一台。
+# 变体名的来源，按优先级：
+#   1. 命令行 APP_VARIANT=xxx
+#   2. 仓库根的 .app-variant 文件（**gitignore，每台一份**，跟 CLAUDE.local.md 同一个套路）
+#
+# 为什么要第 2 条：忘了加 APP_VARIANT 就编，编出来的 app 会打到**另一台**的后端 ——
+# 界面全在、聊天记录一条没有，是最难往这儿想的那种错。
+# 在自己机器上 `echo fun > .app-variant` 一次，以后就忘不了了。
+#
+# ⚠️ 不能做成「不设就报错」：另一台和 CI 都是不设的，那样等于把他们的构建打断。
+APP_VARIANT="${APP_VARIANT:-}"
+if [ -f "$ROOT/.app-variant" ]; then
+  # 第一行是变体名；`api=xxx` 那行是后端域名（可以没有）。
+  # ⚠️ 域名故意不写进仓库 —— 这是 PUBLIC 仓库，写进去等于公布自己那台机器在哪。
+  while IFS= read -r _line || [ -n "${_line}" ]; do
+    _line="$(printf '%s' "${_line}" | tr -d ' \t\r')"
+    case "${_line}" in
+      ''|'#'*) : ;;
+      api=*)   [ -z "${APP_API_HOST:-}" ] && APP_API_HOST="${_line#api=}" ;;
+      *)       [ -z "${APP_VARIANT}" ] && APP_VARIANT="${_line}" ;;
+    esac
+  done < "$ROOT/.app-variant"
+  [ -n "${APP_VARIANT}" ] && echo "🔖 变体名取自 .app-variant：${APP_VARIANT}"
+fi
+if [ -n "${APP_VARIANT}" ]; then
+  BID_OLD="com.zzclaude.eclat"
+  BID_NEW="${BID_OLD}.${APP_VARIANT}"
+  APP_NAME="${APP_NAME:-éclat ${APP_VARIANT}}"
+  # ⚠️ **没有默认域名**。不给就不改地址 —— 与其猜一个塞进去，
+  #    不如让它保持仓库原样、在下面那句体检里显出来，你一眼能看见不对。
+  APP_API_HOST="${APP_API_HOST:-}"
+  export APP_BUNDLE_ID="$BID_NEW"      # 三个 add_*.rb 从这里读
+
+  echo "🔀 变体 ${APP_VARIANT}"
+  echo "   bundle id : ${BID_NEW}"
+  echo "   App Group : group.${BID_NEW}"
+  echo "   显示名    : ${APP_NAME}"
+  if [ -n "${APP_API_HOST}" ]; then
+    echo "   后端      : ${APP_API_HOST}"
+  else
+    echo "   后端      : (没给 —— 地址不动，见结尾体检那行)"
+  fi
+
+  # 幂等：已经带后缀的文件不再替换，重复跑不会变成 …eclat.fun.fun
+  sub_bid() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    grep -q "$BID_NEW" "$f" && return 0
+    grep -q "$BID_OLD" "$f" || return 0
+    perl -pi -e "s/\Qcom.zzclaude.eclat\E/${BID_NEW}/g" "$f"
+    echo "   ✎ ${f#${ROOT}/}"
+  }
+  sub_bid "$ROOT/ios/App/App.xcodeproj/project.pbxproj"
+  sub_bid "$ROOT/ios/App/App/capacitor.config.json"
+  sub_bid "$ROOT/ios/App/App/App.entitlements"
+  sub_bid "$ROOT/ios/App/App/AppGroupDataStore.swift"
+  sub_bid "$ROOT/ios/App/App/ScreenTimeManager.swift"
+  sub_bid "$ROOT/ios/App/BroadcastUpload/BroadcastUpload.entitlements"
+  sub_bid "$ROOT/ios/App/BroadcastUpload/SampleHandler.swift"
+  sub_bid "$ROOT/ios/App/ScreenTimeMonitor/ScreenTimeMonitor.entitlements"
+  sub_bid "$ROOT/ios/App/ScreenTimeMonitor/ScreenTimeMonitorExtension.swift"
+
+  # 显示名（图标下面那行字，要在手机上一眼分得出是哪个）
+  perl -0pi -e "s{(<key>CFBundleDisplayName</key>\s*\n\s*<string>)[^<]*}{\${1}${APP_NAME}}" \
+    "$ROOT/ios/App/App/Info.plist"
+
+  # 后端域名：只改 public/ 里的拷贝，而且只在给了域名时才动。
+  if [ -n "${APP_API_HOST}" ]; then
+    for f in "$PUBLIC/index.html" "$PUBLIC/toy.html"; do
+      [ -f "$f" ] || continue
+      perl -pi -e "s/\Qzhou-and-claude.online\E/${APP_API_HOST}/g" "$f"
+    done
+  fi
+  # 小组件 / 灵动岛的长相：变体可以整份换掉，不改仓库里那份。
+  #
+  # 规矩：仓库里的 LiveActivityWidget/*.swift 是**另一台的**，别动。
+  # 想让我们这个 app 的小组件长得不一样，就在
+  #   ios/App/LiveActivityWidget/variants/<文件名>.${APP_VARIANT}.swift
+  # 放一份，这里会拷成 <文件名>.swift 顶掉。
+  # 这样两边各改各的，git pull 不会冲突（改的根本不是同一个文件）。
+  #
+  # ⚠️ 拷过去的文件名必须跟原件一样 —— add_widget_extension.rb 的 EXT_SOURCES
+  #    是按文件名点名的，改了名字就进不了 target（编译时报 Cannot find in scope）。
+  VAR_DIR="$ROOT/ios/App/LiveActivityWidget/variants"
+  if [ -d "$VAR_DIR" ]; then
+    found_any=0
+    for f in "$VAR_DIR"/*.${APP_VARIANT}.swift; do
+      [ -e "$f" ] || continue
+      base="$(basename "$f")"
+      dest="$ROOT/ios/App/LiveActivityWidget/${base%.${APP_VARIANT}.swift}.swift"
+      cp "$f" "$dest"
+      echo "   ✎ 小组件换成变体版：$(basename "${dest}")"
+      found_any=1
+    done
+    [ "$found_any" = "1" ] || echo "   (skip) 小组件变体 —— variants/ 里没有 *.${APP_VARIANT}.swift"
+  fi
+
+  echo "   ✅ 变体改完了"
+else
+  echo "   (skip) 变体 —— 没设 APP_VARIANT，用仓库默认的 com.zzclaude.eclat"
+fi
+
 # 3. 扩展 target
 # ⚠️ 顺序不能换：建 target 的脚本会重写工程文件，add_app_plugins.rb
 #    必须**最后**跑，不然它加进 App target 的那些插件源文件会被冲掉。
@@ -101,5 +222,19 @@ else
 fi
 
 ruby "$ROOT/ios/App/add_app_plugins.rb"                # ← 必须最后
+
+# 最后报一句这个包会打到**哪台后端** —— 前面所有替换的净结果就是这一行。
+# 打错服务器是「界面全在、数据全不对」，装到手机上才发现，白编一次。
+echo ""
+echo "———— 这个包编出来会连哪儿 ————"
+HOSTS="$(grep -oE 'zhou-and-claude\.[a-z]+' "$PUBLIC/index.html" 2>/dev/null | sort -u | tr '\n' ' ')"
+if [ -z "${HOSTS}" ]; then
+  echo "   后端：同源（没有绝对地址 —— capacitor.config.json 里设了 server.url 才对）"
+else
+  echo "   后端：${HOSTS}"
+fi
+echo "   bundle：$(grep -oE 'com\.zzclaude\.eclat[.a-z]*' "$ROOT/ios/App/App/capacitor.config.json" 2>/dev/null | head -1)"
+echo "   ⚠️ 上面这两行不是你要的，就是变体没生效 —— 别编，先查。"
+echo ""
 
 echo "✅ 扩展 target 建好了，可以 xcodebuild / 在 Xcode 里编了"

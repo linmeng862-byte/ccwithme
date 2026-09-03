@@ -35,3 +35,6 @@ static/c.txt
 
 # 玩具直连页：私人内容，PUBLIC 仓库不进
 static/toy.html
+
+# 每台机器自己的 app 变体名（fun / online…），见 scripts/ios-prep.sh
+.app-variant

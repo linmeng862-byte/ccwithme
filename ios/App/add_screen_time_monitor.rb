@@ -10,7 +10,10 @@ require 'xcodeproj'
 PROJECT_PATH = File.join(__dir__, 'App.xcodeproj')
 EXT_NAME = 'ScreenTimeMonitor'
 EXT_DIR = 'ScreenTimeMonitor'
-BUNDLE_ID_BASE = 'com.zzclaude.eclat'
+# ⚠️ 两台机器各编一个 app 装同一部手机时，这个前缀必须分开 ——
+# 否则装第二个会顶掉第一个。ios-prep.sh 设了 APP_BUNDLE_ID 就跟着走，
+# 没设就还是原来这个（另一台的行为一个字不变）。
+BUNDLE_ID_BASE = ENV['APP_BUNDLE_ID'] || 'com.zzclaude.eclat'
 
 EXT_SOURCES = %w[
   ScreenTimeMonitorExtension.swift
