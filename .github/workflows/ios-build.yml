@@ -24,6 +24,11 @@ jobs:
       - name: Copy web assets
         run: npx cap copy ios
 
+      # 玩具页 + app 专属入口。CI 上没有 toy.html（在 .gitignore 里），
+      # 这一步会明确报「这次的包里没有玩具页」，不静默。
+      - name: Prep iOS web assets
+        run: bash scripts/ios-prep.sh
+
       - name: Setup Ruby xcodeproj
         run: gem install xcodeproj
 
