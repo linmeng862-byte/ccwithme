@@ -55,26 +55,14 @@ if [ ! -f "$INDEX" ]; then
   exit 1
 fi
 
-TOY_LABEL="${TOY_LABEL:-设备}"
-if grep -q "__TOY_ENTRY__" "$INDEX"; then
-  echo "   (skip) 入口已经在了"
+# 进入口现在**直接写在 static/index.html 里**了（⋯ 菜单里那项 Bluetooth，
+# 跟另一台一致），不再靠注入。这里只剩一句体检：拷过去那份里有没有它。
+# 注入那套（第一版「右上角连点 5 下」、第二版动态塞菜单项）都废弃了 ——
+# 看不见的入口等于没有入口，而能写进仓库的东西就不该靠构建脚本现加。
+if grep -q 'id="moreToy"' "$INDEX"; then
+  echo "✅ ⋯ 菜单里的 Bluetooth 入口在"
 else
-  # 进入口做成 ⋯ 更多菜单里的一项（#moreMenu 里的 .menu-item），跟 New chat 那些并排。
-  # 第一版做成「右上角连点 5 下」是错的 —— 看不见的入口等于没有入口。
-  # 菜单项的名字从 TOY_LABEL 来，默认写「设备」：这个脚本在 PUBLIC 仓库里，
-  # 不往里写私人字眼。想改名字：TOY_LABEL=xxx bash scripts/ios-prep.sh
-  cat >> "$INDEX" <<EOF
-<script>/* __TOY_ENTRY__ 只存在于 app 这份拷贝里，static/ 原件没有这段 */
-(function(){function add(){var m=document.getElementById('moreMenu');if(!m)return false;
-if(document.getElementById('moreToy'))return true;
-var b=document.createElement('button');b.className='menu-item';b.id='moreToy';
-b.style.width='100%';b.textContent='${TOY_LABEL}';
-b.onclick=function(){location.href='toy.html'};
-m.appendChild(b);return true;}
-if(!add()){var n=0,t=setInterval(function(){if(add()||++n>40)clearInterval(t)},250);}})();
-</script>
-EOF
-  echo "✅ 入口已注入：⋯ 更多菜单里多一项「${TOY_LABEL}」"
+  echo "⚠️  app 那份 index.html 里没有 Bluetooth 入口 —— static/index.html 是旧的？"
 fi
 
 # 3. 扩展 target
