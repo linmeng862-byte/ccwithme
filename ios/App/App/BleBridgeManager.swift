@@ -95,6 +95,8 @@ final class BleBridgeManager: NSObject {
         // 这个特征声明的是 write-without-response；优先用它，回落有响应写。
         let type: CBCharacteristicWriteType =
             c.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+        // ⚠️ 写之前先打印完整 HEX —— 排查「模式换了没反应」时要能确认发出去的字节。
+        print("[BLE TX] " + data.map { String(format: "%02X", $0) }.joined(separator: " "))
         p.writeValue(data, for: c, type: type)
         // withoutResponse 没有回执，直接当成功；withResponse 也简化为发出即成功。
         completion(true, nil)

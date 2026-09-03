@@ -7444,12 +7444,13 @@ $('stickerFileInput').onchange = async function() {
       return { ok: true };
     }
     if (c.action === 'mode') {
-      // 55 03 00 00 <模式 1-8> <强度 1-5> 00 —— ⚠️ 这里的强度只认 1-5，
-      // 跟常震那条的 0-255 不是一回事，别混用 lvToByte。
-      var m = clampInt(c.mode || c.step || 1, 1, 8);
-      var mlv = clampInt(c.intensity ? Math.round(c.intensity / 2) : 3, 1, 5);
-      await BLE.write({ value: hex([0x55, 0x03, 0x00, 0x00, m, mlv, 0x00]) });
-      keepaliveOn([0x55, 0x03, 0x00, 0x00, m, mlv, 0x00]);
+      // 55 03 00 00 <模式 1-10> <强度 1-10> 00
+      // 云端抓包（85-3-0-0-MODE-STRENGTH）两格都是 1..10，跟常震那条的 0-255
+      // 不是一回事，别混用 lvToByte。
+      var m = clampInt(c.mode || c.step || 1, 1, 10);
+      var mlv = clampInt(c.intensity || 1, 1, 10);
+      // ⚠️ 六字节，无尾 00 —— 七字节实测无反应（2026-09-03）。也不保活。
+      await BLE.write({ value: hex([0x55, 0x03, 0x00, 0x00, m, mlv]) });
       return { ok: true };
     }
     if (c.action === 'suck') {
