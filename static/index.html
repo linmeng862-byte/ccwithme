@@ -4651,6 +4651,11 @@ async function recoverAfterBreak(msg,convId,failText,sinceISO){
   if(_md&&!(_md.textContent||'').trim()){
     _md.innerHTML='<span class="recovering">连接断了一下，正在找回他刚说的话…</span>';
   }
+  // 小花换成 shimmer（15 帧：散开 → 绕一圈 → 合回来）。
+  // 这一格以前跟「他在写」是同一个动画，可这两件事完全不一样：
+  // 一个是他在说话，一个是话已经说完了、我在外面找。散开那套正合适。
+  var _tl=msg.row&&msg.row.querySelector('.claude-trail-logo');
+  if(_tl)setClaudeLogoMode(_tl,'shimmer');
   const since=sinceISO?Date.parse(sinceISO)-2000:0;
   for(let i=0;i<16;i++){
     await new Promise(r=>setTimeout(r,i===0?1200:2500));
