@@ -79,10 +79,33 @@ final class LiveActivityManager {
 
     // MARK: - Thinking
 
+    /// ⚠️ 2026-09-04：**app 重启后要把岛上那张卡认回来。**
+    ///
+    /// Live Activity 是活在系统里的，app 被划掉它还在（这正是常驻卡想要的效果）。
+    /// 但 `thinkingActivity` 是个 static 变量，进程一没就归 nil。下次启动时：
+    ///   - `updateThinking` 撞上 `guard let activity` → **直接 return，一帧都推不出去**
+    ///   - `startThinking` 看见 nil → 又 request 一张新的
+    /// 结果是岛上显示着上一轮那张**冻住的**旧卡，而所有更新都推给了那张看不见的新卡 ——
+    /// 表现就是「常驻卡一直在，他回复的时候没有任何变化」（她 09-03/09-04 连报两次）。
+    ///
+    /// 修法：用之前先去 `Activity.activities` 里认领。多出来的旧卡顺手收掉，
+    /// 免得锁屏上堆一摞。
+    @available(iOS 16.2, *)
+    private static func adoptThinkingActivity() {
+        if thinkingActivity != nil { return }
+        let live = Activity<ThinkingLiveActivityAttributes>.activities
+        guard let keep = live.first else { return }
+        thinkingActivity = keep
+        for stale in live.dropFirst() {
+            Task { await stale.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
     /// heart == -1 表示「这次别动心率」，沿用卡上已有的值。
     /// 0 才是「没有数据」（那一格不画）。合成一个值的话，每次推姿势都会把心率抹掉。
     @available(iOS 16.2, *)
     static func startThinking(pose: ClawdPose = .idle, detail: String = "", heart: Int = -1) {
+        adoptThinkingActivity()
         // 已经有一个在跑就只更新，别重复 request —— 同类型活动叠起来
         // 系统只显示最新那个，旧的会滞留在锁屏上不消失。
         guard thinkingActivity == nil else {
@@ -104,6 +127,7 @@ final class LiveActivityManager {
     /// 所以调用方要自己去抖（见 index.html 的 _laPush）。
     @available(iOS 16.2, *)
     static func updateThinking(pose: ClawdPose, detail: String, heart: Int = -1) {
+        adoptThinkingActivity()
         guard let activity = thinkingActivity else { return }
         let kept = heart < 0 ? activity.contentState.heart : heart
         Task { await activity.update(using: .init(pose: pose, detail: detail, heart: kept)) }
@@ -113,6 +137,7 @@ final class LiveActivityManager {
     /// 岛上最后一帧停在"在回复…"，看着像卡住了。
     @available(iOS 16.2, *)
     static func stopThinking() {
+        adoptThinkingActivity()
         guard let activity = thinkingActivity else { return }
         // 先摘引用：这中间她要是又发一条，startThinking 该新建一个，
         // 不能让它撞上这个正在退场的活动。
