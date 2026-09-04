@@ -30,10 +30,13 @@ cp "$IOS/App.xcodeproj/project.pbxproj" \
 echo "   备份好了"
 
 echo "== 2/5 装 @capacitor/browser"
+# ⚠️ 必须带 --ignore-scripts。package.json 里有 better-sqlite3 和 sharp，
+#    那是**服务器**的依赖，要现场编译原生代码 —— Mac 上根本用不到，
+#    不跳过的话这一步会卡到天荒地老（2026-09-04 她真卡在这儿了）。
 if [ -d node_modules/@capacitor/browser ]; then
   echo "   本来就有"
 else
-  npm i @capacitor/browser
+  npm i @capacitor/browser --ignore-scripts --no-audit --no-fund
 fi
 
 echo "== 3/5 确认 capacitor.config.json 指向 .fun（远程加载）"
