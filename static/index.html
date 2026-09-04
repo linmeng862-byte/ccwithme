@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1788488400">
+<link rel="stylesheet" href="/css/home.css?v=1788490800">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -731,6 +731,14 @@ function assetUrl(path){
     return _API_BASE+path;
   }
   return path;
+}
+// WebSocket 也得走 _API_BASE —— fetch 拦截器管不到它，<audio>/XHR 也管不到（见 assetUrl）。
+// ⚠️ 原生 app 里读本地打包副本时 location.protocol 是 `capacitor:`、host 是 `localhost`，
+//    照着 location 拼出来就是 ws://localhost/call —— 连的是 app 自己，
+//    表现是「打电话打不出去」，而且不报错，就是连不上（2026-09-04 她报的）。
+function wsUrl(path){
+  if(_API_BASE)return _API_BASE.replace(/^http/,'ws')+path;   // https→wss, http→ws
+  return (location.protocol==='https:'?'wss':'ws')+'://'+location.host+path;
 }
 function _fixImgSrcs(container){
   if(!_API_BASE||!container)return;
@@ -2516,8 +2524,7 @@ async function _startCall(incoming){
   if(_callWs){try{_callWs.close()}catch(e){}_callWs=null;}
   var btn=$('callButton');btn.style.color='#E54D2E';btn.title='通话中…点击结束';_startCallTimer();
   try{
-    var wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/call';
-    _callWs=new WebSocket(wsUrl);
+    _callWs=new WebSocket(wsUrl('/call'));
     if(!incoming)_showOutgoingCall();
     _callWs.onopen=function(){
       // 告诉他电话响了 —— 不发这条他那头是静默的，得等她先开口
@@ -2667,8 +2674,7 @@ async function _webCallStart(){
     _webStream=await navigator.mediaDevices.getUserMedia({audio:true});
     _webStream.getTracks().forEach(function(t){_webPc.addTrack(t,_webStream)});
     // 信令连接
-    var wsUrl=(location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/call/signal";
-    _webWs=new WebSocket(wsUrl);
+    _webWs=new WebSocket(wsUrl("/call/signal"));
     _webWs.onopen=async function(){
       _webWs.send(JSON.stringify({type:"register",callId:"claude",role:"caller"}));
     };
@@ -4407,7 +4413,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       clearClaudeLogo(trailLogo);trailLogo.remove();
     }
   }
-  let raw='',thought='',gotThought=false,started=false,currentTraceRow=null,currentToolRow=null,prevThought='';const _toolToRow=new Map();const _sources=new Set();const _toolNameById={};
+  let raw='',thought='',gotThought=false,started=false,currentTraceRow=null,currentToolRow=null,prevThought='',_toolLogoUntil=0;const _toolToRow=new Map();const _sources=new Set();const _toolNameById={};
   summary.onclick=()=>{const c=$('thoughtContent');c.style.whiteSpace='';c.textContent=thought;$('thoughtSheet').dataset.live='1';sheet('thought',true)};
   return{row,
     thinking(t){
@@ -4491,10 +4497,19 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       // 调工具的时候换成 'tool' 那套雪碧图（18 帧，花瓣散成小圆绕成环转）——
       // 跟官端一个意思。这套图一直躺在 CLAUDE_LOGO_SPRITES 里没人用，
       // 这儿以前跟正常写字一样都是 'writing'，所以她看不出他在调工具（2026-09-04 她问的）。
-      setClaudeLogoMode(trailLogo,'tool')},
+      // ⚠️ 记一个最早能切回去的时间：这套动画一个周期 1800ms，工具两百毫秒就返回的话
+      //    只会闪一下，肉眼根本看不见 —— 她第一次试就是这个现象。
+      setClaudeLogoMode(trailLogo,'tool');_toolLogoUntil=Date.now()+1800},
     toolResult(d){var r=_toolToRow.get(d.tool_use_id);if(!r)return;var ct=typeof d.content==='string'?d.content:JSON.stringify(d.content||'');_updateToolPhase(r,d.tool_use_id,ct,!!d.is_error);_renderTraceRowActive(r);var _tn=_toolNameById[d.tool_use_id];if(_tn==='WebSearch'||_tn==='WebFetch')_collectUrls(ct,_sources);
-      // 这个工具回来了 → 回到写字那套。下一个 toolUse 会再切成环。
-      setClaudeLogoMode(trailLogo,'writing')},
+      // 这个工具回来了 → 回到写字那套，但至少让那圈转完（见上面 _toolLogoUntil）。
+      // 中途又来一个工具的话，_toolLogoUntil 会被推后，这个定时器到点发现还没到就不动，
+      // 由后来那个工具的 toolResult 负责收尾。
+      var _wait=Math.max(0,_toolLogoUntil-Date.now());
+      setTimeout(function(){
+        if(Date.now()<_toolLogoUntil-20)return;      // 又被推后了，交给后来那个
+        if(!trailLogo.isConnected)return;            // 已经 complete，logo 摘掉了
+        setClaudeLogoMode(trailLogo,'writing');
+      },_wait)},
     fail(t){
       row.classList.remove('streaming');
       setPhase('complete');
