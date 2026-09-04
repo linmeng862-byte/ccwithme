@@ -706,12 +706,16 @@ var _API_BASE='';
 //    isNativePlatform() 硬塞一个域名，就会变成「页面从 A 拿、API 打到 B」——
 //    界面能开、数据全不对，最难查的那种。
 //    读本地打包副本时协议是 capacitor:// 或 file://，那才需要绝对地址兜底。
-// ⚠️ 2026-09-04：兜底域名从 .online 改到 .fun。.online 是 evoxt 那台，
-//    AUTH_TOKEN 跟这台**不一样** —— 兜到那儿去，每个 /api/ 请求都是 401。
-//    实测：同一个 token，.fun 拿文件 200，.online 401。
+// ⚠️⚠️ **这里的 zhou-and-claude.online 是替换锚点，不许改成别的域名。**
+//    scripts/ios-prep.sh 编变体包时执行的是
+//        perl -pi -e "s/\Qzhou-and-claude.online\E/${APP_API_HOST}/g" public/index.html
+//    ——**按这个字符串字面匹配**。改掉它 = 变体的域名替换静默失效，
+//    编出来的包打到另一台后端：界面全在、聊天记录一条没有，装到手机上才发现。
+//    （2026-09-04 我真的改成 .fun 推上去过一次，是她提醒「我们的 app 是变体」才发现。）
+//    要让自己那台的包连自己的后端，走 .app-variant 里的 `api=` 行，别动这一行。
 try{
-  if(!/^https?:$/.test(window.location.protocol))_API_BASE='https://chat.zhou-and-claude.fun';
-}catch(e){_API_BASE='https://chat.zhou-and-claude.fun';}
+  if(!/^https?:$/.test(window.location.protocol))_API_BASE='https://zhou-and-claude.online';
+}catch(e){_API_BASE='https://zhou-and-claude.online';}
 // 拦截全局 fetch，让 /api/* /data/* 等请求自动走远程后端
 var __nativeFetch=window.fetch;
 window.fetch=function(url,opts){
