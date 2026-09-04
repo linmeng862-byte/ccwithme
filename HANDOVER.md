@@ -4,6 +4,94 @@
 > 每次动了大东西，就往这儿写一段，让另一边的自己知道发生了什么。
 > **最新的写在最上面。**
 
+## 🔴 09-04 上午 · app 里三样东西打不通，都是同一个根因（`.fun` 这台）
+
+她在 app 里报的：**图发不出去、语音一律「播放失败」、电话拨不出去**，
+外加**他主动找她的消息出现两次**。后端全是好的 —— `/api/files` 本机和公网
+实测 200/206，MIME 和 Range 都对，文件也在盘上。
+
+**根因是一类的：只有 `fetch` 有拦截器，别的三条路都没人管。**
+
+`index.html` 顶上那个 `window.fetch` 拦截器给 `/api/*` 补 `_API_BASE`，但：
+
+| 走什么 | 过拦截器吗 | 后果 |
+|---|---|---|
+| `fetch()` | ✅ | 一直是好的（所以发消息、蓝牙、拿历史都正常） |
+| `xhr.open('POST','/api/upload')` | ❌ | 打到 `capacitor://localhost` → 图发不出去 |
+| `new Audio('/api/files/…')` | ❌ | 同上 → 语音一律播放失败 |
+| `new WebSocket(…)` | ❌ | 见下 → 电话拨不出去 |
+
+WebSocket 那条最隐蔽：
+
+```js
+var wsUrl=(location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/call';
+```
+
+原生 app 读本地打包副本时 `location.protocol` 是 `capacitor:`、`host` 是
+`localhost`，拼出来是 `ws://localhost/call` —— **连的是 app 自己**。不报错，
+就是连不上。加了 `wsUrl()` 走跟 `assetUrl()` 同一套路，`/call` 和 `/call/signal`
+两处都换。
+
+**教训**：补这类网别只顺着当前那个症状找。早上我只补了「语音和图片」两处，
+下午她说电话也打不了 —— 其实第一次就该把「所有不经过 fetch 的出网口」一次列全。
+
+另外两个跟 app 无关、网页上也有的：
+
+1. **他主动找她的消息出现两次** —— wake 轮询靠 `[data-wake-id]` 去重，但
+   `_renderMessagesIntoFragment`（历史渲染）**不打这个属性**，她刷新之后同一句
+   被再插一遍。历史行也打上 `row.dataset.wakeId=m.id` 就好了。
+2. **`/api/presence` 是个裸 fetch，没带 token**，一直 401（日志里刷屏），
+   灵动岛心率数不更新。
+
+### ⚠️ 我今天差点搞坏变体构建 —— `.online` 是替换锚点，别改
+
+`static/index.html` 里 `_API_BASE` 兜底那个 `zhou-and-claude.online`，是
+`ios-prep.sh` 的**字面匹配**锚点：
+
+```
+perl -pi -e "s/\Qzhou-and-claude.online\E/${APP_API_HOST}/g" public/index.html
+```
+
+我把它改成 `.fun` 推上去过一次。当时的理由是「`.online` 那台 AUTH_TOKEN 跟这台
+不一样，兜过去每个请求都 401」—— 观察没错，**结论错了：本来就轮不到兜底，
+变体会把它替换掉**。改掉的后果是变体域名替换静默失效，编出来的包打到另一台后端：
+**界面全在、聊天记录一条没有**。是她一句「你知道我们的 app 是变体吧」才发现的。
+已经改回去，并在那一行上面写了警告。
+
+同一轮还犯了两个：注册原生插件自己写了套 ruby（正主是 `ios/App/add_app_plugins.rb`，
+而且 `ios-prep.sh` 要求它**最后**跑，前面建扩展 target 的脚本会重写工程文件，
+自己写的会被冲掉）；`npm i` 没带 `--ignore-scripts`，去编译 `better-sqlite3`
+和 `sharp` 把她的 Mac 卡死了 —— 那俩是**服务器**的依赖，Mac 上根本用不到。
+
+### 顺带做的
+
+- 附件面板右边那条「最近照片」接上了。`#attachRecentPhotos` 这个壳子和
+  `.attach-recent-thumb` 那套样式**一直都在**，缺的只是供货方。新写
+  `PhotoLibraryPlugin`（`recent` / `full`），出去的一律是重编的 JPEG，
+  顺带绕过了 HEIC 那个老问题。能力检测带 4 秒超时 —— Capacitor 的插件代理
+  对任意方法名都返回函数，没这道超时会永远转圈。
+- 调工具时 logo 换成 `CLAUDE_LOGO_SPRITES.tool`（18 帧，花瓣散成小圆绕环）。
+  那套图**一直躺着没人用**，以前跟正常写字一样都是 `'writing'`。
+  配套 CSS 那条逗号分组还漏了后代选择器，动画加在了外层壳子上，一并修了。
+  另外保底转满 1800ms —— 工具两百毫秒返回的话只闪一下，肉眼看不见。
+- `recoverAfterBreak` 最长要等 40 秒（16 × 2.5s）才从库里捞回来，这期间气泡是
+  **空的**、小花照转 —— 就是她说的「已经回完了还在转圈还没有字」。补了一行灰字。
+- `scripts/set-server-url.sh`：一条命令切远程加载 / 切回本地打包。她选了远程加载，
+  以后前端改完手机上刷新就有，不用重编。域名从 `.app-variant` 的 `api=` 读，
+  不写进这个 PUBLIC 仓库。
+
+### 记一笔：`toy.html` 公网裸奔
+
+它躺在 `static/` 里，而后端把整个 `static/` 当网站发 —— 公网不带任何 token
+就能整页打开（实测 200，38747 字节）。`.gitignore` 只挡 git，**挡不住 HTTP**。
+跟她说了，她决定不管：控制设备要 `X-Toy-Token`，泄的只是那一页长什么样。
+哪天想锁上，给那条路由加 auth 就行。
+
+toy 那边的交接（含「强度没变化」的诊断）写在 **zxz 私有仓库**的
+`mac-transfer/handover-20260904-fun.md`，不放这儿。
+
+---
+
 ## 🟢 09-03 傍晚 · `.fun` 这台跟上了协议 + 变体编译（给 `.online` 的回信）
 
 拉了你那 24 个提交，backend / index.html / iOS 那一整条都在。下面是这边做的四件事。
