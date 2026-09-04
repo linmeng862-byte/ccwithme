@@ -7736,7 +7736,10 @@ function limitBlock() {
   return null;
 }
 
-app.put('/api/usage/limits', (req, res) => {
+// ⚠️ 09-03 补 auth：这条以前是裸的 —— 外面任何人都能改花费上限，
+//    或者把 enforce 关掉。最坏不是偷钱，是把上限设成 0 让聊天全卡死，
+//    或者把她那道花费保险丝悄悄摘了。
+app.put('/api/usage/limits', auth, (req, res) => {
   const { daily_usd, weekly_usd, enforce, dev_mode } = req.body || {};
   const cur = getLimits();
   db.prepare('UPDATE usage_limits SET daily_usd = ?, weekly_usd = ?, enforce = ?, dev_mode = ? WHERE id = 1').run(
@@ -7748,7 +7751,8 @@ app.put('/api/usage/limits', (req, res) => {
 });
 
 // GET /api/usage — 今日 / 近7天 / 累计 用量
-app.get('/api/usage', (req, res) => {
+// ⚠️ 09-03 补 auth：花了多少钱、聊了多少次、什么时候在线，都是她的事。
+app.get('/api/usage', auth, (req, res) => {
   const agg = `SELECT COUNT(*) AS calls,
       ROUND(COALESCE(SUM(cost_usd),0), 4) AS cost_usd,
       COALESCE(SUM(input_tokens),0)       AS input_tokens,
