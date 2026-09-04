@@ -3498,6 +3498,26 @@ document.addEventListener('click',function(e){
   if(openInAppBrowser(href)){ e.preventDefault(); e.stopPropagation() }
 },true);
 
+// ⚠️ 2026-09-04 她报的：「他做了个 html，我点开、退出重进，整个网页背景变成他那个
+//    html 的颜色，字体颜色也变了」。
+//    根因：下面 renderMessage 里 `md.innerHTML=marked.parse(src)` —— marked 默认
+//    **原样放行 HTML**，一点过滤都没有。他直接写（没包代码块）的那段 html 里带
+//    `<style>`，就被塞进了 DOM。而 CSS 不看标签在哪，一律作用于整个文档，
+//    于是他给自己那页写的 `body{background:...}` 盖掉了整个聊天页。
+//    「退出重进还在」不是缓存 —— 那条消息在库里，每次加载都重新渲染一遍，
+//    于是每次都重新注入一次。
+//    包在 ``` 代码块里的 html 不受影响，那条路走 _addHtmlPreviews 的 Preview
+//    按钮，渲染在 iframe 里，本来就是隔离的。这里只拆没包代码块的那种。
+//    ⚠️ 别改成「把 <style> 转义显示出来」—— 她要看的是他写了什么，
+//    不是一屏 CSS。原文还在 row.dataset.raw 和库里，点 Preview 照样看得到。
+function _stripPageStyles(md){
+  if(!md)return;
+  // <style> 和外链样式表：会污染整个文档
+  md.querySelectorAll('style,link[rel~="stylesheet" i]').forEach(function(el){el.remove()});
+  // <meta>/<base>：base 会把页面上所有相对链接改指向，同样是全局的
+  md.querySelectorAll('meta,base').forEach(function(el){el.remove()});
+}
+
 function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripUrlsFromRaw(String(text||''));if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
   var imgRe=/\[IMAGE:([^\]]+)\]/g;var imgsHtml='',imgMatch;imgRe.lastIndex=0;
   while((imgMatch=imgRe.exec(src))!==null){imgsHtml+='<img src=\"'+assetUrl(imgMatch[1])+'\" style=\"max-width:320px;max-height:400px;border-radius:26px;display:block;margin:6px 0;cursor:pointer;object-fit:scale-down;box-shadow:0 4px 24px rgba(0,0,0,.06)\" onclick=\"var ex=document.createElement(\'div\');ex.className=\'image-expand\';var fi=document.createElement(\'img\');fi.src=this.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)\" />'}
@@ -3506,7 +3526,7 @@ function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripU
   if(/<journey>/.test(src)&&typeof _JC!=='undefined'&&_JC.parseJourneyTags){var jcParts=_JC.parseJourneyTags(src);if(jcParts.length>1||jcParts[0].type==='journey'){(function(){var html='';jcParts.forEach(function(p){if(p.type==='text'&&p.text.trim()){try{var m=marked.parse(p.text,{breaks:true,gfm:true});html+=m.trimEnd()}catch(e){html+='<p>'+_jcEscape(p.text)+'</p>'}}else if(p.type==='journey'){html+=_JC.renderCard({id:p.id,title:'...',stops:[]})}});md.innerHTML=html||md.innerHTML;
       // 异步加载真实 journey 数据替换占位卡片
       jcParts.forEach(function(p){if(p.type==='journey'&&p.id){_JC.fetchJourney(p.id).then(function(j){var old=md.querySelector('.jc-card[data-jc-id=\"'+_jcEscape(p.id)+'\"]');if(old){var cardHtml=_JC.renderCard(j);var tmp=document.createElement('div');tmp.innerHTML=cardHtml;var newCard=tmp.firstChild;if(newCard&&old.parentNode){old.parentNode.replaceChild(newCard,old)}}_JC.bindCards(md)}).catch(function(){})}})})()}}
-  _addHtmlPreviews(md);_fixImgSrcs(md);_JC.bindCards(md);return}catch(e){}}md.innerHTML='';src.split(/\n{2,}/).filter(function(x){return x.length}).forEach(function(part){var p=document.createElement('p');p.textContent=part;md.append(p)});if(!md.childNodes.length)md.textContent=''}
+  _stripPageStyles(md);_addHtmlPreviews(md);_fixImgSrcs(md);_JC.bindCards(md);return}catch(e){}}md.innerHTML='';src.split(/\n{2,}/).filter(function(x){return x.length}).forEach(function(part){var p=document.createElement('p');p.textContent=part;md.append(p)});if(!md.childNodes.length)md.textContent=''}
 function _renderArtifactCard(art,parent){if(!art||!art.content||!parent)return;_addArtifactToList(art);var lang=art.language||'html';var card=document.createElement('div');card.className='artifact-card';card.style.cssText='margin:10px 0;width:100%;max-width:440px;border:1px solid var(--border);border-radius:18px;overflow:hidden;background:var(--bg-surface);cursor:pointer;transition:box-shadow .2s';card.onmouseenter=function(){card.style.boxShadow='0 3px 16px rgba(0,0,0,.05)'};card.onmouseleave=function(){card.style.boxShadow='none'};var hdr=document.createElement('div');hdr.style.cssText='display:flex;align-items:center;gap:12px;padding:10px 16px;user-select:none';var iconBox=document.createElement('div');iconBox.style.cssText='width:30px;height:30px;border-radius:8px;background:#3D3A36;color:#F5F2ED;display:grid;place-items:center;font-size:11px;font-weight:700;flex:none;transform:rotate(-6deg)';iconBox.innerHTML=lang==='html'?'&lt;/&gt;':lang.toUpperCase().slice(0,2);var info=document.createElement('div');info.style.cssText='flex:1;min-width:0';var nameEl=document.createElement('div');nameEl.style.cssText='font:600 14px/1.2 var(--font-sans);color:#2B2927';nameEl.textContent=art.title||'Artifact';var typeEl=document.createElement('div');typeEl.style.cssText='font:12px var(--font-sans);color:#9A948C;margin-top:2px';typeEl.textContent='Code · '+lang.toUpperCase();info.append(nameEl,typeEl);hdr.append(iconBox,info);var dlBtn=document.createElement('button');dlBtn.style.cssText='width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--text-secondary);display:grid;place-items:center;cursor:pointer;flex:none;font-size:14px';dlBtn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';dlBtn.title='Download '+art.title;dlBtn.onclick=function(e){e.stopPropagation();_downloadArtifact(art)};hdr.append(dlBtn);card.append(hdr);var expanded=false,iframe=null;card.onclick=function(e){if(e.target===dlBtn)return;if(expanded){if(iframe){iframe.remove();iframe=null}expanded=false;card.style.cursor='pointer';return}expanded=true;card.style.cursor='default';iframe=document.createElement('iframe');iframe.style.cssText='width:100%;min-height:680px;border:none;border-top:1px solid var(--border);display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob([art.content],{type:'text/html'}));card.append(iframe)};parent.appendChild(card)}
 function _maybeRenderArtifact(content){if(!content||typeof content!=='object')return;var art=content.artifact;if(!art||!art.content)return;var msg=document.querySelector('.msg-claude.streaming');if(!msg)return;var body=msg.querySelector('.msg-body');if(body)_renderArtifactCard(art,body)}
 function _renderGallerySaveCard(gs,parent){if(!gs||!gs.image_url||!parent)return;var albumName=gs.album_title||'Home';var caption=gs.caption||'';var card=document.createElement('div');card.className='memory-save-card';card.onclick=function(){if(typeof openGalleryPanel==='function'){openGalleryPanel();setTimeout(function(){if(typeof _galleryAlbums!=='undefined'){var a=_galleryAlbums.find(function(x){return x.id===gs.album_id});if(a&&typeof _openAlbum==='function')_openAlbum(a.id)}},600)}};
