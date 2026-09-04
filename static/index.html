@@ -4379,12 +4379,12 @@ const _SVG_FOLDER='<svg viewBox="0 0 256 256"><path d="M32 72a16 16 0 0116-16h48
 const _SVG_HAND='<svg viewBox="0 0 256 256"><path d="M96 120V52a16 16 0 0132 0v60M128 112V40a16 16 0 0132 0v72M160 112V60a16 16 0 0132 0v92c0 40-28 72-68 72s-68-32-68-72v-28a16 16 0 0132 0v20" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 // 粥粥要的：工具一律用线描图标，不出 emoji。自定义工具没配就落回齿轮。
 const _TOOL_ICONS={WebSearch:_SVG_GLOBE,Grep:_SVG_GLOBE,Glob:_SVG_GLOBE,WebFetch:_SVG_GLOBE,Read:_SVG_DOC,Write:_SVG_PEN,Edit:_SVG_PEN,Bash:_TOOL_SVG,TodoWrite:_SVG_LIST,get_weather:_SVG_SUN,get_time:_SVG_CLOCK2,trace:_SVG_BRAIN,search_chat_history:_SVG_BRAIN,nocturne_persona:_SVG_BRAIN,nocturne_slang:_SVG_CHAT,nocturne_hold:_SVG_HAND,nocturne_texture:_SVG_HAND,nocturne_moment:_SVG_STAR2,nocturne_story:_SVG_BOOK,nocturne_bottle:_SVG_BOTTLE,drive:_SVG_ROAD,wander:_SVG_ROAD,garden:_SVG_LEAF,save_note:_SVG_NOTE,read_diary:_SVG_BOOK,diary_comment:_SVG_CHAT,reading_context:_SVG_BOOK,reading_note:_SVG_NOTE,reading_highlight:_SVG_BOOK,project_write_file:_SVG_PEN,project_read_file:_SVG_DOC,project_list_files:_SVG_FOLDER,create_file:_SVG_PEN,read_uploaded_file:_SVG_DOC,create_artifact:_SVG_IMAGE,generate_image:_SVG_IMAGE,send_sticker:_SVG_SMILE,share_music:_SVG_MUSIC,call_her:_SVG_PHONE,issue_command:_SVG_TERM,toy_control:_SVG_WAVE,create_gallery_album:_SVG_FOLDER,save_to_gallery:_SVG_IMAGE,list_gallery_photos:_SVG_IMAGE,send_gallery_photo:_SVG_IMAGE};
-// 他在「做东西」而不是「查东西」的那些工具 —— 小花走 'tool' 那套 18 帧，
-// 其余一律 'shimmer'。判断标准是**有没有东西被造出来**（文件、图、相册、音乐、贴纸），
-// 不是工具危不危险。读、搜、控制设备都不算。
-const _CREATING_TOOLS={Write:1,Edit:1,create_file:1,project_write_file:1,create_artifact:1,
-  generate_image:1,save_note:1,save_to_gallery:1,create_gallery_album:1,share_music:1,
-  send_sticker:1,diary_comment:1,reading_note:1,reading_highlight:1};
+// 他**自己动手写文件**的那几个 —— 小花走 'tool' 那套 18 帧，其余一律 'shimmer'。
+// 2026-09-04 她收窄的：原来是「有没有东西被造出来」，把存相册、发贴纸、写日记、
+// 生成图都算进来了，结果大半的工具都在放 tool，两套就分不出来了。
+// 现在只留「他坐下来写一个文件」这一类（svg / html / 代码 / 文档），
+// 别再往里加 —— 加一个就少一分区别。
+const _CREATING_TOOLS={Write:1,Edit:1,create_file:1,project_write_file:1,create_artifact:1};
 function _toolIconSvg(name,input){if(_isMemoryOp(name,input))return icon('history');return _TOOL_ICONS[name]||_SVG_GEAR}
 function _toolActionDescription(name,input){if(_isMemoryOp(name,input)){const w=['Write','Edit','Bash'];return w.includes(name)?'Saving memory\u2026':'Recalling memory\u2026'}const map={WebSearch:'Searching the web\u2026',WebFetch:'Fetching web page\u2026',Read:'Reading file\u2026',Grep:'Searching for pattern\u2026',Glob:'Finding files\u2026',Bash:'Running command\u2026',Write:'Writing file\u2026',Edit:'Editing file\u2026',TodoWrite:'Updating todo list\u2026'};return map[name]||(name?name+'\u2026':'Working\u2026')}
 function _maybeFetchToolCaption(row,d){const phases=_getPhases(row);if(phases.some(p=>p.type==='thinking'))return;const phase=phases.find(p=>p.toolUseId===d.tool_use_id);if(!phase)return;api('/api/tool-caption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_name:d.name||phase.toolName||'tool',tool_input:phase.toolInput,tool_output:typeof d.content==='string'?d.content.slice(0,4000):JSON.stringify(d.content||'').slice(0,4000)})}).then(r=>r&&r.ok?r.json():null).then(j=>{if(!j||!j.caption)return;const ps=_getPhases(row);const p=ps.find(x=>x.toolUseId===d.tool_use_id);if(!p)return;p.caption=j.caption;_setPhases(row,ps);_renderTraceRowActive(row)}).catch(()=>{})}
