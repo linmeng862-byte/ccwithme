@@ -212,20 +212,18 @@ button{font:inherit;border:0;background:none;color:inherit;cursor:pointer}textar
 .claude-logo-inner{width:100%;height:100%;display:block;overflow:hidden;will-change:transform}.claude-logo-track{width:100%;will-change:transform}.claude-logo-track svg{display:block;width:100%;height:auto;fill:currentColor}/* ⚠️ 09-04：逗号前那条原来是 `[data-mode="tool"]`，漏了 ` .claude-logo-inner` ——
    缩放旋转加在了外层壳子上，跟 track 的逐帧动画不在同一层，叠不出「花瓣散成小圆绕环」。
    两条必须都落在 .claude-logo-inner 上。 */
-/* ⚠️ 1800ms 这个数不是随便写的，三处必须相等，改一个就要改另外两个：
-     ① 这里 claudeToolPulse 的 duration
-     ② index.html 里 CLAUDE_LOGO_SPRITES 的 speed × frameCount
-        （shimmer 15×120、tool 18×100，都是 1800）
-     ③ index.html 里 _toolLogoUntil 的最短停留
-   对不上的后果：09-04 shimmer 曾经是 sprite 1500ms / pulse 1800ms / 停留 1500ms，
-   三个数各走各的，小花每次都在「缩到 16%」的半路被切回 writing —— 她说
-   「shimmer 很短就转成 writing，而且好快」。 */
-/* ⚠️ 09-04 她定的：**shimmer 不要这层缩放**。
-   sprite 那 15 帧本身就是「散开 → 绕一圈 → 合回来」，外面再套一层 scale(.16)
-   等于缩两次，她看到的是小花转着转着就缩没了。现在 shimmer 只跑 sprite，
-   一直转到 tool_result 回来（最短一圈 1800ms，见 _toolLogoUntil）。
-   tool 那套 18 帧没有自带的绕圈，所以这层留给它。 */
-.claude-trail-logo[data-mode="tool"] .claude-logo-inner{animation:claudeToolPulse 1800ms cubic-bezier(.2,.8,.2,1) infinite;transform-origin:center}@keyframes claudeToolPulse{0%{transform:scale(1) rotate(0deg);opacity:1}38%{transform:scale(.16) rotate(80deg);opacity:.85}52%{transform:scale(.16) rotate(180deg);opacity:.85}100%{transform:scale(1) rotate(360deg);opacity:1}}
+/* ⚠️ 2026-09-04：`claudeToolPulse`（外层 scale(.16) + rotate(360deg)）**整个删掉了，
+   两个 mode 都不要**。别再加回来。经过是这样的：
+     · 那层缩放本来是想做「花瓣散开绕一圈」的效果，但 sprite 本身就在做这件事 ——
+       shimmer 的 15 帧就是散开→绕一圈→合回来，tool 的 18 帧同理。叠在一起是缩两次，
+       表现是「转着转着就缩没了」，她两次都是这么描述的（先 shimmer、后 tool）。
+     · 而且它跟 sprite 的逐帧动画不在同一层，周期一旦对不齐就会互相打架
+       （shimmer 曾经 sprite 1500ms / pulse 1800ms / 最短停留 1500ms，三个数各走各的）。
+   现在两套都只跑 sprite，一直转到 tool_result 回来，最短一圈 1800ms
+   （shimmer 15×120、tool 18×100，见 index.html 的 _toolLogoUntil）——
+   **这三个数仍然必须相等**：sprite 一圈、最短停留、以及以后万一再加的任何外层动画。
+   ⚠️ `.claude-logo-inner` 的 overflow:hidden 留着（见上一段注释）：
+   现在没有缩放了，但那条本来就该有，缺了的话以后任何一个 transform 都会漏帧。 */
 .claude-spinner{width:24px;height:24px;display:inline-block;animation:claude-spin 1.8s linear infinite}.claude-spinner svg{width:100%;height:100%;fill:#D97757;display:block}@keyframes claude-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.thinking-rotate{animation:rotate 4s linear infinite}.thinking-pulse{display:block;animation:pulse 1.6s ease-in-out infinite alternate}@keyframes rotate{to{transform:rotate(360deg)}}@keyframes pulse{from{transform:scale(.85)}to{transform:scale(1.1)}}
 .thinking-live{max-height:3.4em;overflow:hidden;margin-bottom:var(--space-4);color:var(--text-secondary);font-size:var(--text-sm);white-space:pre-wrap}.thinking-summary{width:100%;display:none;align-items:center;gap:10px;margin-bottom:var(--ts-gap,20px);color:var(--text-secondary);font-family:var(--font-sans);font-size:15px;font-weight:400;text-align:left}.thinking-summary.show{display:flex}.thinking-summary-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.thinking-summary-spacer{flex:1}.thinking-clock{width:18px;height:18px;flex:none;margin-right:-5px}.thinking-chevron{width:16px;height:16px;flex:none}
 .history-loading{flex:1;display:flex;align-items:center;justify-content:center;gap:var(--space-2);color:var(--text-secondary);font-size:var(--text-sm)}

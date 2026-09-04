@@ -4553,12 +4553,12 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       // ⚠️ 记一个最早能切回去的时间：一个周期一千五到一千八，工具两百毫秒就返回的话
       //    只会闪一下，肉眼根本看不见 —— 她第一次试就是这个现象（见 toolResult）。
       var _mk=_CREATING_TOOLS[_bareToolName(d.name)]?'tool':'shimmer';
-      // ⚠️ 09-04 她说「shimmer 很短就转成 writing，而且好快」。两个数一起调的：
-      //    sprite 每帧 100→120ms（15 帧 = 1800ms），最短停留 1500→1800ms。
-      //    现在 shimmer 和 tool 都是 1800ms —— sprite 一圈、CSS 的 claudeToolPulse、
-      //    最短停留**三个数必须相等**，差一点就会在半路被切回 writing。
-      //    改任何一个，另外两个跟着改：这里、CLAUDE_LOGO_SPRITES 的 speed、
-      //    home.css 里 claudeToolPulse 的 duration。
+      // ⚠️ 1800 = sprite 跑完整一圈（shimmer 15×120、tool 18×100），两个数必须相等。
+      //    她说「shimmer 很短就转成 writing，而且好快」的时候就是这两个数没对齐
+      //    （sprite 1500 / 停留 1500 / 外层 CSS 1800，三个各走各的）。
+      //    改任何一个，另一个跟着改：这里，和 CLAUDE_LOGO_SPRITES 的 speed。
+      //    ⚠️ home.css 那层 claudeToolPulse 缩放 09-04 已经整个删掉了 ——
+      //    sprite 本身就在绕圈，叠一层等于缩两次。别再加回来，加了就是第三个数。
       setClaudeLogoMode(trailLogo,_mk);_toolLogoUntil=Date.now()+1800},
     toolResult(d){var r=_toolToRow.get(d.tool_use_id);if(!r)return;var ct=typeof d.content==='string'?d.content:JSON.stringify(d.content||'');_updateToolPhase(r,d.tool_use_id,ct,!!d.is_error);_renderTraceRowActive(r);var _tn=_toolNameById[d.tool_use_id];if(_tn==='WebSearch'||_tn==='WebFetch')_collectUrls(ct,_sources);
       // 这个工具回来了 → 回到写字那套，但至少让那圈转完（见上面 _toolLogoUntil）。
