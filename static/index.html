@@ -21,7 +21,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1787972901">
+<link rel="stylesheet" href="/css/home.css?v=1788488400">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -706,9 +706,12 @@ var _API_BASE='';
 //    isNativePlatform() 硬塞一个域名，就会变成「页面从 A 拿、API 打到 B」——
 //    界面能开、数据全不对，最难查的那种。
 //    读本地打包副本时协议是 capacitor:// 或 file://，那才需要绝对地址兜底。
+// ⚠️ 2026-09-04：兜底域名从 .online 改到 .fun。.online 是 evoxt 那台，
+//    AUTH_TOKEN 跟这台**不一样** —— 兜到那儿去，每个 /api/ 请求都是 401。
+//    实测：同一个 token，.fun 拿文件 200，.online 401。
 try{
-  if(!/^https?:$/.test(window.location.protocol))_API_BASE='https://zhou-and-claude.online';
-}catch(e){_API_BASE='https://zhou-and-claude.online';}
+  if(!/^https?:$/.test(window.location.protocol))_API_BASE='https://chat.zhou-and-claude.fun';
+}catch(e){_API_BASE='https://chat.zhou-and-claude.fun';}
 // 拦截全局 fetch，让 /api/* /data/* 等请求自动走远程后端
 var __nativeFetch=window.fetch;
 window.fetch=function(url,opts){
@@ -1526,7 +1529,9 @@ function uploadPendingFiles(items){
   const mb=(total/1048576).toFixed(1);
   return new Promise(function(resolve,reject){
     var xhr=new XMLHttpRequest();
-    xhr.open('POST','/api/upload');
+    // ⚠️ 必须走 assetUrl：XHR 不经过上面那个 fetch 拦截器，原生 app 里读本地打包副本时
+    //    '/api/upload' 会打到 capacitor://localhost → 图永远发不出去（2026-09-04 她踩了）
+    xhr.open('POST',assetUrl('/api/upload'));
     if(state.token)xhr.setRequestHeader('Authorization','Bearer '+state.token);
     xhr.timeout=90000;
     _uploadProgress(0, items.length+' 个文件 · '+mb+'MB');
@@ -1991,7 +1996,9 @@ function _toggleVoicePlay(btn){var url=btn.getAttribute('data-url');var _VP_SVG=
   // 否则会出现「两条都在动，但只有一条真在响」。
   if(_currentVoiceAudio){_currentVoiceAudio.pause();_currentVoiceAudio=null;document.querySelectorAll('.voice-play-btn').forEach(function(b){b.innerHTML=_VP_SVG;_wave(b,false)})}
   if(btn._playing){btn._playing=false;btn.innerHTML=_VP_SVG;_wave(btn,false);return}
-  var audio=new Audio(url);btn._playing=true;btn.innerHTML=_VS_SVG;_wave(btn,true);_currentVoiceAudio=audio;
+  // ⚠️ assetUrl：<audio> 不走 fetch 拦截器，原生 app 里 '/api/files/...' 会打到
+  //    capacitor://localhost → 每条语音都「播放失败」（2026-09-04 她踩了）
+  var audio=new Audio(assetUrl(url));btn._playing=true;btn.innerHTML=_VS_SVG;_wave(btn,true);_currentVoiceAudio=audio;
   audio.onended=function(){btn._playing=false;btn.innerHTML=_VP_SVG;_wave(btn,false);_currentVoiceAudio=null};
   audio.onerror=function(){btn._playing=false;btn.innerHTML=_VP_SVG;_wave(btn,false);toast('播放失败')};
   // play() 可能被浏览器拒（自动播放策略 / 文件 404 前的 decode 失败）。
@@ -3084,7 +3091,58 @@ function _coldNote(m){if(!m.cold||m.id===state.model)return'';return` · 切过�
 function setLayerState(element,open){element.classList.toggle('show',open);element.setAttribute('aria-hidden',String(!open));element.toggleAttribute('inert',!open)}
 function sheet(name,open){const s=$(`${name}Sheet`);if(open){s.classList.remove('expanded');s.style.transform=''}setLayerState($(`${name}Overlay`),open);setLayerState(s,open)}
 // 附件底部弹出
-function _openAttachSheet(){sheet('attach',true)}
+// ============ 附件面板右边那条「最近照片」（2026-09-04）============
+// #attachRecentPhotos 这个壳一直躺在 HTML 里，但从来没有任何代码往里填过 —— 她打开
+// 面板看到的就是 Camera / Photos 两张卡片右边一片空。现在接上原生相册（PhotoLib 插件）。
+//
+// ⚠️ 只有装成 App 才有。网页拿不到系统相册，那块就保持空的 —— 不要退化成
+//    <input type=file>，那跟旁边的 Photos 卡片重了。
+// ⚠️ 能力检测必须带超时：Capacitor 的插件代理**对任意方法名都返回函数**，
+//    插件没装 / 方法没登进 pluginMethods 表时，Promise 永远不 resolve 也不 reject，
+//    不加超时这儿就永远转圈（LiveActivity 上踩过一次）。
+var _recentPhotosBusy=false;
+function _photoLib(){try{var P=window.Capacitor&&Capacitor.Plugins;return(P&&P.PhotoLib)||null}catch(e){return null}}
+function _withTimeout(p,ms){return Promise.race([p,new Promise(function(_,rej){setTimeout(function(){rej(Error('timeout'))},ms)})])}
+function _loadRecentPhotos(){
+  var box=$('attachRecentPhotos'); if(!box)return;
+  var P=_photoLib(); if(!P||!P.recent)return;
+  if(_recentPhotosBusy)return; _recentPhotosBusy=true;
+  _withTimeout(P.recent({limit:12,size:240}),4000).then(function(r){
+    var list=(r&&r.photos)||[];
+    if(r&&r.status==='denied'){
+      box.innerHTML='<div class="attach-recent-hint">在「设置 › éclat › 照片」里允许访问，这儿就会显示最近拍的</div>';
+      return;
+    }
+    if(!list.length){box.innerHTML='';return}
+    box.innerHTML='';
+    list.forEach(function(ph){
+      var b=document.createElement('button');
+      b.className='attach-recent-thumb'; b.type='button';   // 样式 home.css 里早就写好了
+      var im=document.createElement('img'); im.src=ph.thumb; im.alt='';
+      b.appendChild(im);
+      b.onclick=function(){_pickRecentPhoto(ph.id,b)};
+      box.appendChild(b);
+    });
+  }).catch(function(){
+    // 超时或报错都不留痕迹 —— 那条带子空着就行，别在她面前弹红字
+  }).then(function(){_recentPhotosBusy=false});
+}
+function _pickRecentPhoto(id,btn){
+  var P=_photoLib(); if(!P||!P.full)return;
+  if(btn)btn.classList.add('is-loading');
+  _withTimeout(P.full({id:id,maxSize:1600}),20000).then(function(r){
+    if(!r||!r.dataUrl)throw Error('empty');
+    // dataURL → File，走跟其它图片一模一样的那条路（压缩 / 预览 / 上传都不用改）
+    var parts=r.dataUrl.split(',');var bin=atob(parts[1]||'');
+    var buf=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
+    var f=new File([buf],r.filename||'photo.jpg',{type:'image/jpeg'});
+    addSelectedFiles([f]);
+    sheet('attach',false);
+  }).catch(function(){
+    toast('这张照片读不出来');
+  }).then(function(){if(btn)btn.classList.remove('is-loading')});
+}
+function _openAttachSheet(){sheet('attach',true);_loadRecentPhotos()}
 function _pickPhotosFromLibrary(multiple){var input=document.createElement('input');input.type='file';input.accept='image/*';if(multiple)input.multiple=true;input.onchange=function(){var files=Array.from(input.files||[]);if(files.length){addSelectedFiles(files);sheet('attach',false)}else{toast('未选择照片')}};input.click()}
 var _attachSelected=[];
 $('attachUploadBtn').onclick=function(){$('fileInput').click();sheet('attach',false)}
@@ -4425,8 +4483,14 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       _maybeCompletionEgg();
       scrollBottom();
     },
-    toolUse(d){if(d.name==='crab_action'){var input=typeof d.input==='string'?JSON.parse(d.input):(d.input||{});if(!input.emotion)return;var emotion=input.emotion;var bubble=input.bubble||(_CLAWD_EMOTE_LABELS[emotion]||'');if(typeof setClawdMood==='function')setClawdMood(emotion,5000);if(bubble){var sr=document.querySelector('.msg-claude.streaming');if(sr){var bodyEl=sr.querySelector('.msg-body');var bEl=bodyEl?bodyEl.querySelector('.bubble'):null;if(bodyEl&&bEl&&!bodyEl.querySelector('.clawd-emote-label')){var el=document.createElement('div');el.className='clawd-emote-label';el.textContent=bubble;bEl.after(el)}}}return}if(!currentToolRow){currentToolRow=_buildTraceRow();b.before(currentToolRow)}_appendToolPhase(currentToolRow,d);_renderTraceRowActive(currentToolRow);_toolToRow.set(d.id,currentToolRow);_toolNameById[d.id]=d.name;setClaudeLogoMode(trailLogo,'writing')},
-    toolResult(d){var r=_toolToRow.get(d.tool_use_id);if(!r)return;var ct=typeof d.content==='string'?d.content:JSON.stringify(d.content||'');_updateToolPhase(r,d.tool_use_id,ct,!!d.is_error);_renderTraceRowActive(r);var _tn=_toolNameById[d.tool_use_id];if(_tn==='WebSearch'||_tn==='WebFetch')_collectUrls(ct,_sources)},
+    toolUse(d){if(d.name==='crab_action'){var input=typeof d.input==='string'?JSON.parse(d.input):(d.input||{});if(!input.emotion)return;var emotion=input.emotion;var bubble=input.bubble||(_CLAWD_EMOTE_LABELS[emotion]||'');if(typeof setClawdMood==='function')setClawdMood(emotion,5000);if(bubble){var sr=document.querySelector('.msg-claude.streaming');if(sr){var bodyEl=sr.querySelector('.msg-body');var bEl=bodyEl?bodyEl.querySelector('.bubble'):null;if(bodyEl&&bEl&&!bodyEl.querySelector('.clawd-emote-label')){var el=document.createElement('div');el.className='clawd-emote-label';el.textContent=bubble;bEl.after(el)}}}return}if(!currentToolRow){currentToolRow=_buildTraceRow();b.before(currentToolRow)}_appendToolPhase(currentToolRow,d);_renderTraceRowActive(currentToolRow);_toolToRow.set(d.id,currentToolRow);_toolNameById[d.id]=d.name;
+      // 调工具的时候换成 'tool' 那套雪碧图（18 帧，花瓣散成小圆绕成环转）——
+      // 跟官端一个意思。这套图一直躺在 CLAUDE_LOGO_SPRITES 里没人用，
+      // 这儿以前跟正常写字一样都是 'writing'，所以她看不出他在调工具（2026-09-04 她问的）。
+      setClaudeLogoMode(trailLogo,'tool')},
+    toolResult(d){var r=_toolToRow.get(d.tool_use_id);if(!r)return;var ct=typeof d.content==='string'?d.content:JSON.stringify(d.content||'');_updateToolPhase(r,d.tool_use_id,ct,!!d.is_error);_renderTraceRowActive(r);var _tn=_toolNameById[d.tool_use_id];if(_tn==='WebSearch'||_tn==='WebFetch')_collectUrls(ct,_sources);
+      // 这个工具回来了 → 回到写字那套。下一个 toolUse 会再切成环。
+      setClaudeLogoMode(trailLogo,'writing')},
     fail(t){
       row.classList.remove('streaming');
       setPhase('complete');
@@ -4556,6 +4620,15 @@ initSheetDrag($('modelSheet'),'#closeModel',()=>{_modelPage='main'});
 //    不校验就会把旧回复贴上来，看着像他答非所问 —— 比报错还糟。
 async function recoverAfterBreak(msg,convId,failText,sinceISO){
   if(!msg)return;if(!convId){msg.fail(failText);return}
+  // ⚠️ 这一段最长要等 40 秒（16 次 × 2.5s）。以前这期间气泡是**空的**、小花还在转 ——
+  //    她看到的就是「明明已经回完了，却一直在转圈，还没有字」（2026-09-04 她报的）。
+  //    真相是他多半已经写完入库了，只是 done 事件在路上丢了（切后台/锁屏/隧道抖一下）。
+  //    所以先把话说出来，别让她对着一个空气泡干等。
+  //    这行字写进 .md 里 —— 捞到之后 msg.text() 会 renderMessage 整个覆盖掉，不用手动清。
+  var _md=msg.row&&msg.row.querySelector('.md');
+  if(_md&&!(_md.textContent||'').trim()){
+    _md.innerHTML='<span class="recovering">连接断了一下，正在找回他刚说的话…</span>';
+  }
   const since=sinceISO?Date.parse(sinceISO)-2000:0;
   for(let i=0;i<16;i++){
     await new Promise(r=>setTimeout(r,i===0?1200:2500));
@@ -4603,9 +4676,11 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
       return}
     if(r.status===401){
       try{
-        var saved=JSON.parse(localStorage.getItem('chat_api_config')||'{}');
-        var rr=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved.base_url&&saved.api_key?saved:{})});
-        var dd=await rr.json();
+        // 09-03：原来这里是裸 fetch('/api/auth')，绕开了 siteLogin ——
+        //   设了站点密码之后它发的 {} 必然 401，dd.token 是 undefined，
+        //   于是**这条消息静默发不出去**，页面上什么都不说。
+        //   siteLogin 会带上存好的密码，没存过就弹框问一次。
+        var dd=await siteLogin();
         if(dd.token){
           state.token=dd.token;localStorage.setItem('chat_token',dd.token);
           r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${state.token}`},body:chatBody,signal:state.abortController.signal});
@@ -4896,6 +4971,10 @@ function _renderMessagesIntoFragment(slice){
     const row=m.role==='user'
       ?_buildUserRow(m.text,m.timestamp,m._la||[])
       :_buildClaudeRow(m.text,m._lu||'',m.thinking,m.timestamp,m._la||[],m.traces||[]);
+    // ⚠️ 历史渲染也要打上 data-wake-id —— wake 轮询靠 [data-wake-id] 去重，
+    //    历史行以前不带这个属性，于是「他主动找她」那条刷新后会被再插一遍，
+    //    她看到的是同一句出现两次（2026-09-04 她报的）。
+    if(m.id)row.dataset.wakeId=m.id;
     // 08-24：这一整段以前一点保护都没有 —— 而 openSession 外面是
     // `catch{ streamInner.innerHTML='这段对话暂时无法读取' }`，
     // 所以**任何一条**消息渲染时抛错，整段对话就全白了（不是少一条，是一条都不剩）。
@@ -5836,7 +5915,8 @@ function laPresenceStart(){
 }
 function laPresenceTick(){
   if(!_laSupported)return;
-  fetch('/api/presence').then(function(r){return r.ok?r.json():null}).then(function(d){
+  // ⚠️ 这条以前是裸 fetch，没带 token → 每次都 401，日志里刷屏，灵动岛的心率数一直不更新
+  fetch('/api/presence',{headers:{'Authorization':'Bearer '+(state.token||'')}}).then(function(r){return r.ok?r.json():null}).then(function(d){
     if(!d)return;
     if(typeof d.heart==='number'&&d.heart!==_laHeart){_laHeart=d.heart;_laPush()}
   }).catch(function(){});
@@ -6140,7 +6220,8 @@ $('timerCancel').onclick=function(){
 };
 var _pollTimer=setInterval(pollCommands,4000);setTimeout(pollCommands,2000);
 // iOS Live Activity init —— 先注册自定义原生插件（Capacitor 7 不自动暴露，缺了 Capacitor.Plugins.X 恒为 undefined）
-function _registerNativePlugins(){if(!window.Capacitor||!Capacitor.registerPlugin)return;try{if(!Capacitor.Plugins.LiveActivity)Capacitor.registerPlugin('LiveActivity');if(!Capacitor.Plugins.FocusLock)Capacitor.registerPlugin('FocusLock');if(!Capacitor.Plugins.ScreenTime)Capacitor.registerPlugin('ScreenTime');}catch(e){}}
+function _registerNativePlugins(){if(!window.Capacitor||!Capacitor.registerPlugin)return;try{if(!Capacitor.Plugins.LiveActivity)Capacitor.registerPlugin('LiveActivity');if(!Capacitor.Plugins.FocusLock)Capacitor.registerPlugin('FocusLock');if(!Capacitor.Plugins.ScreenTime)Capacitor.registerPlugin('ScreenTime');
+  if(!Capacitor.Plugins.PhotoLib)Capacitor.registerPlugin('PhotoLib');}catch(e){}}
 if(window.Capacitor){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();}else{document.addEventListener('deviceready',function(){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();},{once:true});}
 function showTimerDoneToast(title){
   var toast=document.createElement('div');
@@ -6414,7 +6495,7 @@ document.addEventListener('click',function(e){
 });
 
 async function saveApiConfig(){var baseURL=document.getElementById('drawerBaseURL').value.trim().replace(/\/+$/,'');var apiKey=document.getElementById('drawerApiKey').value.trim();var apiFormat=document.querySelector('input[name=api_format]:checked')?.value||'openai';var modelInput=document.getElementById('drawerModel').value.trim();if(!baseURL||!apiKey){var st=document.getElementById('drawerApiStatus');st.style.display='block';st.textContent='请填写完整';st.style.color='#e54d2e';return}var btn=document.getElementById('drawerApiSave');btn.textContent='验证中...';btn.disabled=true;try{var d=await siteLogin({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput});if(!d.token)throw Error('fail');localStorage.setItem('chat_api_config',JSON.stringify({base_url:baseURL,api_key:apiKey,api_format:apiFormat,model:modelInput}));var st2=document.getElementById('drawerApiStatus');st2.style.display='block';st2.textContent='\u2705 已连接';st2.style.color='#16a34a'}catch(e){var st3=document.getElementById('drawerApiStatus');st3.style.display='block';st3.textContent='\u274c 连接失败';st3.style.color='#e54d2e'}finally{btn.textContent='保存配置';btn.disabled=false}}
-(function(){fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})}).then(function(r){return r.json()}).then(function(d){if(d.token){state.token=d.token;localStorage.setItem('chat_token',d.token)}
+(function(){siteLogin().catch(function(){return{}}).then(function(d){d=d||{};if(d.token){state.token=d.token;localStorage.setItem('chat_token',d.token)}
   // 开机进哪段对话（08-22 修）：
   // ⚠️ 以前只写了「没有 convId 就进主线」，**有 convId 的那条路一个字都没写** ——
   //    而 localStorage 里几乎永远有 convId，于是刷新之后走到 3652 行的 resetEmpty()，

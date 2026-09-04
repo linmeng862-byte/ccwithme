@@ -281,6 +281,11 @@ html.context-menu-open,body.context-menu-open{background:var(--claude-context-di
 .attach-recent-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .attach-recent-thumb .attach-recent-check{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;background:#007AFF;color:#FFF;display:none;place-items:center;font-size:12px;font-weight:600}
 .attach-recent-thumb.selected .attach-recent-check{display:grid}
+/* 断流找回时那行灰字（2026-09-04）——别让她对着空气泡等 40 秒 */
+.recovering{color:var(--text-tertiary,#8A8A8E);font-size:14px;opacity:.85}
+/* 没给相册权限时那条提示；正在取原图时压暗一下（2026-09-04） */
+.attach-recent-hint{flex:none;max-width:230px;display:flex;align-items:center;padding:0 4px;font:12px/1.5 var(--font-sans);color:var(--text-tertiary,#8A8A8E)}
+.attach-recent-thumb.is-loading{opacity:.45}
 /* Action group */
 .attach-action-group{flex:none;margin:0 16px 12px;background:rgba(255,255,255,.8);border-radius:20px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .attach-action-row{display:flex;align-items:center;gap:14px;width:100%;height:64px;padding:0 16px;border:0;border-radius:0;background:transparent;text-align:left;cursor:pointer;transition:background .12s}
