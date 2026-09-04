@@ -41,3 +41,6 @@ static/toy.html
 
 # 每台自己的 app 图标（变体用），见 scripts/ios-prep.sh
 static/app-icon-*.png
+
+# 小花动画预览页（09-04，只给她自己看，别进公开仓库）
+static/_tail-sprites.html
