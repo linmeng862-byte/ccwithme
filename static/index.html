@@ -4415,9 +4415,21 @@ const _TOOL_ICONS={WebSearch:_SVG_GLOBE,Grep:_SVG_GLOBE,Glob:_SVG_GLOBE,WebFetch
 // 生成图都算进来了，结果大半的工具都在放 tool，两套就分不出来了。
 // 现在只留「他坐下来写一个文件」这一类（svg / html / 代码 / 文档），
 // 别再往里加 —— 加一个就少一分区别。
-const _CREATING_TOOLS={Write:1,Edit:1,create_file:1,project_write_file:1,create_artifact:1};
-function _toolIconSvg(name,input){if(_isMemoryOp(name,input))return icon('history');return _TOOL_ICONS[name]||_SVG_GEAR}
-function _toolActionDescription(name,input){if(_isMemoryOp(name,input)){const w=['Write','Edit','Bash'];return w.includes(name)?'Saving memory\u2026':'Recalling memory\u2026'}const map={WebSearch:'Searching the web\u2026',WebFetch:'Fetching web page\u2026',Read:'Reading file\u2026',Grep:'Searching for pattern\u2026',Glob:'Finding files\u2026',Bash:'Running command\u2026',Write:'Writing file\u2026',Edit:'Editing file\u2026',TodoWrite:'Updating todo list\u2026'};return map[name]||(name?name+'\u2026':'Working\u2026')}
+// ⚠️ 这里写**裸名**（查表前会 _bareToolName 剥掉 mcp__chat-c__ 前缀）。
+//    edit_file 是 09-04 补的 —— 后端真实叫这个，之前只写了 CLI 那边的 Edit。
+const _CREATING_TOOLS={Write:1,Edit:1,create_file:1,edit_file:1,project_write_file:1,create_artifact:1};
+// ⚠️ 2026-09-04：工具名传到前端时是**带 MCP 前缀**的 —— 数据库里的 trace 长这样：
+//    `mcp__chat-c__create_artifact`，不是 `create_artifact`。
+//    而下面这几张表（_TOOL_ICONS / _CREATING_TOOLS / _LA_TOOL_WORDS /
+//    _toolActionDescription 的 map）全是按**裸名**写的，于是**一条都命中不了**：
+//    图标全落回齿轮、小花一律 shimmer、灵动岛的话术一句没生效、
+//    动作说明全变成「工具名…」。前后端都没有任何地方剥这个前缀（grep 过）。
+//    她是从「他做了个 html，小花却是 shimmer 不是 tool」这一处发现的。
+//    ⚠️ 修法是**查表前剥前缀**，别往表里加带前缀的 key —— 加了的话
+//    服务器名一改（chat-c → 别的）就又全体失效，而且没人会想到是这个原因。
+function _bareToolName(n){return String(n||'').replace(/^mcp__.*?__/,'')}
+function _toolIconSvg(name,input){if(_isMemoryOp(name,input))return icon('history');return _TOOL_ICONS[_bareToolName(name)]||_SVG_GEAR}
+function _toolActionDescription(name,input){if(_isMemoryOp(name,input)){const w=['Write','Edit','Bash'];return w.includes(name)?'Saving memory\u2026':'Recalling memory\u2026'}const map={WebSearch:'Searching the web\u2026',WebFetch:'Fetching web page\u2026',Read:'Reading file\u2026',Grep:'Searching for pattern\u2026',Glob:'Finding files\u2026',Bash:'Running command\u2026',Write:'Writing file\u2026',Edit:'Editing file\u2026',TodoWrite:'Updating todo list\u2026'};var _bn=_bareToolName(name);return map[_bn]||(_bn?_bn+'\u2026':'Working\u2026')}
 function _maybeFetchToolCaption(row,d){const phases=_getPhases(row);if(phases.some(p=>p.type==='thinking'))return;const phase=phases.find(p=>p.toolUseId===d.tool_use_id);if(!phase)return;api('/api/tool-caption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_name:d.name||phase.toolName||'tool',tool_input:phase.toolInput,tool_output:typeof d.content==='string'?d.content.slice(0,4000):JSON.stringify(d.content||'').slice(0,4000)})}).then(r=>r&&r.ok?r.json():null).then(j=>{if(!j||!j.caption)return;const ps=_getPhases(row);const p=ps.find(x=>x.toolUseId===d.tool_use_id);if(!p)return;p.caption=j.caption;_setPhases(row,ps);_renderTraceRowActive(row)}).catch(()=>{})}
 function _maybeFetchThinkingSummary(row){const phases=_getPhases(row);const tp=phases.find(p=>p.type==='thinking'&&p.processText);if(!tp||tp._summaryFetched)return;tp._summaryFetched=true;_setPhases(row,phases);api('/api/thinking-summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thinking:tp.processText.slice(0,8000)})}).then(r=>r&&r.ok?r.json():null).then(j=>{if(!j||!j.summary)return;const ps=_getPhases(row);const p=ps.find(x=>x.id===tp.id);if(!p)return;p.summary=j.summary;p.title=j.summary;_setPhases(row,ps);_renderTraceRowActive(row)}).catch(()=>{})}
 function _renderTraceRowActive(row){const phases=_getPhases(row);if(!phases.length)return;let active=phases[phases.length-1];const icon=row.querySelector('.trace-row-icon');const text=row.querySelector('.trace-row-text');if(active.type==='tool'&&active.status!=='running'){const lastThinking=[...phases].reverse().find(p=>p.type==='thinking');if(lastThinking){active=lastThinking}}row.dataset.type=active.type||'tool';row.dataset.status=active.status||'';let _t;if(active.type==='thinking'){icon.innerHTML=_CLOCK_SVG;_t=active.title||active.summary||'Thinking'}else{icon.innerHTML=_toolIconSvg(active.toolName,active.toolInput);_t=active.title||active.toolName||_toolActionDescription(active.toolName,active.toolInput)}text.textContent=_t;laSetDetail(_t);}
@@ -4540,7 +4552,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       //   他在做东西的时候          → 'tool'，18 帧，留给「生成/创作」这一类
       // ⚠️ 记一个最早能切回去的时间：一个周期一千五到一千八，工具两百毫秒就返回的话
       //    只会闪一下，肉眼根本看不见 —— 她第一次试就是这个现象（见 toolResult）。
-      var _mk=_CREATING_TOOLS[d.name]?'tool':'shimmer';
+      var _mk=_CREATING_TOOLS[_bareToolName(d.name)]?'tool':'shimmer';
       // ⚠️ 09-04 她说「shimmer 很短就转成 writing，而且好快」。两个数一起调的：
       //    sprite 每帧 100→120ms（15 帧 = 1800ms），最短停留 1500→1800ms。
       //    现在 shimmer 和 tool 都是 1800ms —— sprite 一圈、CSS 的 claudeToolPulse、
@@ -6066,7 +6078,7 @@ function laSetDetail(text){
   text=text||'';
   if(text===_laDetailRaw)return;
   _laDetailRaw=text;
-  var w=_LA_TOOL_WORDS[text];
+  var w=_LA_TOOL_WORDS[text]||_LA_TOOL_WORDS[_bareToolName(text)];
   _laDetail=(w||text).slice(0,60);_laPush();
 }
 var _laDetailRaw='';
