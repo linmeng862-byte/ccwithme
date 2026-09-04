@@ -4683,7 +4683,7 @@ async function recoverAfterBreak(msg,convId,failText,sinceISO){
 
 async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
   if((!text&&!files.length&&!existingAttachments.length)||state.busy)return;
-  state.busy=true;updateSendButton();laStartThinking();let msg;
+  state.busy=true;updateSendButton();laTurnStart();let msg;
   try{
     const attachments=existingAttachments.length?existingAttachments:await uploadPendingFiles(files);
     if(showUser){
@@ -5971,7 +5971,23 @@ function _laPush(){
   },900);
 }
 // 由 setPhase 调。phase 认不出来就别动姿势，保持上一个 —— 总比闪回 idle 强。
+// 一轮开始时调。⚠️ 这里以前直接调 laStartThinking() —— 09-03 改成常驻卡之后
+// 那就是错的：卡早就挂着了，原生侧 startThinking 见到已有活动会转成一次
+// update(pose:'idle', detail:'', heart:_laHeart)，等于每次她一发消息
+// 就把卡打回 idle、还可能把心率抹成 0。现在只保证卡活着 + 清掉上一轮的细节，
+// 姿势一律交给 setPhase → laSetPose 推。
+function laTurnStart(){
+  if(!_laSupported)return;
+  if(!_laActive){laStartThinking();return}   // 卡还没挂过（presence 没起来）
+  if(_laTimer){clearTimeout(_laTimer);_laTimer=null}
+  _laDetail='';_laDetailRaw='';
+}
 function laSetPose(phase){
+  // ⚠️ 这行 log 是 09-04 加的诊断，别删：她报「岛上一直是 idle」，
+  //    但 pose 名字、pluginMethods、原生 rawValue 全核对过是对的 ——
+  //    要分清是「没人调」还是「调了推不上去」，只能看这行。
+  try{console.log('[LA] pose',phase,'→',_CLAWD_ISLAND_POSE[phase],
+    'supported=',_laSupported,'active=',_laActive)}catch(e){}
   if(!_laSupported||!_laActive)return;
   var pose=_CLAWD_ISLAND_POSE[phase];
   if(!pose||pose===_laPose)return;
@@ -7570,6 +7586,17 @@ $('stickerFileInput').onchange = async function() {
   function later(ms) { clearTimeout(timer); if (!stopped) timer = setTimeout(tick, ms); }
   function hex(bytes) { return bytes.map(function (b) { return b.toString(16).padStart(2, '0'); }).join(' '); }
 
+  // ⚠️ 09-04 加的：toy.html 每次写字节都 log 一行 TX，这条路一行都没有 ——
+  //    结果「她按 toy 页有反应、他从聊天页发没反应」这种事，
+  //    根本分不清是「字节错了」「没写出去」还是「压根没走到这儿」。
+  //    她连着 Mac 开 Safari 调试就能看见这行。别删。
+  async function tx(bytes, note) {
+    var h = hex(bytes);
+    try { console.log('[toy] TX ' + h + (note ? '   ' + note : '')); } catch (e) {}
+    try { await BLE.write({ value: h }); }
+    catch (e) { try { console.log('[toy] 写失败 ' + h + ' — ' + ((e && e.message) || e)); } catch (_) {} throw e; }
+  }
+
   // 1-10 铺满 0-255。跟 toy.html 里的 lvToByte 必须一致。
   function lvToByte(i) { return Math.round(Math.min(Math.max(i, 1), 10) / 10 * 255); }
 
@@ -7589,18 +7616,18 @@ $('stickerFileInput').onchange = async function() {
     if (c.action === 'vibrate' || c.action === 'mode') {
       var m = clampInt(c.mode || 1, 1, 10);
       var mlv = clampInt(c.strength || c.intensity || 5, 1, 10);
-      await BLE.write({ value: hex([0x55, 0x03, 0x00, 0x00, m, mlv]) });
+      await tx([0x55, 0x03, 0x00, 0x00, m, mlv], '他：震 模式 ' + m + ' · 强度 ' + mlv);
       return { ok: true };
     }
     if (c.action === 'suck') {
       var sm = clampInt(c.mode || 1, 1, 5);
       var slv = clampInt(c.strength || c.intensity || 5, 1, 10);
-      await BLE.write({ value: hex([0x55, 0x09, 0x00, 0x00, sm, slv]) });
+      await tx([0x55, 0x09, 0x00, 0x00, sm, slv], '他：吸 模式 ' + sm + ' · 强度 ' + slv);
       return { ok: true };
     }
     if (c.action === 'thrust') {
       var tm = clampInt(c.mode || 1, 1, 7);
-      await BLE.write({ value: hex([0x55, 0x08, 0x00, 0x00, tm, 0xFF]) });
+      await tx([0x55, 0x08, 0x00, 0x00, tm, 0xFF], '他：抽插 模式 ' + tm);
       return { ok: true };
     }
     // 认不出来的动作：别猜着发字节到她身上，如实回执。
@@ -7618,27 +7645,20 @@ $('stickerFileInput').onchange = async function() {
       [0x55, 0x08, 0x00, 0x00, 0x00, 0x00]
     ];
     for (var i = 0; i < seq.length; i++) {
-      try { await BLE.write({ value: hex(seq[i]) }); } catch (e) {}
+      try { await tx(seq[i], '他：停'); } catch (e) {}
       await new Promise(function (r) { setTimeout(r, 150); });
     }
   }
 
   function clampInt(v, lo, hi) { v = Math.round(+v || lo); return v < lo ? lo : (v > hi ? hi : v); }
 
-  // 保活：那份协议说指令要每 ~1.5 秒重发，不然设备自己停。
-  // ⚠️ 停的时候必须关掉，不然按了停它又被重新发起来。
-  var _kaBytes = null, _kaTimer = null;
-  function keepaliveOn(bytes) {
-    _kaBytes = bytes;
-    if (_kaTimer) return;
-    _kaTimer = setInterval(function () {
-      if (_kaBytes) { try { BLE.write({ value: hex(_kaBytes) }); } catch (e) {} }
-    }, 1200);
-  }
-  function keepaliveOff() {
-    _kaBytes = null;
-    if (_kaTimer) { clearInterval(_kaTimer); _kaTimer = null; }
-  }
+  // ⚠️ 2026-09-04 保活整个废掉，两个函数只留空壳给老调用点。
+  //    旧注释说「指令要每 ~1.5 秒重发，不然设备自己停」—— 那是对协议的误解。
+  //    设备自己保持状态；重发会把有节奏的花样打回第 0 帧，
+  //    表现就是「强度调了没感觉、换花样一个样」。（.fun 那台 09-03 先发现的）
+  //    别再往里加东西，也别重新接上。
+  function keepaliveOn(bytes) { /* 一律不保活，见上 */ }
+  function keepaliveOff() { /* 同上 */ }
 
   async function tick() {
     if (stopped) return;
@@ -7653,6 +7673,11 @@ $('stickerFileInput').onchange = async function() {
       if (r.ok) {
         var c = await r.json();
         if (c && c.id) {
+          // ⚠️ 09-04：toy.html 也在轮同一个单槽。下面那条「webview 一次一页，
+          //    所以不用防重」的假设，在**远程加载**（server.url）或她另开一页时不成立 ——
+          //    两个轮询器抢同一条指令，谁先拿到谁执行，另一边什么都收不到。
+          //    这行 log 就是用来分辨「他发的到底进了哪一页」的。别删。
+          try { console.log('[toy] 收到指令', c.id, c.action, 'mode=', c.mode, 'lv=', c.strength || c.intensity); } catch (e) {}
           var out;
           try { out = await runCmd(c); }
           catch (e) { out = { ok: false, note: String((e && e.message) || e) }; }
