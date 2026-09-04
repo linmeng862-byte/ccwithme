@@ -4460,7 +4460,14 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       // CLAUDE_LOGO_SPRITES 里那套 9 帧的 'thinking' 本来就是为这一格画的，一直闲着。
       setClaudeLogoMode(trailLogo,'thinking');
     }else if(p==='streaming'){
-      setClaudeLogoMode(trailLogo,'writing');
+      // ⚠️ 09-04 傍晚：这里以前是无条件设 writing，把工具那朵花**盖掉**了。
+      //    症状：他 hold / trace 那类工具，小花看着是 writing 不是 shimmer。
+      //    根因是竞态不是没触发 —— 他一边说话一边调工具（hold 最典型：
+      //    「我把这一刻收起来」跟 tool_use 同一轮），工具期间只要来一个 text delta，
+      //    setPhase('streaming') 就把 toolUse 刚设上的 shimmer 冲掉。
+      //    toolResult 那条定时器是尊重 _toolLogoUntil 的，唯独这里不尊重。
+      //    所以：那圈还没转完就别抢，到点了由 toolResult 自己切回 writing。
+      if(Date.now()>=_toolLogoUntil)setClaudeLogoMode(trailLogo,'writing');
     }else if(p==='complete'){
       clearClaudeLogo(trailLogo);trailLogo.remove();
     }
