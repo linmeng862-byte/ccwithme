@@ -4406,7 +4406,10 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
     row.dataset.phase=p;
     laSetPose(p);   // 灵动岛那只螃蟹跟页面这只听同一个状态机
     if(p==='thinking'){
-      setClaudeLogoMode(trailLogo,'writing',undefined,163);
+      // 09-04：以前这儿也是 'writing'，只把速度放慢到 163ms/帧充当区分 ——
+      // 结果「他在想」和「他在写」是同一朵花，她看不出差别。
+      // CLAUDE_LOGO_SPRITES 里那套 9 帧的 'thinking' 本来就是为这一格画的，一直闲着。
+      setClaudeLogoMode(trailLogo,'thinking');
     }else if(p==='streaming'){
       setClaudeLogoMode(trailLogo,'writing');
     }else if(p==='complete'){
