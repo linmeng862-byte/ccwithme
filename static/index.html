@@ -2187,7 +2187,18 @@ function _startWakePoll(){
       d.messages.forEach(function(m){
         if(m.role!=='assistant')return;
         // 已经在流里的不重复摆（刷新过就可能已经渲染过了）
-        if(streamInner.querySelector('[data-wake-id="'+m.id+'"]'))return;
+        // ⚠️ 09-04 诊断，别删。她报「他找我了的消息一打开是两遍、刷新就好了」——
+        //    刷新就好说明库里只有一条，多出来的那条是这里插的，
+        //    而且只发生一次（wake_seen_at 被消费掉了）。也就是**这行去重没命中**。
+        //    要分清是「历史里根本没这条」（她当时不在主线？）还是「有但 id 对不上」，
+        //    只能看下面这行：wake 给的 id、页面上现有的所有 wake-id、当前 conv。
+        var _hit=streamInner.querySelector('[data-wake-id="'+m.id+'"]');
+        try{console.log('[wake] id=',m.id,'去重命中=',!!_hit,
+          '当前conv=',state.convId,
+          '页面上已有的wake-id=',[].map.call(
+            streamInner.querySelectorAll('[data-wake-id]'),
+            function(e){return e.dataset.wakeId}).join(','))}catch(e){}
+        if(_hit)return;
         var row=_buildClaudeRow(m.content,'','',String(m.created_at*1000));
         row.dataset.wakeId=m.id;
         streamInner.append(row);
