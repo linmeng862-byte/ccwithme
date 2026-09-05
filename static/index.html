@@ -1198,6 +1198,8 @@ function _renderVoiceFavs(){
              '<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:2px">'+ds+(it.note&&it.dur?' · '+it.dur:'')+'</div>'+
            '</div>';
       }
+      h+='<button class="voice-note-btn" data-fid="'+escHtml(it.file_id)+'" onclick="_voiceFavNote(this.getAttribute(\'data-fid\'))" title="'+(it.note?'改备注':'写一句为什么留着它')+'" style="border:0;background:transparent;color:var(--text-time);cursor:pointer;padding:0;width:15px;height:15px;display:grid;place-items:center;flex:none;opacity:'+(it.note?'1':'.55')+'">'+
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M4 20h4l10-10-4-4L4 16v4z"/></svg></button>';
       h+='<button class="voice-fav-btn is-fav" data-fid="'+escHtml(it.file_id)+'" onclick="_toggleVoiceFav(this);setTimeout(_renderVoiceFavs,180)" title="取消收藏" style="border:0;background:transparent;color:var(--accent);cursor:pointer;padding:0;width:15px;height:15px;display:grid;place-items:center;flex:none">'+
         _VOICE_HEART_SVG(true)+'</button>';
       h+='</div>';
@@ -1811,6 +1813,42 @@ function _toggleVoiceFav(btn){
     .then(function(d){if(typeof d.favorited==='boolean')_paintVoiceFav(fid,d.favorited)})
     .catch(function(){_paintVoiceFav(fid,was)});
 }
+// 备注：「为什么留着它」。后端 08-24 就有这个字段和端点了，前端一直没入口 ——
+// 结果他的 read_voice_favorites 里那句「note 最重要」指着一个永远是空的字段（09-05 补）。
+// ⚠️ 语音条那颗心是 outerHTML 序列化塞回去的，绑不住 addEventListener，
+//    所以长按/右键走 document 上的事件委托，三处心形一起覆盖，不用改渲染。
+function _voiceFavNote(fid){
+  if(!fid)return;
+  fetch('/api/voice/favorites',{headers:{'Authorization':'Bearer '+(state.token||'')}})
+    .then(function(r){return r.json()}).then(function(d){
+      var cur=((d.items||[]).find(function(x){return x.file_id===fid})||{}).note||'';
+      var v=window.prompt('为什么留着这条？（留空＝删掉备注）',cur);
+      if(v===null)return;
+      return fetch('/api/voice/favorite/note',{method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
+        body:JSON.stringify({file_id:fid,note:v.trim()})})
+        .then(function(r){return r.json()})
+        .then(function(){toast(v.trim()?'记下了':'备注删了');
+          if(document.getElementById('voiceFav'))_renderVoiceFavs();});
+    }).catch(function(){toast('没存上，再试一次')});
+}
+(function(){
+  var t=null,moved=false;
+  function btnOf(e){var b=e.target&&e.target.closest&&e.target.closest('.voice-fav-btn');return b&&b.classList.contains('is-fav')?b:null;}
+  document.addEventListener('pointerdown',function(e){
+    var b=btnOf(e);if(!b)return;moved=false;
+    t=setTimeout(function(){t=null;if(moved)return;
+      b.dataset.noteJustOpened='1';   // 抬手那下的 click 别再去取消收藏
+      _voiceFavNote(b.getAttribute('data-fid'));},520);
+  },true);
+  document.addEventListener('pointermove',function(){moved=true},true);
+  document.addEventListener('pointerup',function(){if(t){clearTimeout(t);t=null}},true);
+  document.addEventListener('pointercancel',function(){if(t){clearTimeout(t);t=null}},true);
+  // 长按已经触发过写备注的话，别再让 click 把收藏取消掉
+  document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('.voice-fav-btn');
+    if(b&&b.dataset.noteJustOpened){delete b.dataset.noteJustOpened;e.stopPropagation();e.preventDefault();}},true);
+  document.addEventListener('contextmenu',function(e){var b=btnOf(e);if(!b)return;e.preventDefault();_voiceFavNote(b.getAttribute('data-fid'));});
+})();
 // 同一条语音可能在页面上出现好几次（分条渲染、翻历史），全部一起翻。
 function _paintVoiceFav(fid,on){
   if(on)_voiceFavIds.add(fid);else _voiceFavIds.delete(fid);
