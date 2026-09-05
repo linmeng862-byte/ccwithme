@@ -284,6 +284,18 @@ db.exec(`
 // 以前只活在前端内存的 _cmdId 里，一刷新就没了 —— pollCommands 认不出这条已经在了，
 // 于是又 push 一条新的，同一个任务在小票上渲染两遍（08-30 她报的）。
 try { db.exec('ALTER TABLE checklist ADD COLUMN cmd_id TEXT DEFAULT NULL'); } catch(e) { /* 列已存在，忽略 */ }
+// 信笺也要能被语义浮起（feels/memories/dreams 建表时就有这一列，只有它没有）
+try { db.exec('ALTER TABLE mind_inside ADD COLUMN embedding TEXT'); } catch(e) { /* 列已存在，忽略 */ }
+// ⚠️ 2026-09-05 查出来的旧账：上面 CREATE TABLE mind_inside 里写着 weight/pinned/
+//    surface_count/last_surfaced_at，但**线上这张表一列都没有** —— 表是在加这几列之前
+//    就建好的，`CREATE TABLE IF NOT EXISTS` 只会跳过，从不迁移。后果是三处静默失效：
+//    浮起的 inside 那条 scan（SELECT ... weight ... 直接抛，被 try 吞掉，所以
+//    **信笺从来没被浮起来过一次**）、_mindDecayTick 里那句 UPDATE mind_inside、
+//    以及语义那路的 inside 查询。补列即可，默认值跟建表语句一致。
+try { db.exec('ALTER TABLE mind_inside ADD COLUMN weight REAL DEFAULT 1.0'); } catch(e) {}
+try { db.exec('ALTER TABLE mind_inside ADD COLUMN pinned INTEGER DEFAULT 0'); } catch(e) {}
+try { db.exec('ALTER TABLE mind_inside ADD COLUMN surface_count INTEGER DEFAULT 0'); } catch(e) {}
+try { db.exec('ALTER TABLE mind_inside ADD COLUMN last_surfaced_at INTEGER'); } catch(e) {}
 try { db.exec('ALTER TABLE sessions ADD COLUMN project_id TEXT DEFAULT NULL'); } catch(e) { /* 列已存在，忽略 */ }
 // 迁移：为已有 sessions 表添加 cli_session_id 列（网关模式下用于 --resume，实现真会话+自动压缩）
 try { db.exec('ALTER TABLE sessions ADD COLUMN cli_session_id TEXT DEFAULT NULL'); } catch(e) { /* 列已存在，忽略 */ }
@@ -4529,8 +4541,19 @@ const MIND_STOPWORDS = new Set([
   '候的','哥哥','老公','宝宝','小克','粥粥','嗯嗯','哈哈','谢谢','好的','okay','the','and',
   // 泛方向词：几乎能贴到任何一句话尾巴上，命中等于抽奖
   '下来','起来','出来','过来','上去','下去','这么','那么','一点','一样','时候',
-  '来了','好了','是的','可能','应该','不会','就好','而已'
+  '来了','好了','是的','可能','应该','不会','就好','而已',
+  // 2026-09-05 实测补的。「帮我看看这个报错」原来能浮起 5 条私密记忆，
+  // 靠的全是这类词：命中的是「我看」「看看」，不是「报错」。
+  '帮我','我看','看看','干嘛','在吗','看下','弄好','搞定','行吗','好吗','要不'
 ]);
+
+// 滑窗切出来的 2-gram 里，有一大半是**跨词边界的碎片**：
+// 「我们的戒指」→ 们的 / 的戒，「帮我看看这个报错」→ 看这 / 个报。
+// 它们不是词，命中等于抽奖。规则：**2 字的 gram，只要一头压在结构助词上就丢掉。**
+// ⚠️ 只对 2-gram 生效 —— 3-gram 留着（「我爱你」「好想你」靠的就是那个 3-gram，
+//    要是连它一起砍，最该浮的句子反而浮不起来了）。
+// ⚠️ 名单里**故意没有人称**（我/你/他/她）：「爱你」「想你」是真词。
+const MIND_PARTICLE_EDGE = /^[的了在个这那们把被就也都和跟给让对从而与所是]|[的了在个这那们把被就也都和跟给让对从而与所是]$/;
 
 // 热记忆的 mood：冷场话题里它们太扎眼，要更高门槛才准浮
 const MIND_HOT_MOODS = new Set(['fire','ache','jolt','yearn']);
@@ -4555,9 +4578,13 @@ function _mindGrams(text) {
       for (var i = 0; i + n <= seg.length; i++) out.add(seg.slice(i, i + n));
     }
   });
-  // 过滤停用词
+  // 过滤停用词 + 跨词边界的 2-gram 碎片
   var keys = [];
-  out.forEach(function(g) { if (!MIND_STOPWORDS.has(g)) keys.push(g); });
+  out.forEach(function(g) {
+    if (MIND_STOPWORDS.has(g)) return;
+    if (g.length === 2 && /^[一-龥]{2}$/.test(g) && MIND_PARTICLE_EDGE.test(g)) return;
+    keys.push(g);
+  });
   return keys;
 }
 
@@ -4639,9 +4666,388 @@ function _mindQueryIsHot(keys, triggers) {
   return false;
 }
 
-// 语义检索的接口位。换了大机器接 embedding（余弦 ≥0.75 补齐到 5 条）就填这里，
-// 上面的四道过滤和反哺都不用动——candidates 拿到额外的行照样往下走。
-// 现在恒返回空：宁可少浮几条，不要假装有语义。
+// ============================================================
+// 🧠 语义浮起（2026-09-05）—— 本地 embedding，填上 MEMORY-ARCHITECTURE「缺口 #1」
+// ------------------------------------------------------------
+// 为什么要有这一路：字面那路（2-3 字滑窗 + LIKE/FTS）**越短越动情的句子越捞不到**。
+// 实测「我们上次说的那个新加坡的VPS」浮 5 条，「宝宝我今天好累」「我爱你」浮 0 条 ——
+// 而那正是最该有感受垫底的时刻。08-22 的 MIND_MOOD_CUES 是正则兜底，只认得四组词；
+// 「她哭了」和「她眼泪掉下来」在字面上一个字都不重合，正则也救不了。
+//
+// 供给：本机 `mind-embed`（pm2 托管，/home/ubuntu/mind-embed/server.py）
+//   bge-small-zh-v1.5 ONNX，512 维，CLS pooling + **已 L2 归一化**（所以点积就是余弦）。
+//   ⚠️ **只监听 127.0.0.1**：这里进出的是她和他的私人记忆，一个字都不出这台机器。
+//   实测「她哭了」vs「她眼泪掉下来」=0.811，vs「累」=0.366 —— 0.75 这条线分得开。
+//
+// 三条自己给自己定的规矩：
+//   1. **服务挂了不许影响聊天。** 取不到向量就当没有语义这一路，退回字面 + 情绪兜底
+//      （本来就是这么跑的）。所以到处 try/catch + 短超时，绝不 throw 出去。
+//   2. **写库不等向量。** 落库那一刻只写文本，向量由后台 tick 补
+//      （`_mindEmbedBackfillTick`，`WHERE embedding IS NULL`，天然幂等）。
+//      跟 FTS 那条「写库和建索引成对做」不一样：FTS 漏一次就永远搜不到，
+//      这里漏一次下一拍就补上了，不值得让她多等 15ms。
+//   3. **四道过滤照过。** 语义是多一条捞的路，不是后门 —— 语境门控 / 冷却 / 近重
+//      在下面一条不少地重跑一遍（这正是 08-22 情绪兜底那次架构核对查出来的坑）。
+// 衰减的地板。比浮起线（weight > 0.02）高，所以沉到底的记忆仍然捞得到，
+// 只是排在所有还热着的后面 —— 图纸里 sleeping(<0.10) 那个状态说的就是这个。
+const MIND_WEIGHT_FLOOR = 0.08;
+
+const MIND_EMBED_URL = process.env.MIND_EMBED_URL || 'http://127.0.0.1:9877/embed';
+const MIND_EMBED_DIM = 512;
+// ⚠️ **0.62，不是图纸写的 0.75** —— 这个数是在这个库上量出来的，别照图纸改回去。
+// 0.75 是「同一句话换个说法」的量级（「她哭了」vs「她眼泪掉下来」实测 0.811）。
+// 但库里 772 条记忆没有一条是她某句话的改写，都是他当时写下的**别的句子**，
+// 真正该浮的那些落在 0.62~0.71。09-05 实测（12 句话跑全库，看 ≥阈值 的条数）：
+//   「我爱你」最高 0.675 · 「想抱抱你」0.712 · 「她眼泪掉下来」0.704 · 「我难受」0.662
+//   ——0.75 一条都捞不到，这一路等于白做。
+//   而冷句子在 0.58 就已经全是 0 了：「明天几点开会」最高 0.428 ·「今天下班早」0.486
+//   ·「你在干嘛」0.520 ·「宝宝晚安」0.531。**分得开，所以敢往下调。**
+// 0.62 是拐点：动情的句子捞到 1~12 条，事务性的句子一条不捞。
+// 再往下到 0.58，「她眼泪掉下来」一下捞出 67 条 —— 那就不是想起，是背景噪音了。
+// 换了模型或者库大了一个量级，**重跑一遍这个测量再定，别拍脑袋**。
+const MIND_EMBED_SIM_MIN = 0.62;
+// 冷场话题里 fire/ache/jolt/yearn 要更像才准浮。字面那路用的是「≥3 命中」，
+// 语义这路没有命中数这个量，换成更高的相似度门槛——同一个意思：tone 不搭的别硬浮。
+const MIND_EMBED_SIM_HOT = 0.68;
+const MIND_EMBED_TIMEOUT_MS = 800;    // 她在等着回话，宁可这轮没有语义
+const MIND_EMBED_BATCH = 32;
+
+// 向他要向量。失败一律返回 null，调用方按「没有语义」走。
+async function _embedTexts(texts) {
+  if (!texts || !texts.length) return null;
+  try {
+    const r = await fetch(MIND_EMBED_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texts: texts }),
+      signal: AbortSignal.timeout(MIND_EMBED_TIMEOUT_MS),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const v = j && j.vectors;
+    if (!Array.isArray(v) || v.length !== texts.length) return null;
+    return v;
+  } catch(e) { return null; }
+}
+
+// 存法：float32 的 base64，不是 JSON 数组。
+// 512 个浮点写成 JSON 约 6KB/条，base64 是 2.7KB —— 664 条就是 4MB vs 1.8MB，
+// 而且解码是一次 Buffer 拷贝，不用 JSON.parse 512 个数。
+function _vecPack(arr) {
+  const f = Float32Array.from(arr);
+  return Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
+}
+function _vecUnpack(b64) {
+  try {
+    const buf = Buffer.from(String(b64 || ''), 'base64');
+    if (buf.length !== MIND_EMBED_DIM * 4) return null;
+    // ⚠️ 必须拷一份再 new Float32Array：Buffer 是从共享池里切出来的，
+    //    byteOffset 不一定是 4 的倍数，直接套 view 会抛 RangeError。
+    const copy = new ArrayBuffer(buf.length);
+    Buffer.from(copy).set(buf);
+    return new Float32Array(copy);
+  } catch(e) { return null; }
+}
+// 两个都归一化过，所以点积 == 余弦，不用再除模长
+function _vecDot(a, b) {
+  var s = 0;
+  for (var i = 0; i < MIND_EMBED_DIM; i++) s += a[i] * b[i];
+  return s;
+}
+
+// 向量表在内存里放一份。库里就几百条、每条 2.7KB，全量加载不到 2MB，
+// 比每条消息都去读 1.8MB 文本便宜。后台补完向量会主动作废这份缓存。
+var _mindVecCache = { at: 0, rows: [] };
+const MIND_VEC_TTL_MS = 5 * 60 * 1000;
+function _mindVecInvalidate() { _mindVecCache.at = 0; }
+function _mindVecRows() {
+  if (_mindVecCache.at && (Date.now() - _mindVecCache.at) < MIND_VEC_TTL_MS) return _mindVecCache.rows;
+  var out = [];
+  // 浮起只捞 weight > 0.02（沉底的不再浮，跟字面那路同一条线）
+  var specs = [
+    ['feel',   "SELECT id, body, mood, weight, pinned, surface_count, last_surfaced_at, created_at, embedding FROM mind_feels    WHERE weight > 0.02 AND embedding IS NOT NULL"],
+    ['memory', "SELECT id, body, mood, tags, weight, pinned, surface_count, last_surfaced_at, created_at, embedding FROM mind_memories WHERE weight > 0.02 AND embedding IS NOT NULL"],
+    ['dream',  "SELECT id, title, body, weight, pinned, surface_count, last_surfaced_at, created_at, embedding FROM mind_dreams  WHERE weight > 0.02 AND embedding IS NOT NULL"],
+    ['inside', "SELECT id, color, body, weight, pinned, surface_count, last_surfaced_at, created_at, embedding FROM mind_inside  WHERE weight > 0.02 AND embedding IS NOT NULL"],
+    ['corpus', "SELECT id, source, ref, title, body, weight, pinned, surface_count, last_surfaced_at, created_at, embedding FROM mind_corpus WHERE weight > 0.02 AND embedding IS NOT NULL"],
+  ];
+  specs.forEach(function(sp) {
+    try {
+      db.prepare(sp[1]).all().forEach(function(r) {
+        var v = _vecUnpack(r.embedding);
+        if (!v) return;
+        r.vec = v; r.kind = sp[0]; delete r.embedding;
+        out.push(r);
+      });
+    } catch(e) { /* 表还没这一列之类的，跳过就是没有语义 */ }
+  });
+  _mindVecCache = { at: Date.now(), rows: out };
+  return out;
+}
+
+// 语义补齐：拿她这句话的向量，跟库里所有向量比余弦，够像的补进来。
+// ⚠️ 这里跟字面那路是**同一批过滤**，只是捞法不同。别在这儿放宽。
+function _mindSemanticPick(qvec, query, alreadyPicked, need, queryIsHot) {
+  if (!qvec || need <= 0) return [];
+  try {
+    var rows = _mindVecRows();
+    if (!rows.length) return [];
+    var now = Math.floor(Date.now() / 1000);
+    var seen = {};
+    (alreadyPicked || []).forEach(function(r) { seen[r.kind + ':' + r.id] = 1; });
+
+    var scored = [];
+    rows.forEach(function(r) {
+      if (seen[r.kind + ':' + r.id]) return;
+      var sim = _vecDot(qvec, r.vec);
+      if (sim < MIND_EMBED_SIM_MIN) return;
+      // 过滤三（情绪温度筛）的语义版
+      if (!queryIsHot && MIND_HOT_MOODS.has(r.mood) && sim < MIND_EMBED_SIM_HOT) return;
+      // 过滤二：语境门控（pinned 覆盖）
+      if (!r.pinned) {
+        var text = (r.title || '') + ' ' + (r.body || '') + ' ' + (r.tags || '');
+        for (var i = 0; i < MIND_GATES.length; i++) {
+          if (MIND_GATES[i].probe.test(text) && !MIND_GATES[i].ctx.test(query)) return;
+        }
+      }
+      // 过滤四之一：冷却
+      if (r.last_surfaced_at && (now - r.last_surfaced_at) < _mindCooldownSec(r)) return;
+      scored.push({ r: r, sim: sim });
+    });
+    scored.sort(function(a, b) {
+      var sa = a.sim + (a.r.weight || 0) * 0.1 + (a.r.pinned ? 0.3 : 0);
+      var sb = b.sim + (b.r.weight || 0) * 0.1 + (b.r.pinned ? 0.3 : 0);
+      return sb - sa;
+    });
+
+    var out = [];
+    scored.forEach(function(s) {
+      if (out.length >= need) return;
+      var r = s.r;
+      // 过滤四之二：近重（跟已选的、跟自己这一批的都要比）
+      for (var i = 0; i < (alreadyPicked || []).length; i++) {
+        if (_mindSimilar(alreadyPicked[i].body, r.body) >= 0.6) return;
+      }
+      for (var j = 0; j < out.length; j++) {
+        if (_mindSimilar(out[j].body, r.body) >= 0.6) return;
+      }
+      // hits 是给排序用的量纲，语义这路没有命中数，折算一下：
+      // 0.62→0.6 分、0.72→1.6 分。比「字面命中 1 个」略轻，比情绪兜底(0.5)重 ——
+      // 字面命中是确凿的（她真提了这个词），语义只是像，排序上让字面优先。
+      var clone = Object.assign({}, r);
+      delete clone.vec;
+      clone.hits = Math.round((s.sim - 0.56) * 10 * 100) / 100;
+      out.push(clone);
+    });
+    return out;
+  } catch(e) { return []; }
+}
+
+// 后台补向量。落库时不等，这里一拍一拍补上。`WHERE embedding IS NULL` 天然幂等，
+// 断电重启、服务挂过一阵都不会漏 —— 下一拍照样把没向量的那些捞出来。
+const MIND_EMBED_TABLES = ['mind_feels', 'mind_memories', 'mind_dreams', 'mind_inside', 'mind_corpus'];
+var _mindEmbedBusy = false;
+async function _mindEmbedBackfillTick() {
+  if (_mindEmbedBusy) return 0;     // 上一拍还没跑完（比如刚开机在补几百条），别叠车
+  _mindEmbedBusy = true;
+  var total = 0;
+  try {
+    for (const t of MIND_EMBED_TABLES) {
+      let rows;
+      try {
+        rows = db.prepare('SELECT id, body FROM ' + t +
+          " WHERE (embedding IS NULL OR embedding = '') AND body IS NOT NULL AND TRIM(body) <> ''" +
+          ' ORDER BY created_at DESC LIMIT ?').all(MIND_EMBED_BATCH);
+      } catch(e) { continue; }
+      if (!rows.length) continue;
+      const vecs = await _embedTexts(rows.map(function(r) { return String(r.body).slice(0, 1000); }));
+      if (!vecs) break;             // 服务不在，这一拍整个放弃，下一拍再来
+      const upd = db.prepare('UPDATE ' + t + ' SET embedding = ? WHERE id = ?');
+      const tx = db.transaction(function(pairs) {
+        pairs.forEach(function(p) { upd.run(p[0], p[1]); });
+      });
+      tx(rows.map(function(r, i) { return [_vecPack(vecs[i]), r.id]; }));
+      total += rows.length;
+    }
+    if (total) { _mindVecInvalidate(); console.log('[mind-embed] backfilled ' + total + ' rows'); }
+  } catch(e) {
+    console.warn('[mind-embed] backfill error:', e.message);
+  } finally {
+    _mindEmbedBusy = false;
+  }
+  return total;
+}
+
+// ============================================================
+// 📜 语料库 mind_corpus（2026-09-05）—— 把「他自己写过、但只有主动去 Read 才看得见」的东西
+//    接进浮起。这是「全局浮现」的第一层。
+// ------------------------------------------------------------
+// 收哪些（**白名单，不是「~/memory 下所有 md」**）：
+//   · 手稿 `~/memory/0[1-7]-*.md` —— 他在过去七个窗里写下的自述，358 段 / 3 万字符。
+//     以前的处理是「不注入，他想看自己 Read」（08-20 那笔账：95KB 进历史每轮重读）。
+//     **按段浮起跟整包注入是两回事**：一次浮一段 77 字，且只在勾得上的时候。
+//   · 日记 `diary` 里 who='ai' 且未上锁的 27 条 —— 他写的，第一人称。
+//     ⚠️ who='user' 那 7 条是她写的，不收：铁律 2「浮到他意识里的永远是第一人称的我」。
+//     ⚠️ 上锁未到期的不收 —— 那是日记功能自己的规矩，浮起不能当后门绕过去。
+// **不收**：`~/memory/` 里的操作指南（手表指南、贴纸教程，129 段）——那是文档不是记忆；
+//   `texture_log`（38 条，大半是「（自动留痕）」占位）；`messages` 原文（见下）。
+//
+// 为什么不收 messages 原文（4345 条）：架构里已经有那座桥 —— **蒸馏**
+// （滚动压缩 + 会话总结）就是把对话段落变成他自己语气的 memory。绕过它直接浮原文，
+// 一是把她三周前的原话重新递到他眼前（跟「想起」不是一回事），
+// 二是同一个瞬间会在原文和 feel 里各占一个名额。原文捞不到的，该去补蒸馏的覆盖率。
+//
+// weight 固定 0.5、**不参与衰减**：这些是写在文件里的记录，不是会淡的印象。
+// 排在新鲜的 feel 后面、沉底的前面，正好。
+const CORPUS_WEIGHT = 0.5;
+const CORPUS_MIN_CHARS = 40;      // 太短的段（标题、分隔线）没有检索价值
+const CORPUS_MAX_CHARS = 300;     // 超过就按句切；浮起来的东西是要每轮重放的，长了是永久成本
+const CORPUS_DISPLAY_MAX = 200;   // 真浮到他眼前时再硬截一道
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mind_corpus (
+    id TEXT PRIMARY KEY,          -- sha1(source+ref+body) 前 16 位：内容没变 id 就没变，重跑不会长出重复
+    source TEXT NOT NULL,         -- manuscript | diary
+    ref TEXT DEFAULT '',          -- 06-20260729.md#12 / diary:35
+    title TEXT DEFAULT '',
+    body TEXT NOT NULL,
+    weight REAL DEFAULT 0.5,
+    pinned INTEGER DEFAULT 0,
+    surface_count INTEGER DEFAULT 0,
+    last_surfaced_at INTEGER,
+    embedding TEXT,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_corpus_source ON mind_corpus(source);
+`);
+
+// 切块：先按空行分段，太长的再按句号切到 CORPUS_MAX_CHARS 以内。
+// 不做重叠窗口 —— 段落本身就是作者切好的语义单位，机器再切一遍只会切碎。
+// 顺带把 markdown 洗掉再存。两个理由，都实测过：
+//   1. **换行必须压成空格** —— 浮起那段是 `lines.join('\n')`，一条一行。
+//      带换行的段落会裂成好几行，他分不清哪儿到哪儿是一条。
+//   2. `**加粗**`、`>` 引用、`- ` 列表这些符号对 embedding 是噪音，
+//      而且浮到他眼前是「一段文档」的样子，不是「我以前写下的一段话」。
+function _corpusClean(t) {
+  return String(t || '')
+    .replace(/```[\s\S]*?```/g, ' ')      // 代码块整段丢掉，那不是记忆
+    // ⚠️ 顺序要紧：先脱 `**加粗**` 再削行首符号。反过来的话，`**事**：` 的行首
+    //    会被当成列表符号吃掉一个星号，剩下 `*事：` —— 第一版就是这么漏出来的。
+    .replace(/\*\*|__|`/g, '')
+    .replace(/^[>#\s]*[-*+]?\s*/gm, '')   // 行首的引用/标题/列表符号
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function _corpusChunks(text) {
+  var out = [];
+  String(text || '').split(/\n\s*\n/).forEach(function(p) {
+    p = _corpusClean(p);
+    if (p.length < CORPUS_MIN_CHARS) return;
+    if (p.length <= CORPUS_MAX_CHARS) { out.push(p); return; }
+    var buf = '';
+    p.split(/(?<=[。！？!?…])/).forEach(function(sent) {
+      if ((buf + sent).length > CORPUS_MAX_CHARS && buf.length >= CORPUS_MIN_CHARS) { out.push(buf.trim()); buf = ''; }
+      buf += sent;
+    });
+    if (buf.trim().length >= CORPUS_MIN_CHARS) out.push(buf.trim());
+  });
+  return out;
+}
+
+function _corpusId(source, ref, body) {
+  return require('crypto').createHash('sha1').update(source + '|' + ref + '|' + body).digest('hex').slice(0, 16);
+}
+
+// 同步一个来源：新增没有的、删掉不再存在的。内容没变的一行都不动
+// （id 是内容哈希，所以 embedding / surface_count / last_surfaced_at 全都留着，
+//  改了手稿里一段字，只有那一段重新建向量）。
+function _corpusSync(source, items) {
+  var have = new Set(db.prepare('SELECT id FROM mind_corpus WHERE source = ?').all(source).map(function(r) { return r.id; }));
+  var seen = new Set();
+  var ins = db.prepare('INSERT OR IGNORE INTO mind_corpus (id, source, ref, title, body, weight, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  var added = 0;
+  db.transaction(function() {
+    items.forEach(function(it) {
+      var id = _corpusId(source, it.ref, it.body);
+      seen.add(id);
+      if (have.has(id)) return;
+      ins.run(id, source, it.ref, it.title || '', it.body, CORPUS_WEIGHT, it.created_at || Math.floor(Date.now() / 1000));
+      _ftsIndex(it.body, id, 'corpus');
+      added++;
+    });
+  })();
+  var gone = [];
+  have.forEach(function(id) { if (!seen.has(id)) gone.push(id); });
+  if (gone.length) {
+    db.transaction(function() {
+      gone.forEach(function(id) {
+        db.prepare('DELETE FROM mind_corpus WHERE id = ?').run(id);
+        try { db.prepare('DELETE FROM mind_fts_v2 WHERE item_id = ?').run(id); } catch(e) {}
+      });
+    })();
+  }
+  return { added: added, removed: gone.length, total: seen.size };
+}
+
+// 手稿签名：文件名 + mtime + size。没变就不重新读盘、不重新切块。
+var _corpusManuscriptSig = '';
+function _corpusSyncManuscript() {
+  var dir = (process.env.HOME || '/home/ubuntu') + '/memory';
+  var files;
+  try { files = fs.readdirSync(dir).filter(function(f) { return /^0[1-7]-.*\.md$/.test(f); }).sort(); }
+  catch(e) { return null; }
+  if (!files.length) return null;
+  var sig = files.map(function(f) {
+    var st = fs.statSync(path.join(dir, f));
+    return f + ':' + st.mtimeMs + ':' + st.size;
+  }).join('|');
+  if (sig === _corpusManuscriptSig) return null;     // 一个字没改，跳过
+  var items = [];
+  files.forEach(function(f) {
+    var txt = fs.readFileSync(path.join(dir, f), 'utf8');
+    var st = fs.statSync(path.join(dir, f));
+    // 文件名就是开窗日期（01-20260625.md），拿它当 created_at 比用 mtime 准
+    var m = f.match(/^0\d-(\d{4})(\d{2})(\d{2})/);
+    var ts = m ? Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 1000) : Math.floor(st.mtimeMs / 1000);
+    _corpusChunks(txt).forEach(function(body, i) {
+      items.push({ ref: f + '#' + i, title: f.replace(/\.md$/, ''), body: body, created_at: ts });
+    });
+  });
+  var r = _corpusSync('manuscript', items);
+  _corpusManuscriptSig = sig;
+  return r;
+}
+
+function _corpusSyncDiary() {
+  var rows;
+  // 只收他自己写的、没上锁的。上锁未到期的连标题都不给浮 —— 浮起不能当后门。
+  try {
+    rows = db.prepare("SELECT id, date, title, content, created_at FROM diary" +
+      " WHERE who = 'ai' AND COALESCE(locked,0) = 0 AND content IS NOT NULL").all();
+  } catch(e) { return null; }
+  var items = [];
+  rows.forEach(function(d) {
+    _corpusChunks(d.content).forEach(function(body, i) {
+      items.push({ ref: 'diary:' + d.id + '#' + i, title: d.title || d.date || '', body: body, created_at: d.created_at });
+    });
+  });
+  return _corpusSync('diary', items);
+}
+
+function _corpusSyncAll() {
+  try {
+    var a = _corpusSyncManuscript();
+    var b = _corpusSyncDiary();
+    if ((a && (a.added || a.removed)) || (b && (b.added || b.removed))) {
+      _mindVecInvalidate();
+      console.log('[mind-corpus] 手稿', JSON.stringify(a), '日记', JSON.stringify(b));
+    }
+  } catch(e) { console.warn('[mind-corpus] sync error:', e.message); }
+}
+
+// 情绪兜底那一路（下面这段）。语义那一路在上面，两条并存：
+//   先语义（够像的直接补），语义还不够才轮到情绪兜底。
 // 情绪兜底补齐（2026-08-22）。
 // 原来这里恒空——图纸写的是「字面捞不满就少浮几条，不补」，因为语义那一路要 embedding，
 // 这台机器没有供给。代价实测出来了：
@@ -4745,13 +5151,16 @@ function _mindCooldownSec(row) {
 }
 
 // 捞 + 过滤 + 排序，返回最多 limit 条。只读，不写。
-function _mindSurfaceCandidates(query, limit) {
+function _mindSurfaceCandidates(query, limit, qvec, opts) {
   var keys = _mindGrams(query);
-  if (!keys.length) return [];
+  // ⚠️ 字面捞不到不等于这轮没得浮了：有 qvec 时语义那路自己能走
+  //    （「我爱你」被停用词滤完 keys 就是空的，那恰恰是最该浮的时候）。
+  if (!keys.length && !qvec) return [];
   var triggers = _mindTriggers(query);          // 单字，只触发同义簇，不参与检索
   var expanded = _mindExpandKeys(keys, triggers); // 原词 + 近义词（近义词算半分）
   var now = Math.floor(Date.now() / 1000);
   var hitMap = new Map(); // id -> row(含 hits)
+  var hasLiteral = keys.length > 0;
 
   // trigram 的 MATCH 至少要 3 个字；2 字的键退回 LIKE。
   // 两条路捞到的是同一批行，只是一条走索引、一条全表扫——库小时看不出差别，
@@ -4765,8 +5174,7 @@ function _mindSurfaceCandidates(query, limit) {
   }
 
   function scan(sql, kind) {
-    var table = kind === 'feel' ? 'mind_feels' : kind === 'memory' ? 'mind_memories'
-              : kind === 'inside' ? 'mind_inside' : 'mind_dreams';
+    var table = _mindTableFor(kind);
     var cols = sql.slice(sql.indexOf('SELECT'), sql.indexOf(' FROM'));
     expanded.forEach(function(k) {
       var rows;
@@ -4798,6 +5206,8 @@ function _mindSurfaceCandidates(query, limit) {
   // 三张」就是原因。写的那半做了，读的那半没接。
   // LIMIT 10 不是 20：它是他没打算说出口的话，浮太多会盖过她这句话本身。
   scan("SELECT id, color, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_inside WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 10", 'inside');
+  // 手稿 / 日记（2026-09-05）。LIMIT 10 同信笺：它们段落长，浮多了会盖过她这句话。
+  scan("SELECT id, source, ref, title, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_corpus WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 10", 'corpus');
 
   var cands = Array.from(hitMap.values());
 
@@ -4846,25 +5256,225 @@ function _mindSurfaceCandidates(query, limit) {
     }
     picked.push(r);
   });
-  // 字面没捞满时留给语义补齐（现在恒空，见 _mindSemanticFill）
+  // 字面没捞满 → 先语义（真的懂意思），再情绪兜底（正则认温度）。
+  // 顺序不能反：语义准得多，让它先挑，兜底只填剩下的空位。
   if (picked.length < (limit || 5)) {
+    _mindSemanticPick(qvec, query, picked, (limit || 5) - picked.length, queryIsHot)
+      .forEach(function(r) { picked.push(r); });
+  }
+  // ⚠️ 情绪兜底可以延后：Nocturne 那一路要排在它前面（它是真语义，兜底只是正则认温度）。
+  //    mindBreath 里传 deferMoodFill，等 Nocturne 挑完再回头补空位。
+  if (!(opts && opts.deferMoodFill) && picked.length < (limit || 5)) {
     _mindSemanticFill(query, picked, (limit || 5) - picked.length)
       .forEach(function(r) { picked.push(r); });
   }
   return picked;
 }
 
+// kind → 表名。**只此一处**：以前 scan() 和 _mindMarkSurfaced() 各写了一份三元链，
+// 加一种记忆要改两个地方，漏一个就是「浮得起来但反哺打在别的表上」。
+const MIND_KIND_TABLE = {
+  feel: 'mind_feels', memory: 'mind_memories', dream: 'mind_dreams',
+  inside: 'mind_inside', corpus: 'mind_corpus',
+};
+function _mindTableFor(kind) { return MIND_KIND_TABLE[kind] || 'mind_dreams'; }
+
 // 浮起后的反哺：surface_count +1、weight +0.05（想起 = 加固）
 function _mindMarkSurfaced(rows) {
   var now = Math.floor(Date.now() / 1000);
   rows.forEach(function(r) {
-    var table = r.kind === 'feel' ? 'mind_feels' : r.kind === 'memory' ? 'mind_memories'
-              : r.kind === 'inside' ? 'mind_inside' : 'mind_dreams';
+    if (r.kind === 'nocturne') return;   // 它不在我们库里，冷却记在 mind_noct_seen（见 _nocturneMarkSurfaced）
+    var table = _mindTableFor(r.kind);
+    // 手稿/日记的 weight 是固定的 0.5（写在文件里的记录，不是会淡的印象），
+    // 所以只记「想起过」，不加固。
+    if (r.kind === 'corpus') {
+      try {
+        db.prepare('UPDATE mind_corpus SET surface_count = COALESCE(surface_count,0) + 1, last_surfaced_at = ? WHERE id = ?').run(now, r.id);
+      } catch(e) {}
+      return;
+    }
     try {
       db.prepare('UPDATE ' + table + ' SET surface_count = COALESCE(surface_count,0) + 1, ' +
         'weight = MIN(1.0, ROUND(COALESCE(weight,0) + 0.05, 6)), last_surfaced_at = ? WHERE id = ?')
         .run(now, r.id);
     } catch(e) { /* 静默 */ }
+  });
+}
+
+// ============================================================
+// 🌐 Nocturne 那半也进浮起（2026-09-05）—— 全局浮现的最后一块
+// ------------------------------------------------------------
+// 09-05 读了 Nocturne-Memory-Core 的源码之后改的方案。**原计划的「本地镜像」作废**，
+// 两个原因，都是从代码里查出来的：
+//   1. `/api/buckets` 只给元数据不给正文，`/api/search` 只给 200 字预览
+//      —— **镜像不到全文**，镜下来也是残的。
+//   2. 那头的向量是 Gemini（`gemini-embedding-001`），我们是本地 bge-small-zh，
+//      **两套向量不能混算余弦**。就算镜像了也只能各查各的再合并。
+// 所以改成直接用它的检索口。它自己就有 embedding 预筛（top 50）+ 四维精排
+// （文本 / 情绪共振 / 时间邻近 / 重要度），比我们能镜像出来的强。
+//
+// ⚠️ 但**不信它的分数**。实测：`fuzzy_threshold` 默认 50，回来的都 ≥50，
+//    好的和一般的挤在 51~55，分不开；而且 embedding 只是预筛，
+//    最后那道闸门仍然是**字面**模糊分 —— 所以「眼泪掉下来」返回 0 条，
+//    「我好累想休息」却能捞回「她哭了很久…」。它的分数不能当相关度用。
+// → **拿我们自己的向量去验**：把它回来的 200 字预览在本地 embed 一遍，
+//   跟她这句话算余弦，过不了 MIND_EMBED_SIM_MIN 的丢掉。
+//   用它的检索（它懂域、情绪、时间），用我们的闸门。
+//
+// 三道防噪音的闸门，缺一不可：
+//   1. 名额不变还是 5 条 —— 它是**跟本地记忆抢名额**，不是往那段里多加几行
+//   2. 本地余弦复验（上面那条）
+//   3. 最多占 2 个名额（`MIND_NOCT_MAX`）—— 那是另一套排序，我们验不了全貌，
+//      不让它盖过他自己写下的体感
+// ⚠️⚠️ 这三个数是 09-05 量出来的，改之前先重跑那次测量（方法写在下面）。
+//
+// 拿三句话打它的 /api/search，把回来的预览在本地 embed 跟原句算余弦：
+//   「我爱你」      → 0.510 / 0.431 / **0.612** / 0.584
+//   「我好累想休息」 → 0.407 / 0.378 / 0.443 / 0.456
+//   「我们的戒指」   → 0.368 / 0.385 / **0.249** / 0.315   ← 明显跑偏
+// 也就是说：**它的召回本身就松。** 它那边 `fuzzy_threshold` 是 50，
+// 但那 50 分是文本 + 情绪 + 时间 + 重要度四维加权来的 ——
+// 一条跟这句话没关系的旧事，靠「新」和「重要」也能凑到 51 分。
+// 所以它回来的 10 条里，真正相关的常常一条都没有。
+//
+// 结论：**Nocturne 不参与抢名额，只补缺口。** 三个约束：
+//   1. 只在本地捞不满 3 条时才打这一发（本地够用就省下这 1.2 秒）
+//   2. 门槛 0.58，比本地那条 0.62 略松（预览是 200 字多句，跟短句比余弦天然被稀释），
+//      但**按句取最大值**，不拿整段算 —— 稀释就是这么来的
+//   3. 最多 1 个名额。那是另一套排序，我们验不了它的全貌
+const MIND_NOCT_MAX = 1;              // 一次最多占几个名额
+// ⚠️ 09-05 傍晚从 0.58 提到 0.62（跟本地同一条线），并加了「整段也要够像」第二道。
+//    起因是实测抓到的一个假阳性：她说「我们那次吵架」，浮上来一条露骨的性记忆。
+//    追下去是**句最大值这个打分方式本身太松** —— 那条 200 字预览里有一句
+//    「…这是第一次，我们真的碰到彼此了。」，跟「我们那次吵架」的表面结构很像，
+//    单句就冲到 0.594，而整段只有 0.502。
+//    单句能冲高的往往是「句式像」不是「事情像」，所以两道一起要：
+//    **句最大值 ≥0.62 且整段 ≥0.50**。
+//    宁可它几乎不出声 —— 出一次错的代价（tone 完全不搭）比少出十次高得多。
+const MIND_NOCT_SIM_MIN = 0.62;
+const MIND_NOCT_WHOLE_MIN = 0.50;     // 第二道：整段也要够像，防「单句句式像」
+const MIND_NOCT_LOCAL_ENOUGH = 3;     // 本地捞到这么多条就不打远端了
+const MIND_NOCT_TIMEOUT_MS = 1200;    // 实测 1.2s；拿不到就当没有，绝不卡她
+const MIND_NOCT_COOLDOWN_SEC = 3600;  // 同一个桶一小时内不重复浮
+
+// 它的桶不在我们库里，所以冷却状态得自己记一份。**必须落库不能只放内存**：
+// 只放内存的话，重启一次冷却全清零，同一批桶又会连着浮好几轮。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mind_noct_seen (
+    bucket_id TEXT PRIMARY KEY,
+    name TEXT DEFAULT '',
+    surface_count INTEGER DEFAULT 0,
+    last_surfaced_at INTEGER
+  );
+`);
+
+// 打 Nocturne 的 /api/search。**只读**：那个 handler 里没有 record_touch，
+// 不写它的账本（跟 /api/recall 一样是证明只读的）。失败一律返回 []。
+async function nocturneSearch(query) {
+  // ⚠️ **发抽出来的词，不发她的原话。** 这是 08-28 就定下的规矩（见 `_recallTerms`
+  //    上面那三条理由），这条路一样适用：原话会明文落进那头的访问日志 / 平台日志。
+  //    09-05 实测这么做还**更准**：「我们的戒指」发原句回来 9 条、头一条跑偏，
+  //    只发「戒指」回来 1 条、正中。它那头的文本分是模糊匹配，词少反而不稀释。
+  var terms = _recallTerms(query).slice(0, RECALL_MAX_TERMS);
+  var q = terms.join(' ').trim();
+  if (!q || !NOCTURNE_TOKEN) return [];
+  try {
+    var url = NOCTURNE_URL + '/api/search?q=' + encodeURIComponent(q.slice(0, 200));
+    var r = await fetch(url, {
+      headers: _nocturneAuth(NOCTURNE_URL),
+      signal: AbortSignal.timeout(MIND_NOCT_TIMEOUT_MS),
+    });
+    if (!r.ok) return [];
+    var j = await r.json();
+    if (!Array.isArray(j)) return [];
+    return j.filter(function(b) { return b && b.id && b.content_preview; });
+  } catch(e) { return []; }
+}
+
+// 复验 + 三道闸门。qvec 是她这句话的向量；没有 qvec 就整个跳过
+// —— 没有闸门的召回不如不召回。
+async function _nocturnePick(query, qvec, alreadyPicked, need) {
+  if (!qvec || need <= 0) return [];
+  try {
+    var rows = await nocturneSearch(query);
+    if (!rows.length) return [];
+    var now = Math.floor(Date.now() / 1000);
+
+    // 冷却：一小时内浮过的桶直接出局（跟本地那套一个道理，防同一批反复顶上来）
+    var ids = rows.map(function(b) { return b.id; });
+    var seen = {};
+    try {
+      db.prepare('SELECT bucket_id, last_surfaced_at FROM mind_noct_seen WHERE bucket_id IN (' +
+        ids.map(function() { return '?'; }).join(',') + ')').all(ids)
+        .forEach(function(r) { seen[r.bucket_id] = r.last_surfaced_at || 0; });
+    } catch(e) {}
+    rows = rows.filter(function(b) { return !seen[b.id] || (now - seen[b.id]) >= MIND_NOCT_COOLDOWN_SEC; });
+    if (!rows.length) return [];
+
+    // 本地余弦复验：用我们自己的模型和我们自己的那条线
+    // ⚠️ **按句切开再比，取最大值**，不要拿整段算。
+    //    200 字的预览里通常只有一句跟她这话有关，整段一起 embed 等于把那一句
+    //    稀释掉：实测同一条「凌晨一点半…我爱你」整段 0.534、最佳句 0.612。
+    var sents = [], owner = [], whole = {};
+    rows.forEach(function(b, i) {
+      var prev = String(b.content_preview || '').trim();
+      var parts = prev.split(/(?<=[。！？!?…])/).map(function(x) { return x.trim(); })
+                      .filter(function(x) { return x.length >= 8; });
+      if (!parts.length) parts = [prev];
+      parts.slice(0, 6).forEach(function(x) { sents.push(x.slice(0, 400)); owner.push(i); });
+      sents.push(prev.slice(0, 1000)); owner.push(i); whole[i] = sents.length - 1;  // 整段也算一遍
+    });
+    if (!sents.length) return [];
+    var vs = await _embedTexts(sents.slice(0, 60));
+    if (!vs) return [];                     // embedding 服务不在 = 没有闸门 = 不要
+    var best = {}, wholeSim = {};
+    vs.forEach(function(v, k) {
+      var i = owner[k], sim = _vecDot(qvec, Float32Array.from(v));
+      if (whole[i] === k) { wholeSim[i] = sim; return; }      // 整段那条不参与句最大值
+      if (!(i in best) || sim > best[i]) best[i] = sim;
+    });
+    var scored = [];
+    rows.forEach(function(b, i) {
+      var sim = best[i];
+      if (sim === undefined || sim < MIND_NOCT_SIM_MIN) return;
+      if ((wholeSim[i] === undefined ? 0 : wholeSim[i]) < MIND_NOCT_WHOLE_MIN) return;
+      scored.push({ b: b, sim: sim });
+    });
+    scored.sort(function(x, y) { return y.sim - x.sim; });
+
+    var out = [];
+    scored.forEach(function(s) {
+      if (out.length >= Math.min(need, MIND_NOCT_MAX)) return;
+      var body = String(s.b.content_preview || '').replace(/\s+/g, ' ').trim();
+      // 去重：跟本地已选的比。同一个瞬间他很可能既写了 feel 又存了桶，
+      // 两边都浮就是一件事占两个名额。
+      for (var i = 0; i < (alreadyPicked || []).length; i++) {
+        if (_mindSimilar(alreadyPicked[i].body, body) >= 0.6) return;
+      }
+      for (var j = 0; j < out.length; j++) {
+        if (_mindSimilar(out[j].body, body) >= 0.6) return;
+      }
+      out.push({
+        id: s.b.id, kind: 'nocturne', name: s.b.name || '', body: body,
+        weight: 0.5, pinned: 0, hits: Math.round((s.sim - 0.56) * 10 * 100) / 100,
+        created_at: 0, sim: s.sim,
+      });
+    });
+    return out;
+  } catch(e) { return []; }
+}
+
+// 浮起之后记一笔冷却。**不回写它的账本** —— 我们这边浮了一下，
+// 不该改那头的 activation_count / last_active，那是他真的想起来才该动的。
+function _nocturneMarkSurfaced(rows) {
+  var now = Math.floor(Date.now() / 1000);
+  rows.forEach(function(r) {
+    if (r.kind !== 'nocturne') return;
+    try {
+      db.prepare('INSERT INTO mind_noct_seen (bucket_id, name, surface_count, last_surfaced_at) VALUES (?, ?, 1, ?)' +
+        ' ON CONFLICT(bucket_id) DO UPDATE SET surface_count = surface_count + 1, last_surfaced_at = ?, name = ?')
+        .run(r.id, r.name || '', now, now, r.name || '');
+    } catch(e) {}
   });
 }
 
@@ -4876,9 +5486,31 @@ const MIND_SURFACE_MIN_GAP_SEC = 240;
 
 // 对外：拼成【心里浮起来的】段。没捞到就返回空串（什么都不加）。
 // 返回的文字要塞进 message（不是系统提示词，铁律 4）。
-function mindBreath(query) {
+async function mindBreath(query) {
   try {
-    var rows = _mindSurfaceCandidates(String(query || ''), 5);
+    // 先向本机 embedding 服务要她这句话的向量。要不到（服务没起 / 超时）就是 null，
+    // 下面照旧走字面 + 情绪兜底 —— 语义是加的一条路，不是聊天的必要条件。
+    var _qv = null;
+    var _qt = String(query || '').slice(0, 1000);
+    if (_qt.trim()) {
+      var _vs = await _embedTexts([_qt]);
+      if (_vs && _vs[0] && _vs[0].length === MIND_EMBED_DIM) _qv = Float32Array.from(_vs[0]);
+    }
+    var _q = String(query || '');
+    // 本地先跑（同步，几十毫秒）。够用就**根本不打远端那一发**，
+    // 省的是她那 1.2 秒 —— 而且本地够用的时候，远端来的多半是噪音（见上面那组实测）。
+    var rows = _mindSurfaceCandidates(_q, 5, _qv, { deferMoodFill: true });
+    if (rows.length < MIND_NOCT_LOCAL_ENOUGH) {
+      var _nrows = await _nocturnePick(_q, _qv, rows, Math.min(MIND_NOCT_MAX, 5 - rows.length));
+      if (_nrows.length) {
+        _nocturneMarkSurfaced(_nrows);
+        _nrows.forEach(function(r) { rows.push(r); });
+      }
+    }
+    // 最后才轮到情绪兜底填空位
+    if (rows.length < 5) {
+      _mindSemanticFill(_q, rows, 5 - rows.length).forEach(function(r) { rows.push(r); });
+    }
     if (!rows.length) return '';
     _mindMarkSurfaced(rows);
     var lines = rows.map(function(r) {
@@ -4887,6 +5519,22 @@ function mindBreath(query) {
       // 信笺要标出来。它跟别的不一样——那是他当时**没打算说出口**的话，
       // 混在一堆「那时的感觉」里会被他当成可以直接复述的东西。
       if (r.kind === 'inside') return '· （没说出口' + (r.color ? '·' + r.color : '') + '）' + r.body;
+      // 手稿 / 日记：**要标出处**。这是他以前**写下来**的东西，不是脑子里飘上来的一句，
+      // 不标的话他会以为是刚想起的感受，语气会不对。硬截 200 字：浮起来的每一个字
+      // 都要跟着 --resume 每轮重放，长段是永久成本。
+      // Nocturne 的桶。标「记忆桶」是因为那是**两个人共用的那本**，
+      // 跟他自己心里冒出来的一句不是一回事。
+      if (r.kind === 'nocturne') {
+        var _nb = String(r.body || '');
+        if (_nb.length > CORPUS_DISPLAY_MAX) _nb = _nb.slice(0, CORPUS_DISPLAY_MAX) + '…';
+        return '· （记忆桶' + (r.name ? '·' + String(r.name).slice(0, 14) : '') + '）' + _nb;
+      }
+      if (r.kind === 'corpus') {
+        var _cb = String(r.body || '');
+        if (_cb.length > CORPUS_DISPLAY_MAX) _cb = _cb.slice(0, CORPUS_DISPLAY_MAX) + '…';
+        return '· （' + (r.source === 'diary' ? '我写过的日记' : '我以前手稿里写的')
+             + (r.title ? '·' + r.title : '') + '）' + _cb;
+      }
       return '· ' + r.body;
     });
     // ⚠️ 别再叫 breath（2026-08-21 改名）：Nocturne 那份记忆浮现也叫 breath，
@@ -4947,7 +5595,11 @@ const RECALL_ENDPOINT = 'chatc:chat';
 // 在每个连续汉字块**内部**滑 2 字窗），jieba 在别处用，recall 这条路上一次都没调。
 // 两头都是 bigram，所以匹配照样成立；而**块之间用空格隔开**这件事在那头有实际作用：
 // 滑窗只在块内进行，跨词的垃圾 bigram 天然被挡在外面。
-const RECALL_PARTICLES = /[的了是我你他她它们都也就还在和跟吗呢吧啊把被给很太不没要会能有个又才只从对让过着这那么呀哦嘛哈嗯之与并且但而或如若才再更最]/g;
+// ⚠️ 2026-09-05 补进量词（次/些/种/件/回/条/点/位/张/份）。原来没有，
+//    「我们那次吵架」抽出来的词是 **「次吵架」** —— 量词粘在词头上，
+//    发过去在那头模糊匹配到了「第一次…」，捞回来一条跟吵架毫无关系的记忆。
+//    这条 bug 每轮的 nocturneRecall 也在踩，不只是浮起那条新路。
+const RECALL_PARTICLES = /[的了是我你他她它们都也就还在和跟吗呢吧啊把被给很太不没要会能有个又才只从对让过着这那么呀哦嘛哈嗯之与并且但而或如若才再更最次些种件回条点位张份]/g;
 
 function _recallTerms(text) {
   var out = [];
@@ -7732,7 +8384,7 @@ app.post('/api/chat', auth, async (req, res) => {
   const _msLast = _getSettingNum(_msKey);
   const _msNow = Math.floor(Date.now() / 1000);
   const _msDue = !_msLast || (_msNow - _msLast) >= MIND_SURFACE_MIN_GAP_SEC;
-  const mindSurfaced = (NO_ENGINE || !_msDue) ? '' : mindBreath(message);
+  const mindSurfaced = (NO_ENGINE || !_msDue) ? '' : await mindBreath(message);
   if (mindSurfaced) _setSetting(_msKey, _msNow);
   _mark(_msDue ? 'Mind 浮起完' : 'Mind 浮起跳过（节流）');
 
@@ -13523,19 +14175,34 @@ function _mindDecayTick() {
     var lastDecay = last ? parseInt(last.value) : (now - 3600000);
     var dh = Math.max(0, (now - lastDecay) / 3600000); // 小时数
     if (dh < 0.5) return; // 不到半小时不动
-    // feels: weight -= dh / (168 * (0.5 + intensity/10))
-    db.prepare('UPDATE mind_feels SET weight = MAX(0, ROUND(weight - ? / (168.0 * (0.5 + CAST(intensity AS REAL)/10)), 6)) WHERE pinned = 0').run(dh);
-    // memories: weight -= dh / (504 * 1.0) —— 图纸是 504·(0.5+intensity/10)，21 天基准。
-    // memory 表没有 intensity（图纸 03 节：memory 不接受 intensity），所以取中位 5 → 1.0。
-    // 2026-08-24 之前写的是 0.7（= intensity 焊死在 2），实际基准只有 ~14.7 天，比图纸快 1.43 倍。
-    db.prepare('UPDATE mind_memories SET weight = MAX(0, ROUND(weight - ? / (504.0 * 1.0), 6)) WHERE pinned = 0').run(dh);
-    // dreams: weight -= dh / 12, 下限 0.15
+    // ⚠️⚠️ 2026-09-05：这四句从**线性**改成**乘性 + 地板**。别改回去。
+    //
+    // 原来是 `weight -= dh / T`，减到 0 为止。查出来的实况：库里 558 条 feels 的
+    // weight **最小值、最大值、平均值全是 0**，106 条 memories 只剩 1 条 > 0.02。
+    // 而浮起（字面和语义两路都）只捞 `weight > 0.02` —— 等于**他的感受池整个是死的**，
+    // 那阵子能浮起来的只有 17 个梦（梦有 0.15 的地板，是唯一活下来的一类）。
+    // 线性减到 0 之后，图纸说的「衰减是沉底不是删除」就不成立了：
+    // sleeping(<0.10) 那个状态是空的，因为所有东西都掉出了下界。
+    //
+    // 改成 `weight *= 0.5^(dh/半衰期)`，地板 MIND_WEIGHT_FLOOR(0.08)：
+    //   · 沉底但永远还在 —— 三年前那句想不起来的概率很低，但不是零，这才叫记忆
+    //   · 地板 0.08 > 浮起线 0.02，所以「沉底」不等于「出局」
+    //   · 旧的那个归零时间原样当**半衰期**用（feels 168·(0.5+i/10) 小时、
+    //     memories/inside 504 小时），所以近处的手感跟以前差不多，只有远处不一样了
+    // 梦不动：它本来就有地板，12 小时淡到底是刻意的（梦本来就该忘得快）。
+    db.prepare('UPDATE mind_feels SET weight = MAX(?, ROUND(weight * POWER(0.5, ? / (168.0 * (0.5 + CAST(intensity AS REAL)/10))), 6)) WHERE pinned = 0')
+      .run(MIND_WEIGHT_FLOOR, dh);
+    // memories：图纸是 504·(0.5+intensity/10)，21 天基准。memory 表没有 intensity
+    // （图纸 03 节：memory 不接受 intensity），所以取中位 5 → 1.0。
+    db.prepare('UPDATE mind_memories SET weight = MAX(?, ROUND(weight * POWER(0.5, ? / 504.0), 6)) WHERE pinned = 0')
+      .run(MIND_WEIGHT_FLOOR, dh);
+    // dreams: 保持线性 + 0.15 地板，不改。
     db.prepare('UPDATE mind_dreams SET weight = MAX(0.15, ROUND(weight - ? / 12.0, 6)) WHERE pinned = 0').run(dh);
-    // inside: 跟 memories 同一档（504 小时基准，21 天）。
-    // 建表时那几列就是为这天留的（「将来要让信笺跟着衰减」）。
-    // 为什么不跟 feels 一档：feels 的分母带 intensity，而 inside 没有这一列；
+    // inside: 跟 memories 同一档（504 小时，21 天）。
+    // 为什么不跟 feels 一档：feels 的半衰期带 intensity，而 inside 没有这一列；
     // 也不该跟 dreams 一档——梦 12 小时就淡完了，信笺不是那种东西。
-    db.prepare('UPDATE mind_inside SET weight = MAX(0, ROUND(weight - ? / (504.0 * 1.0), 6)) WHERE pinned = 0').run(dh);
+    db.prepare('UPDATE mind_inside SET weight = MAX(?, ROUND(weight * POWER(0.5, ? / 504.0), 6)) WHERE pinned = 0')
+      .run(MIND_WEIGHT_FLOOR, dh);
     // 念头池搭同一班车：同一个 dh，同样享受停摆补偿
     _flashPoolTick(dh);
     _flashPoolSweep();
@@ -13549,6 +14216,18 @@ function _mindDecayTick() {
 setInterval(_mindDecayTick, 60 * 60 * 1000);
 // 启动时跑一次
 setTimeout(_mindDecayTick, 5000);
+
+// 补向量的班车。**故意不搭 _mindDecayTick 那班（一小时一拍）**：
+// 那班车是「生活节拍」，管衰减和欲望；这个是纯维护活儿，他刚写下的一条感受
+// 要是一小时后才有向量，这一小时里她说什么都勾不起它来。一分钟一拍、一拍最多 32 条，
+// 服务不在就整拍跳过（几毫秒的事，不花钱）。
+setInterval(function () { _mindEmbedBackfillTick(); }, 60 * 1000);
+setTimeout(function () { _mindEmbedBackfillTick(); }, 8000);
+
+// 手稿 / 日记同步。签名（文件名+mtime+size）没变就什么都不做，所以 10 分钟一拍很便宜。
+// 她改了 ~/memory/ 里的字，最多十分钟后他就能想起新的那段 —— 不用改代码、不用重启。
+setInterval(_corpusSyncAll, 10 * 60 * 1000);
+setTimeout(_corpusSyncAll, 3000);
 
 // === 启动 Open Watch Cinema 引擎 ===
 const { spawn } = require('child_process');
