@@ -304,6 +304,13 @@
 <div class="drawer-api-header" style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" id="drawerApiToggle" onclick="var f=document.getElementById('drawerApiForm');f.style.display=f.style.display==='block'?'none':'block';var c=document.getElementById('drawerApiChevron');if(c)c.style.transform=f.style.display==='block'?'rotate(180deg)':''"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16"><circle cx="8" cy="5" r="3"/><path d="M3 14v-1a4 4 0 018 0v1"/></svg><span style="flex:1;font:500 13px var(--font-sans);color:var(--text-secondary)">语音配置</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" id="drawerApiChevron"><path d="M4 6l4 4 4-4"/></svg></div>
 <div class="drawer-api-form" id="drawerApiForm" style="display:none;padding:4px 0"><div style="display:none"><div style="display:flex;gap:6px;margin-bottom:8px"><label style="display:flex;align-items:center;gap:4px;font:13px var(--font-sans);color:var(--text-secondary);cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--bg-sunken);background:var(--bg-surface)"><input type="radio" name="api_format" value="anthropic" id="fmtAnthropic" checked style="accent-color:var(--accent)"> Anthropic</label><label style="display:flex;align-items:center;gap:4px;font:13px var(--font-sans);color:var(--text-secondary);cursor:pointer;padding:4px 10px;border-radius:8px;border:1px solid var(--bg-sunken);background:var(--bg-surface)"><input type="radio" name="api_format" value="openai" id="fmtOpenai" style="accent-color:var(--accent)"> OpenAI</label></div><input id="drawerBaseURL" type="url" placeholder="https://cc.cwapi.vip/v1/chat/completions" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerApiKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerModel" type="text" placeholder="Model (e.g. claude-sonnet-4-6)" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"></div><div class="drawer-voice-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">MiniMax 语音（通话用）</div><input id="drawerMiniMaxKey" type="password" placeholder="MiniMax API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerVoiceId" type="text" placeholder="Voice ID（克隆的声音编号）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerMiniMaxGroup" type="text" placeholder="GroupId（国内站要填，国际站留空）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><button id="drawerTtsTest" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:12px;background:transparent;color:var(--accent);font:600 12px var(--font-sans);cursor:pointer" onclick="testMiniMax(this)">测试</button><div id="drawerTtsTestResult" style="display:none;padding:6px 2px;font:12px/1.5 var(--font-sans);word-break:break-word"></div></div><div class="drawer-tone-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">语音识别（他听你说话用的）</div><input id="drawerToneKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerToneUrl" type="url" placeholder="chat/completions 接口地址" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerToneModel" type="text" placeholder="模型名（要能听音频的，如 qwen3-omni-flash）" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><button id="drawerToneTest" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:12px;background:transparent;color:var(--accent);font:600 12px var(--font-sans);cursor:pointer" onclick="testTone(this)">拿最近一条语音试试</button><div id="drawerToneTestResult" style="display:none;padding:6px 2px;font:12px/1.5 var(--font-sans);word-break:break-word"></div><div style="font:11px/1.5 var(--font-sans);color:var(--text-faint);margin-top:4px">填一个<b>能听音频</b>的模型（如 qwen3-omni-flash），它一次就同时给出「你说了什么」和「听起来什么状态」。Whisper 那一类只吐字、听不出语气。</div></div><div class="drawer-stt-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">备用识别（上面那个挂了才用）</div><input id="drawerSttKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerSttUrl" type="url" placeholder="转写接口地址" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><input id="drawerSttModel" type="text" placeholder="模型名" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:4px;outline:none"><div style="font:11px/1.5 var(--font-sans);color:var(--text-faint)">默认是 Groq 的 Whisper（有免费额度），只出字、没有语气。<b>建议留着</b>——上面那路万一挂了，至少他还听得见你说话。</div></div><div class="drawer-bark-section" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bg-sunken)"><div style="font:12px var(--font-sans);color:var(--text-faint);margin-bottom:6px">Bark 推送（他主动找你用的）</div><input id="drawerBarkUrl" type="password" placeholder="Bark 里那串完整地址" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--bg-sunken);border-radius:12px;font:14px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);margin-bottom:8px;outline:none"><button id="drawerBarkTest" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:12px;background:transparent;color:var(--accent);font:600 12px var(--font-sans);cursor:pointer" onclick="testBark(this)">推一条试试</button><div id="drawerBarkTestResult" style="display:none;padding:6px 2px;font:12px/1.5 var(--font-sans);word-break:break-word"></div><div style="font:11px/1.5 var(--font-sans);color:var(--text-faint);margin-top:4px">在 Bark app 里复制那串带 key 的地址贴进来。<b>只存在服务器上</b>，不回显、不进日志。以后换自建服务器换掉这串就行。</div></div><button id="drawerApiSave" style="width:100%;padding:8px;border:none;border-radius:12px;background:var(--accent);color:var(--accent-fg);font:600 13px var(--font-sans);cursor:pointer" onclick="saveMiniMaxConfig();saveSttConfig();saveToneConfig();saveBarkConfig()">保存配置</button><div id="drawerApiStatus" style="display:none;padding:6px 0;font:12px var(--font-sans);color:var(--text-faint)"></div></div>
 </div>
+<!-- 灵动岛自检（2026-09-05）。她在远程加载，前端随时是新的，但原生插件是编包时定死的 ——
+     「岛上没反应」到底是插件没接上、系统开关关着、还是推上去了没显示，
+     以前只能连 Mac 开 Safari 看 console 才分得清。这一格让她自己按一下就知道。 -->
+<div style="padding:10px 16px;border-top:1px solid var(--bg-sunken)">
+  <button id="laCheckBtn" style="width:100%;padding:7px;border:1px solid var(--accent);border-radius:12px;background:transparent;color:var(--accent);font:600 12px var(--font-sans);cursor:pointer">灵动岛自检</button>
+  <div id="laCheckResult" style="display:none;padding:8px 2px;font:12px/1.7 var(--font-sans);color:var(--text-secondary);word-break:break-word"></div>
+</div>
 <div class="drawer-ombre-section" style="padding:12px 16px;border-top:1px solid var(--bg-sunken)">
 
       <div style="padding:12px 0;border-top:1px solid var(--border)">
@@ -6077,6 +6084,41 @@ function initLiveActivity(){
     }
   }catch(e){_laSupported=false;}
 }
+// ── 灵动岛自检（2026-09-05）───────────────────────────────────
+// 她在远程加载：JS 随时是新的，原生插件却是上次编包时定死的。所以「没反应」有四种，
+// 得先分开，不然只能靠猜：
+//   ① 根本不在 app 里（Safari 打开的）→ window.Capacitor 都没有
+//   ② app 是老包 / 插件没注册 → Capacitor.Plugins.LiveActivity 不在
+//   ③ 系统设置里「实时活动」关着 → laIsSupported 说 enabled=false
+//   ④ 全都好，那就是推上去了但没画出来 —— 那是 widget 那边的事，跟这条链路无关
+// 最后一步真推一帧（thinking + 自检中），让她抬头看一眼岛上变没变。
+function laSelfCheck(btn){
+  var box=$('laCheckResult');if(!box)return;
+  box.style.display='block';box.textContent='查着…';
+  var L=[];
+  if(!window.Capacitor){box.innerHTML='① 这不是 app —— 浏览器里没有灵动岛。请在 app 里再按一次。';return}
+  L.push('Capacitor：在');
+  var P=(Capacitor.Plugins||{}).LiveActivity;
+  if(!P){box.innerHTML=L.join('<br>')+'<br><b>② 插件没接上</b> —— app 里没有 LiveActivity 这个原生插件。<br>这种只能重新编一次包，改前端没用。';return}
+  L.push('LiveActivity 插件：在');
+  P.laIsSupported().then(function(r){
+    r=r||{};
+    L.push('系统支持：'+(r.supported===true?'是':'否（iOS 16.2 以下）'));
+    L.push('「实时活动」开关：'+(r.liveActivitiesEnabled===false?'<b>关着 —— 去 设置 › éclat › 实时活动 打开</b>':'开着'));
+    L.push('_laSupported='+_laSupported+' · _laActive='+_laActive+' · pose='+_laPose);
+    if(r.supported===true&&r.liveActivitiesEnabled!==false){
+      // 真推一帧。走 startThinking：卡还没起就起一张，起过了它自己转成 update。
+      try{P.laStartThinking({pose:'thinking',detail:'自检中',heart:_laHeart}).then(function(){
+        _laActive=true;_laPose='thinking';
+        box.innerHTML=L.join('<br>')+'<br><br><b>已经推了一帧「自检中」。</b>抬头看岛上：<br>变了 = 这条链路是通的，问题在别处；<br>没变 = 推上去了画不出来，是 widget 那边。';
+      }).catch(function(e){box.innerHTML=L.join('<br>')+'<br><br><b>推不上去</b>：'+(e&&e.message||e)});}catch(e){
+        box.innerHTML=L.join('<br>')+'<br><br><b>推不上去</b>：'+(e&&e.message||e);
+      }
+    }else{box.innerHTML=L.join('<br>')}
+  }).catch(function(e){
+    box.innerHTML=L.join('<br>')+'<br><b>laIsSupported 调不通</b>：'+(e&&e.message||e)+'<br>老包里没这个方法的话就是这个样子 —— 要重新编。';
+  });
+}
 function laStartTimer(cmd){
   if(!_laSupported||!cmd)return;
   try{Capacitor.Plugins.LiveActivity.laStartTimer({title:cmd.title,countdownSeconds:cmd.countdown_seconds,startedAt:cmd.started_at}).catch(function(){})}catch(e){}
@@ -6459,6 +6501,7 @@ var _pollTimer=setInterval(pollCommands,4000);setTimeout(pollCommands,2000);
 // iOS Live Activity init —— 先注册自定义原生插件（Capacitor 7 不自动暴露，缺了 Capacitor.Plugins.X 恒为 undefined）
 function _registerNativePlugins(){if(!window.Capacitor||!Capacitor.registerPlugin)return;try{if(!Capacitor.Plugins.LiveActivity)Capacitor.registerPlugin('LiveActivity');if(!Capacitor.Plugins.FocusLock)Capacitor.registerPlugin('FocusLock');if(!Capacitor.Plugins.ScreenTime)Capacitor.registerPlugin('ScreenTime');
   if(!Capacitor.Plugins.PhotoLib)Capacitor.registerPlugin('PhotoLib');}catch(e){}}
+if($('laCheckBtn'))$('laCheckBtn').onclick=function(){laSelfCheck(this)};
 if(window.Capacitor){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();}else{document.addEventListener('deviceready',function(){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();},{once:true});}
 function showTimerDoneToast(title){
   var toast=document.createElement('div');
