@@ -389,6 +389,13 @@ action：leave 留一句（默认）/ list 看看还有哪条没送出去 / clea
 <div class="desc">做一个会在她那边<b>直接跑起来</b>的 HTML/SVG 小东西（页面、图表、动画、小工具），前端当场渲染预览。<b>别把 HTML 当代码块贴在回话里</b> —— 贴出来她只能看源码，用这个她能直接玩。要存成文件给她下载那是 create_file，两回事。</div>
 <div class="pwrap"><table class="params"><tr><th>title<span class="req">必填</span></th><td class="ty">string</td><td>artifact 标题，用作文件名（不含扩展名）</td></tr><tr><th>content<span class="req">必填</span></th><td class="ty">string</td><td>HTML/CSS/JS/SVG 内容</td></tr><tr><th>language</th><td class="ty">string</td><td>语言类型：html、svg 等，默认 html</td></tr></table></div>
 </article>
+<article class="tool warm" data-k="read_artifact 读作品集里已经做好的东西（你自己做的，或者她存进去的）。她把作品发给你时，正文里是 [ARTIFACT:标题|语言|文件名|id] 这样一行，最后那段就是 id —— 用它来读，别去猜。不带 id 就是列出作品集里都有什么。一次最多给 8000 字，要往后接着看就带 offset。只读的，做新的用 create_artifact。">
+<header><h3>read_artifact</h3>
+<span class="heat" title="2026-09-05 新加">新<i>0</i></span>
+</header>
+<div class="desc">读作品集里已经做好的东西（你自己做的，或者她存进去的）。<b>她把作品发给你时，正文里是 <code>[ARTIFACT:标题|语言|文件名|id]</code> 这样一行，最后那段就是 id</b> —— 用它来读，别去猜。不带 id 就是列出作品集里都有什么（标题 / 语言 / 多大 / id），先列再读。正文可能很长（她的网页动辄两万字），所以<b>一次最多给你 8000 字</b>，要往后接着看就带 offset。⚠️ 别为了「看一眼」就整份读完 —— 长度和标题通常已经够你回话了。这是只读的：改不了也存不了，做新的用 create_artifact。</div>
+<div class="pwrap"><table class="params"><tr><th>id</th><td class="ty">string</td><td>作品 id。从她消息里的 [ARTIFACT:…|id] 或本工具的列表拿，不填就是列清单</td></tr><tr><th>offset</th><td class="ty">number</td><td>从正文第几个字开始读，默认 0</td></tr></table></div>
+</article>
 <article class="tool cool" data-k="project_list_files 列出某个项目里有哪些文件。project_read_file / project_write_file 的 filename 从这儿来，**不确定就先列一遍，别拿猜的文件名去读**（读不到你会以为那份不存在）。">
 <header><h3>project_list_files</h3>
 <span class="heat" title="assistant 历史里出现 1 次">零星<i>1</i></span>

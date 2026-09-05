@@ -6673,6 +6673,24 @@ const TOOLS = [
       required: ['title', 'content']
     }
   },
+  {
+    name: 'read_artifact',
+    description: '读作品集里已经做好的东西（你自己做的，或者她存进去的）。'
+      + '**她把作品发给你时，正文里是 `[ARTIFACT:标题|语言|文件名|id]` 这样一行，最后那段就是 id** —— 用它来读，别去猜。'
+      + '不带 id 就是列出作品集里都有什么（标题 / 语言 / 多大 / id），先列再读。'
+      + '正文可能很长（她的网页动辄两万字），所以**一次最多给你 8000 字**，'
+      + '要往后接着看就带 offset（上一次返回里会告诉你下一段从哪开始）。'
+      + '⚠️ 别为了「看一眼」就整份读完 —— 长度和标题通常已经够你回话了，真要改哪一处再去读那一段。'
+      + '这是只读的：改不了也存不了，做新的用 create_artifact。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '作品 id。从她消息里的 [ARTIFACT:…|id] 或本工具的列表拿，不填就是列清单' },
+        offset: { type: 'number', description: '从正文第几个字开始读，默认 0', default: 0 }
+      },
+      required: []
+    }
+  },
   // === 给她打电话 ===
   {
     name: 'call_her',
@@ -7948,6 +7966,45 @@ async function executeTool(name, input, routes) {
       return {
         artifact: { id: artId, title: artTitle, language: artLang, filename, content: artContent },
         message: 'Artifact 「' + artTitle + '」已创建'
+      };
+    }
+    // 09-05：以前他没有「读作品」这一路，所以她要给他看一份自己的作品，
+    //   前端「发给他看」只能把整段源码贴进聊天（20000 字符上限）——
+    //   她看到的是代码不是卡片，而且那 2 万字符**进了库**，往后每次翻历史都再付一遍。
+    //   有了这个工具，那条消息只需要带一个 id，正文他想看才去拿、要多少拿多少。
+    case 'read_artifact': {
+      const raId = (input.id || '').trim();
+      if (!raId) {
+        const list = db.prepare(
+          'SELECT id, title, language, length(content) AS size, created_at FROM artifacts ORDER BY created_at DESC LIMIT 30'
+        ).all();
+        if (!list.length) return { artifacts: [], message: '作品集是空的' };
+        return {
+          artifacts: list.map(r => ({ id: r.id, title: r.title, language: r.language, size: r.size })),
+          message: '作品集里有 ' + list.length + ' 件（最新的在前）。要看正文，带上 id 再调一次。'
+        };
+      }
+      const row = db.prepare('SELECT id, title, language, content FROM artifacts WHERE id = ?').get(raId);
+      if (!row) return { error: '没有这个 id 的作品。不带 id 调一次可以看清单。' };
+      // pdf 的 content 是 base64（TEXT 列存不了二进制），给他没有意义，别把一坨 base64 灌进上下文
+      if (row.language === 'pdf') {
+        return { id: row.id, title: row.title, language: 'pdf', error: 'PDF 的正文是二进制，这个工具读不了。你只能知道它叫《' + row.title + '》。' };
+      }
+      const RA_MAX = 8000;
+      const full = row.content || '';
+      let off = Number(input.offset) || 0;
+      if (off < 0) off = 0;
+      if (off > full.length) off = full.length;
+      const chunk = full.slice(off, off + RA_MAX);
+      const nextOff = off + chunk.length;
+      const done = nextOff >= full.length;
+      return {
+        id: row.id, title: row.title, language: row.language,
+        total_length: full.length, offset: off, next_offset: done ? null : nextOff,
+        content: chunk,
+        message: done
+          ? (off === 0 ? '全文就这些。' : '读到末尾了。')
+          : '还没完 —— 全文 ' + full.length + ' 字，这段到 ' + nextOff + '。真要接着看就用 offset=' + nextOff + '，不需要就停在这儿。'
       };
     }
     case 'share_music': {
@@ -9846,9 +9903,13 @@ async function handleGatewayChat(req, res, ctx) {
           if (parsed && parsed.file_card) gwMarkers += '\n[FILE:' + parsed.file_card.filename + '|' + parsed.file_card.id + ']';
           if (parsed && parsed.markup && typeof parsed.markup === 'string') gwMarkers += '\n' + parsed.markup;
           if (parsed && parsed.artifact) {
-            var _ac = parsed.artifact.content || '';
-            if (_ac.length > 8000) _ac = _ac.slice(0, 8000) + '…';
-            gwMarkers += '\n[ARTIFACT:' + parsed.artifact.title + '|' + (parsed.artifact.language || 'html') + '|' + parsed.artifact.filename + '|' + _ac + ']';
+            // 09-05：第四段以前塞的是截断到 8000 字的 HTML 正文，现在换成 artifact id。
+            //   塞正文有三个害处：① 正文里的 `]` 会把标记截断，前端正则永远匹配不上，
+            //   卡画不出来（她 09-05 报的就是这个）；② 那 8000 字真的存进 messages，
+            //   往后每次翻历史都重付一遍；③ 正文本来就在 artifacts 表里，这份是冗余的。
+            //   换成 id 之后，卡片点得开，他也能用 read_artifact 按需去读。
+            //   ⚠️ 前端 `_renderArtifactCards` 的正则认 3 段或 4 段，第四段必须不含 `|` 和 `]`。
+            gwMarkers += '\n[ARTIFACT:' + parsed.artifact.title + '|' + (parsed.artifact.language || 'html') + '|' + parsed.artifact.filename + '|' + (parsed.artifact.id || '') + ']';
           }
           if (parsed && parsed.command) gwMarkers += '\n[CMD:' + parsed.command.id + '|' + (parsed.command.type || 'timer') + '|' + (parsed.command.title || '') + ']';
           if (parsed && parsed.command) res.write('event: cmd\ndata: ' + JSON.stringify({ id: parsed.command.id, type: parsed.command.type || 'timer', title: parsed.command.title || '' }) + '\n\n');
@@ -10311,8 +10372,10 @@ async function handleAnthropicChat(req, res, ctx) {
                 //   ① 正文里的 `]` 会把标记提前截断，前端解析不出来；
                 //   ② 前端**从来没有 [ARTIFACT:] 的渲染函数**（[FILE:]/[CMD:] 都有），
                 //      于是整段连同 HTML 源码裸着显示在气泡里（09-05 她截图报的）。
-                //   现在只留三个字段，都不含 `|`，前端画卡片够用了。
-                stickerImgs += '\n[ARTIFACT:' + ct.artifact.title + '|' + (ct.artifact.language||'html') + '|' + ct.artifact.filename + ']';
+                //   现在只留标题/语言/文件名，都不含 `|`，前端画卡片够用了。
+                //   09-05 傍晚补第四段 = artifact id（不是正文）：他要用 read_artifact 读，
+                //   得先有个 id。两条链路的标记格式必须一样，这次别再各写各的。
+                stickerImgs += '\n[ARTIFACT:' + ct.artifact.title + '|' + (ct.artifact.language||'html') + '|' + ct.artifact.filename + '|' + (ct.artifact.id||'') + ']';
               }
               if (ct && ct.command) {
                 var cmdType = ct.command.type || 'timer';
@@ -11590,6 +11653,7 @@ app.post('/api/tool-caption', auth, (req, res) => {
     read_diary: '翻日记',
     diary_comment: '在日记下留言',
     create_artifact: '创建 Artifact',
+    read_artifact: '看作品',
     project_write_file: '写入文件',
     project_read_file: '读取文件',
     project_list_files: '列出文件',
@@ -11853,6 +11917,29 @@ app.get('/api/artifacts', auth, (req, res) => {
     'SELECT id, title, language, conv_id, msg_id, length(content) AS size, created_at, updated_at FROM artifacts ORDER BY created_at DESC'
   ).all();
   res.json({ artifacts: rows });
+});
+
+// 09-05：app（Capacitor WKWebView）里 `a.download` + blob 是**静默失效**的 ——
+//   点了什么都不发生，也不报错。所以给作品一个真的下载 URL：
+//   带 Content-Disposition: attachment，app 那边用系统浏览器打开就能存。
+//   走 authFile（跟 /api/files/:id 一样），因为系统浏览器带不了 Authorization 头。
+app.get('/api/artifacts/:id/download', authFile, (req, res) => {
+  const row = db.prepare('SELECT * FROM artifacts WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const lang = row.language || 'html';
+  const ext = lang === 'svg' ? '.svg' : lang === 'md' ? '.md' : lang === 'pdf' ? '.pdf' : '.html';
+  const safe = String(row.title || 'artifact').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + ext;
+  // pdf 的 content 是 base64，别原样当文本发出去
+  const buf = lang === 'pdf' ? Buffer.from(row.content || '', 'base64')
+                             : Buffer.from(row.content || '', 'utf8');
+  const mime = lang === 'svg' ? 'image/svg+xml' : lang === 'md' ? 'text/markdown'
+             : lang === 'pdf' ? 'application/pdf' : 'text/html';
+  // 文件名有中文，ASCII 那份留个退路，UTF-8 那份给认得 RFC 5987 的
+  res.setHeader('Content-Type', mime + '; charset=utf-8');
+  res.setHeader('Content-Disposition',
+    'attachment; filename="artifact' + ext + '"; filename*=UTF-8\'\'' + encodeURIComponent(safe));
+  res.setHeader('Content-Length', buf.length);
+  res.send(buf);
 });
 
 app.get('/api/artifacts/:id', auth, (req, res) => {
