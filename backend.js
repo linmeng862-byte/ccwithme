@@ -10288,10 +10288,14 @@ async function handleAnthropicChat(req, res, ctx) {
                 stickerImgs += '\n' + ct.markup;
               }
               if (ct && ct.artifact) {
-                // Artifact 内容可能很长，截断到可存大小
-                var artContent = ct.artifact.content || '';
-                if (artContent.length > 8000) artContent = artContent.slice(0, 8000) + '…';
-                stickerImgs += '\n[ARTIFACT:' + ct.artifact.title + '|' + (ct.artifact.language||'html') + '|' + ct.artifact.filename + '|' + artContent + ']';
+                // 09-05：**不再把正文塞进这个标记**。以前塞的是截断到 8000 字的 HTML，
+                //   而 artifact 正文本来就单独存在 artifacts 表里（前端 _saveArtifactToDB），
+                //   这儿这份是冗余的。塞了还有两个害处：
+                //   ① 正文里的 `]` 会把标记提前截断，前端解析不出来；
+                //   ② 前端**从来没有 [ARTIFACT:] 的渲染函数**（[FILE:]/[CMD:] 都有），
+                //      于是整段连同 HTML 源码裸着显示在气泡里（09-05 她截图报的）。
+                //   现在只留三个字段，都不含 `|`，前端画卡片够用了。
+                stickerImgs += '\n[ARTIFACT:' + ct.artifact.title + '|' + (ct.artifact.language||'html') + '|' + ct.artifact.filename + ']';
               }
               if (ct && ct.command) {
                 var cmdType = ct.command.type || 'timer';
