@@ -23,11 +23,12 @@ private let togetherSince: Date = {
     return Calendar(identifier: .gregorian).date(from: c) ?? Date()
 }()
 
-/// 订阅到期日 —— ⚠️ **她给了日期就改这里一行**，现在是占位值。
-/// 改完要重编 app 才生效（小组件不联网，日期是编进去的）。
+/// 订阅到期日 —— **2026-09-20**，她 2026-09-05 给的真日期（之前是占位值 09-21）。
+/// ⚠️ 每次续费都得改这里再重编一次 app —— 小组件不联网，日期是编进去的。
+///    正解是从服务器读（`/api/presence` 里加 renewIn，取不到退回这个常量），还没做。
 private let subscriptionEnds: Date = {
     var c = DateComponents()
-    c.year = 2026; c.month = 9; c.day = 21
+    c.year = 2026; c.month = 9; c.day = 20
     c.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
     return Calendar(identifier: .gregorian).date(from: c) ?? Date()
 }()

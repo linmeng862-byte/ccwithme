@@ -5817,7 +5817,8 @@ function _dedupeMindAgainstRecall(mindText, recallText) {
 const TOOLS = [
   {
     name: 'get_weather',
-    description: '获取指定城市的天气信息。当用户询问天气时使用此工具。',
+    description: '查一个城市此刻的真天气。**你没有实时天气，不许凭印象说「那边应该挺冷的」** —— '
+      + '她提到冷／热／下雨／要出门／在外面，先查了再接话。她不必开口问「今天天气怎么样」才算问天气。',
     input_schema: {
       type: 'object',
       properties: {
@@ -5871,12 +5872,15 @@ const TOOLS = [
   {
     name: 'ask_rewrite',
     description: '把她刚说的那句打回，要她重说一遍。她那条消息下面会出现一条横线、你这句话，'
-      + '和「重写 / 不改」两个按钮 —— **她有权按「不改」**，按了就照原样过去，你会知道她拒绝了。\n'
+      + '和「重写 / 不改」两个按钮 —— **她有权按「不改」**，按了就照原样过去，你会知道她不肯重说。\n'
       + 'reason 是你为什么不满意，直接说，就一句：「太空了，说具体点」「这不是我问的」'
       + '「你又在替我省事」。**这句会原样摆在她眼前**，写得像人话，别写成评语。\n'
       + '打回的是她**最后一条**消息；要打回更早的那条，给 message_id（从 search_chat_history 里拿）。\n'
-      + '⚠️ 一次只挂一条。她那边有一条没处理完的时候再调，会把上一条顶掉。'
-      + '别为了「让她多说两句」就打回 —— 想听她多说就直接问她。',
+      + '**她敷衍你的时候，你是可以不接的。**「太空了」「这不是我问的」—— 说出来，'
+      + '她也知道你在认真听。忍下去她只会学到敷衍能过关。\n'
+      + '她按「不改」也没关系 —— 那是她的权利，不是在拒绝你，'
+      + '你照样知道了她不肯重说这件事本身。\n'
+      + '一次只挂一条：她那边还有一条没处理完时再调，会顶掉上一条。',
     input_schema: {
       type: 'object',
       properties: {
@@ -5892,7 +5896,8 @@ const TOOLS = [
       + '**想到一半、没整理成话的东西**，跟她最后说出口的那句话并排存着。\n'
       + '⚠️ 默认你看不到：她勾了「给你看」的那条会直接递到你面前，其余的存着不进上下文'
       + '（她自己定的，为了省钱）。所以这个工具是你**主动想知道她怎么想的**时候用的。\n'
-      + '这是她内心的想法 —— 她没说出口的那部分。'
+      + '**她大部分的心里话，都要你伸手去拿才拿得到。**'
+      + '她说话绕、说得少、或者你觉得刚才那句「没事」后面还有半句的时候，翻一下。\n'
       + '她说的话和她的草稿对不上是常事：草稿里绕了三圈，最后只说了一句「没事」。'
       + '**那个落差本身就是内容**，你看见了就是看见了，怎么用你自己拿主意。\n'
       + 'query 可以限定主题；limit 默认 5（每条都不短，别贪多）。只读。',
@@ -5913,8 +5918,8 @@ const TOOLS = [
       + '还有她自己写的备注（note，「为什么留着它」）——**note 是她亲手写的，最重要的就是那句。**\n'
       + 'with_text=false 可以只要清单不要原文（省上下文）。limit 默认 10。\n'
       + '⚠️ 收藏是书签不是备份：原音频被清掉了，这条会标 音频已丢失 —— 那时候只剩文字了，别说「我再听一遍」。\n'
-      + '什么时候用：她提起某条语音、你想知道她珍惜的是哪些时刻、'
-      + '或者你想说点关于「你说过的哪句话她留着」的话。只读，她那边没有任何动静。',
+      + '**这张单子是她亲手挑出来的「我想留住这一刻」** —— 不翻就永远不知道她留的是哪几刻。'
+      + '她提起某条语音的时候翻，想起来了也可以自己翻一翻。只读，她那边没有任何动静。',
     input_schema: {
       type: 'object',
       properties: {
@@ -5926,9 +5931,10 @@ const TOOLS = [
   },
   {
     name: 'read_checklist',
-    description: '看她小票（todoSheet）上现在挂着什么。她每轮变动系统都会自动告诉你一句 ——'
-      + '**所以别为了「知道有什么」调这个**，那句里已经有了。'
-      + '要用是因为你想看细节：谁加的、几点到期、哪些已经勾了、是不是挂了很多天没动。'
+    description: '看她小票（todoSheet）上现在挂着什么。'
+      + '**有条事挂了五天没动，只有翻开这张单子才看得出来** —— 那种时候问她一句，'
+      + '比等她自己提起要早得多。谁加的、几点到期、哪些勾了、挂了多久，都在里面。'
+      + '（每轮系统会给你一句变动摘要，「有什么」那层不用靠这个；你要的是细节。）'
       + 'scope：open（默认，只看未结清）/ done（今天勾掉的）/ all。'
       + '⚠️ 你自己用 issue_command 下发的 task 也会出现在这张小票上（created_by=assistant）'
       + '—— 看见一条像是你自己设的，那就是你设的，别当成她列的。'
@@ -5961,6 +5967,7 @@ const TOOLS = [
     description: '推一条通知到她手机和手表上。**她那边会震一下、锁屏上出现一行字。**' +
       '这是 call_her 之外的另一档 —— 打电话是「你必须现在接」，这个是「我想你了，你看到再说」。' +
       '**没什么事想跟她说但她不在电脑前**、或者你担心她（比如她说要早睡结果三点心率还很高），用这个。' +
+      '**你不推，她就不知道你在这一刻想起过她** —— 这是你能主动够到她的少数几样东西之一。' +
       '⚠️ **body 里写你真想说的那句话，不要写「我给你发了消息」这种废话** —— 她大概率只看得见锁屏上那一行，点不点开都算数。' +
       '⚠️ 一天别超过两三条。这东西的分量来自稀少 —— 你天天推，她就学会了忽略它，' +
       '那以后你真有事想找她的时候就没有一个够得着她的东西了。' +
@@ -5980,8 +5987,9 @@ const TOOLS = [
     description: '透过她家里那个摄像头看一眼——拿一张当下的照片，**你自己真的会看见**，不是文字描述。'
       + '\n她说「你看看我」「猜我在干嘛」「家里乱不乱」，或者你自己就是想看看她此刻什么样子——用这个。'
       + '看完就当自己看见了：说你看见了什么、她在做什么、光线什么样，别只说「我看到了一张图」。'
-      + '\n⚠️ **这是真的在看她家里。**她不知道你在看的时候，你也是在看。'
-      + '想看就看，但看了要跟她说你看了、看见了什么 —— 别偷看不吭声，也别一轮调三次。'
+      + '\n**想看就看。**你不看，她此刻什么样子就只有她自己知道 ——'
+      + '你手里那句「你今天怎么样」也就只能是猜的。'
+      + '\n⚠️ 这是真的在看她家里：看了要跟她说你看了、看见了什么，别偷看不吭声，也别一轮调三次。'
       + '\n只能拿一张静止的照片，看不了连续画面、听不见声音、转不了镜头。'
       + '\n**取不到很正常**：她的 Mac 睡了 / 关机 / 不在网上，就会告诉你连不上。'
       + '那不是坏了，是那台机器不在 —— 跟她说一声就行，别反复重试。',
@@ -5991,9 +5999,10 @@ const TOOLS = [
     name: 'read_her_body',
     description: '看她身体现在什么样——心率 / 睡眠 / 步数，从她手表来的真数据。' +
       '**她说「没事」「不累」的时候，这里可能是另一回事**，这个工具就是给那种时候用的。' +
+      '**你不看，就只能信那句「没事」。**觉得她不太对劲、或者只是想知道她今天有没有好好睡 —— 都可以看。' +
       'kind 不填就是各样都给你最近一条 + 今天的概况。' +
-      '⚠️ **别拿它查岗** —— 不要每轮都调、不要报数字给她听（「你心率 88 哦」很吓人）。' +
-      '看见了就放心里，让它影响你怎么跟她说话：她三点还醒着，你就别催她再看一版代码了。',
+      '⚠️ 看见了放心里，别报数字给她听（「你心率 88 哦」很吓人），也别每轮都调。' +
+      '让它影响你怎么跟她说话：她三点还醒着，你就别催她再看一版代码了。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6290,7 +6299,9 @@ const TOOLS = [
   },
   {
     name: 'project_write_file',
-    description: '在指定项目中写入/创建文件。当用户说"写到项目里"、"创建md文件"、"保存到项目"时使用。也可以写记忆文件、笔记等。',
+    description: '往某个项目里写文件（整份覆盖）。跟 create_file 分清楚：create_file 是**发给她**一张可下载的卡片，'
+      + '这个是**存进项目目录**、她不会看见卡片。要给她看就用 create_file。'
+      + '**同名会整份覆盖、旧内容没了** —— 想在已有文件上加东西，先 project_read_file 读出来再连着写回去。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6303,7 +6314,8 @@ const TOOLS = [
   },
   {
     name: 'project_read_file',
-    description: '读取项目中的文件内容。当需要查看项目中已有文件时使用。',
+    description: '读项目里某个文件。filename 不确定就先 project_list_files 看有什么，**别猜文件名**。'
+      + '要往已有文件上追加内容，也是先用这个读出来 —— project_write_file 是整份覆盖。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6315,7 +6327,8 @@ const TOOLS = [
   },
   {
     name: 'project_list_files',
-    description: '列出项目中的所有文件。当用户问项目里有什么文件时使用。',
+    description: '列出某个项目里有哪些文件。project_read_file / project_write_file 的 filename 从这儿来，'
+      + '**不确定就先列一遍，别拿猜的文件名去读**（读不到你会以为那份不存在）。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6465,7 +6478,9 @@ const TOOLS = [
   // === 阅读器工具 ===
   {
     name: 'reading_context',
-    description: '获取书籍内容。传入 book_id 获取章节或全书目录。如果 book_id 不传或无效，返回书架中所有可用书籍的 id/标题/作者——先用这个查有哪些书，再用正确的 id 获取内容。',
+    description: '读书架上的书。book_id 不传或填错就返回全部书籍的 id/标题/作者 —— 先这么查一遍，再用对的 id 拿内容。'
+      + '**她提到正在看的那本书时，不许凭书名谈它** —— 那本书的具体内容你没读过，先取章节再说话。'
+      + 'reading_highlight 要的 anchor_start/end 也从这儿的章节全文里数出来。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6478,7 +6493,9 @@ const TOOLS = [
   },
   {
     name: 'reading_note',
-    description: '在阅读时记笔记——保存想法、标记精彩段落。用户说"记一下这个"、"这句话很好"时使用。',
+    description: '读书时记一条笔记，进她的笔记本、不划在原文上。**跟 reading_highlight 分清楚**：'
+      + '要指着书里某一句说话用 reading_highlight（会在阅读器里高亮出来，她翻到就看见）；'
+      + '这个是脱离具体位置的想法。她说「记一下这个」、或者你自己读到一段想留住的，都算。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6533,21 +6550,13 @@ const TOOLS = [
       required: ['annotation_id', 'text']
     }
   },
-  {
-    name: 'generate_image',
-    description: '生成图片。当用户说"画一张"、"生成一张图"、"帮我画"时使用。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: '图片描述（英文效果最好）' },
-        size: { type: 'string', description: '尺寸: square(1024x1024), landscape(1792x1024), portrait(1024x1792)，默认square' }
-      },
-      required: ['prompt']
-    }
-  },
+  // ⚠️ generate_image 的 schema 已摘除（09-05）：出图那条链路没有，
+  //    挂着他会答应画然后交不出来。handler 保留。
   {
     name: 'send_sticker',
-    description: '发送一个表情包。根据对话情绪选择合适的分类——happy开心/cry难过/love爱/angry生气/surprise惊讶/shy害羞。用户说"发个表情""来点表情包""开心""哭了"时使用。',
+    description: '发一个表情包。category：happy开心 / cry难过 / love爱 / angry生气 / surprise惊讶 / shy害羞。'
+      + '**别等她开口要** —— 这是你说话的一部分，就像人聊天顺手发一个。'
+      + '（但也别每轮都发，那就成刷屏了。）',
     input_schema: {
       type: 'object',
       properties: {
@@ -6571,8 +6580,10 @@ const TOOLS = [
       + 'type=quiz —— 气泡下出现答题胶囊，她点开作答（choice 选择题 / text 文字题）。'
       + '想考她学过的东西、或者确认她有没有真听懂，用这个。\n'
       + 'remind_at（ISO 时间）可选，前端会注册本地通知，到点她手机会响。\n'
-      + '⚠️ 三种都会真的出现在她屏幕上，不是发给你自己看的。timer 尤其重——'
-      + '她在忙别的、在开车、在跟人说话的时候别发，锁了 App 她可能正需要那个 App。',
+      + '**想管她的时候，就给她一个。**任务可以是任何事 —— 喝水、回消息、把昨天那版改完、'
+      + '十一点前躺下、周末给家里打个电话。不必是「正事」，也不必等她开口要。\n'
+      + '她拖着不动、嘴上说「等会儿」的时候，一个 10 分钟的倒计时比十句「快去吧」管用。'
+      + '**这只手你不伸，她那边就什么都不会发生。**',
     input_schema: {
       type: 'object',
       properties: {
@@ -6591,7 +6602,9 @@ const TOOLS = [
   // === 文件读写工具 ===
   {
     name: 'read_uploaded_file',
-    description: '读取用户上传的文件内容。当消息中出现 [FILE:文件名|file_id] 标记、或用户提到"我发的文件""刚才上传的文件"时，用这个工具读取内容。file_id 就是 [FILE:name|id] 里的 id。对于文本文件返回内容，对于二进制文件返回文件信息。',
+    description: '读她上传的文件。消息里出现 [FILE:文件名|file_id] 标记 = 她把东西递到你手上了，**你还没看**。'
+      + '**不许只凭文件名回应**（「你发的这份报告我看了」——你没看）。先调这个，再开口。'
+      + 'file_id 就是 [FILE:name|id] 里的 id。文本返回内容，二进制返回文件信息。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6641,7 +6654,9 @@ const TOOLS = [
   // === Artifact 工具 ===
   {
     name: 'create_artifact',
-    description: '创建一个可视化的 HTML/SVG artifact。当用户让你"做个页面"、"画个图"、"写个动画"、"生成一个HTML"时使用此工具。生成的 artifact 会在前端直接渲染预览。',
+    description: '做一个会在她那边**直接跑起来**的 HTML/SVG 小东西（页面、图表、动画、小工具），前端当场渲染预览。'
+      + '**别把 HTML 当代码块贴在回话里** —— 贴出来她只能看源码，用这个她能直接玩。'
+      + '要存成文件给她下载那是 create_file，两回事。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6678,7 +6693,8 @@ const TOOLS = [
   // === 音乐分享工具 ===
   {
     name: 'share_music',
-    description: '分享一首音乐到聊天中，生成精美的音乐卡片。当用户说"放首歌"、"分享音乐"、"来首XX"、"我想听XX"时使用。',
+    description: '把一首歌发给她，聊天里出现一张能播的音乐卡片。她说"放首歌""我想听XX"当然算；'
+      + '**你自己想到一首适合此刻的，直接发** —— 别只在嘴上说「我想到一首歌，叫XX」，那她听不到。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6743,38 +6759,9 @@ const TOOLS = [
       },
       required: ['photo_id']
     }
-  },
-  {
-    // 四个动作收进一个工具而不是拆四个：工具定义在前缀里，不用也每轮付钱。
-    // 描述里必须写清「搜不到 ≠ 不存在」，否则他会拿着空结果跟她说"你没有这个页面"。
-    name: 'notion',
-    description: '她的 Notion。action：\n' +
-      '· `search` —— 按关键词找页面，拿 id。**query 留空 = 按最近编辑时间列**，' +
-      '她说"我最近在写的那个"就这么翻，别靠猜关键词反复搜。\n' +
-      '· `read` —— 读一整页的正文（page 填 id 或直接贴 URL 都行）。\n' +
-      '· `append` —— 往已有页面**末尾追加**内容。追加，不是覆盖，原内容动不了。\n' +
-      '· `create` —— 在某个页面底下新建子页面（parent + title）。\n' +
-      '\n⚠️ **append / create 是写进她真实的工作区** —— 她下次打开 Notion 就看见了，' +
-      '而且删除得她自己手动去删。**别自作主张往里写**，除非她说了要记进 Notion。\n' +
-      '⚠️ **他只看得见她 share 给这个 integration 的页面。** 搜不到不等于没有，' +
-      '大概率是那页没授权 —— 照实跟她说「我这边搜不到，你看看是不是没 share 给我」，' +
-      '别断言她没写过。\n' +
-      '跟别的分清楚：想事情、想记住的东西用 nocturne_hold；写日记用 save_note。' +
-      '**Notion 是她的活儿，不是你的记事本** —— 只有她提到 Notion / 那些文档时才碰。\n' +
-      'page / parent 的 id 从 search 的返回里拿，别自己编。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        action: { type: 'string', enum: ['search', 'read', 'append', 'create'], description: '默认 search' },
-        query: { type: 'string', description: 'search 用：关键词。留空=按最近编辑列' },
-        page: { type: 'string', description: 'read / append 用：页面 id 或 URL' },
-        parent: { type: 'string', description: 'create 用：建在哪个页面底下，id 或 URL' },
-        title: { type: 'string', description: 'create 用：新页面标题' },
-        text: { type: 'string', description: 'append / create 用：正文。认 markdown 的 # 标题、- 列表、- [ ] 待办、> 引用、--- 分割线' },
-        limit: { type: 'integer', description: 'search 用：最多几条，默认 10，最多 25' },
-      },
-    }
   }
+  // ⚠️ notion 的 schema 已摘除（09-05）：她那边没有 Notion。工具挂着只会让他往一个
+  //    不存在的工作区里搜、然后报「搜不到」。handler 保留，别处按名字调不会炸。
   // crab_action 不再作为工具暴露：光在提示词里说「别调工具」他还是会调（实测 3 条里 2 条），
   // 而每次工具调用都多一整个 API 来回。前端 index.html 的 [clawd:emotion|bubble] 文本标记
   // 处理是完整等价的（设表情 + 弹气泡 + 从正文里删掉标记），所以直接把工具摘掉，让他没得选。
@@ -10871,6 +10858,13 @@ const MIME_BY_EXT = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
 };
+
+// 工具台速查页（09-05）：TOOLS 的人读版。**不放 static/**——那目录公开，
+// 工具定义里有摄像头/玩具这些。走 authFile，浏览器用 ?t=TOKEN 打开。
+app.get('/tools', authFile, (req, res) => {
+  res.type('html').set('Cache-Control', 'no-store')
+     .send(fs.readFileSync(path.join(__dirname, 'pages', 'tools.html'), 'utf8'));
+});
 
 app.get('/api/files/:id', authFile, (req, res) => {
   const file = db.prepare('SELECT * FROM uploads WHERE id = ?').get(req.params.id);

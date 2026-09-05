@@ -216,6 +216,92 @@ if [ -n "${APP_VARIANT}" ]; then
   echo "   ✅ 变体改完了"
 else
   echo "   (skip) 变体 —— 没设 APP_VARIANT，用仓库默认的 com.zzclaude.eclat"
+
+  # 2.6 还原：把上一次编变体留下的痕迹擦掉（2026-09-05 她定的）
+  #
+  # 为什么要这段：上面那套替换是**单向**的 —— 设了变体就往几个**进 git 的**文件里
+  # 写痕迹，不设变体时只跳过、不还原。于是「编完 fun 再编主 app」编出来的还是 fun：
+  #   09-04 bundle id 咬了三次（一次只露一处）；09-05 又咬到小组件 ——
+  #   她桌面上那个变成了 fun 版（「天」「一直在一起呀」），而主 app 的小组件
+  #   跟着 app 一起没了（bundle id 变了 = 另一个 app）。
+  #
+  # ⚠️ 只在**没设 APP_VARIANT** 时跑。另一台靠 .app-variant 一直设着，
+  #    永远进不到这个分支，行为一个字不变 —— 这段影响的只有「编主 app」和 CI。
+  #
+  # ⚠️ 只还原**认得出是变体痕迹**的改动，看不懂的一律只警告不动手 ——
+  #    哪天谁真在 PresenceWidget.swift 里写了东西，不能被这段一把冲掉。
+  if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    _restored=0
+    _kept=0
+
+    # 内容跟某个 variants/<同名>.*.swift 逐字节相同 = 是被 cp 覆盖出来的，不是人写的
+    _is_variant_copy() {
+      local dest="$1" v
+      for v in "$ROOT/ios/App/LiveActivityWidget/variants/$(basename "${dest%.swift}")."*.swift; do
+        [ -e "$v" ] || continue
+        cmp -s "$dest" "$v" && return 0
+      done
+      return 1
+    }
+    # 图标：跟本机某张 static/app-icon-<变体>.png 逐字节相同 = 是变体图标
+    _is_variant_icon() {
+      local dest="$1" v
+      for v in "$ROOT/static/app-icon-"*.png; do
+        [ -e "$v" ] || continue
+        cmp -s "$dest" "$v" && return 0
+      done
+      return 1
+    }
+
+    _restore() {
+      local rel="$1" why="$2"
+      local abs="$ROOT/$rel"
+      [ -e "$abs" ] || return 0
+      git -C "$ROOT" diff --quiet -- "$rel" && return 0     # 没动过
+      case "$why" in
+        # 加进去的行里带 com.zzclaude.eclat.<变体> = bundle id 被换过
+        bid)    git -C "$ROOT" diff -U0 -- "$rel" | grep -q '^+.*com\.zzclaude\.eclat\.' \
+                  || { _kept=1; echo "   ⚠️ ${rel} 有改动但不像变体痕迹 —— 没动它，自己看一眼"; return 0; } ;;
+        # 显示名被改成「éclat xxx」
+        name)   git -C "$ROOT" diff -U0 -- "$rel" | grep -q '^+.*<string>éclat .' \
+                  || { _kept=1; echo "   ⚠️ ${rel} 有改动但不像变体痕迹 —— 没动它，自己看一眼"; return 0; } ;;
+        widget) _is_variant_copy "$abs" \
+                  || { _kept=1; echo "   ⚠️ ${rel} 有改动但不是变体那份的副本 —— 没动它，自己看一眼"; return 0; } ;;
+        icon)   _is_variant_icon "$abs" \
+                  || { _kept=1; echo "   ⚠️ ${rel} 有改动但不是变体图标 —— 没动它，自己看一眼"; return 0; } ;;
+      esac
+      git -C "$ROOT" checkout -- "$rel"
+      echo "   ↩︎ 还原 ${rel}"
+      _restored=1
+    }
+
+    _restore "ios/App/App.xcodeproj/project.pbxproj"                bid
+    _restore "ios/App/App/capacitor.config.json"                    bid
+    _restore "ios/App/App/App.entitlements"                         bid
+    _restore "ios/App/App/AppGroupDataStore.swift"                  bid
+    _restore "ios/App/App/ScreenTimeManager.swift"                  bid
+    _restore "ios/App/BroadcastUpload/BroadcastUpload.entitlements" bid
+    _restore "ios/App/BroadcastUpload/SampleHandler.swift"          bid
+    _restore "ios/App/ScreenTimeMonitor/ScreenTimeMonitor.entitlements"   bid
+    _restore "ios/App/ScreenTimeMonitor/ScreenTimeMonitorExtension.swift" bid
+    _restore "ios/App/App/Info.plist"                               name
+    _restore "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png" icon
+    # 小组件：variants/ 里有几份就还原几份（现在只有 PresenceWidget）
+    for _vf in "$ROOT/ios/App/LiveActivityWidget/variants/"*.swift; do
+      [ -e "$_vf" ] || continue
+      _b="$(basename "$_vf")"                 # PresenceWidget.fun.swift
+      _b="${_b%.swift}"; _b="${_b%.*}.swift"  # → PresenceWidget.swift
+      _restore "ios/App/LiveActivityWidget/${_b}" widget
+    done
+
+    if [ "$_restored" = "1" ]; then
+      echo "   ✅ 变体痕迹已还原 —— 这次编出来的是主 app（com.zzclaude.eclat）"
+    elif [ "$_kept" = "0" ]; then
+      echo "   ✅ 没有变体痕迹，工作区本来就是干净的"
+    fi
+  else
+    echo "   (skip) 还原 —— 这儿不是 git 仓库，认不出什么是变体痕迹"
+  fi
 fi
 
 # 3. 扩展 target
