@@ -2319,7 +2319,7 @@ function _startWakePoll(){
         var row=_buildClaudeRow(m.content,'','',String(m.created_at*1000));
         row.dataset.wakeId=m.id;
         streamInner.append(row);
-        _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderClawdLabel(row);
+        _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderArtifactCards(row);_renderClawdLabel(row);
         _renderVoiceCards(row);_renderCallCards(row);
         if(typeof _splitMessages==='function')_splitMessages(row);
         if(typeof _hideBubbleIfEmpty==='function')_hideBubbleIfEmpty(row);
@@ -3881,6 +3881,32 @@ function _renderClawdLabel(row){
   var el=document.createElement('div');el.className='clawd-emote-label';el.textContent=txt;
   b.after(el);
 }
+// 09-05：`[ARTIFACT:标题|语言|文件名]` 画成一张卡。
+// 以前这个标记**没有任何渲染函数**（[FILE:] 和 [CMD:] 都有，唯独它漏了），
+// 于是整段连同 HTML 源码裸着显示在气泡里 —— 她 09-05 截图报的就是这个。
+// 两条正则，跟 mind 标签那套一个道理：
+//   完整的那条画卡；开了头没收尾的（旧消息里塞过 HTML 正文，里面的 `]`
+//   会把标记截断）直接吃到末尾，宁可不画也别让源码露出来。
+function _renderArtifactCards(row){
+  var body=row.querySelector('.msg-body');if(!body)return;
+  var md=body.querySelector('.md');if(!md)return;
+  var html=md.innerHTML;var changed=false;
+  var re=/\[ARTIFACT:([^|\]]*)\|([^|\]]*)\|([^|\]]*)\]/g;var m;
+  while((m=re.exec(html))!==null){
+    changed=true;
+    var title=m[1],lang=m[2]||'html',fname=m[3];
+    var icon='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+    var card='<div class="artifact-card" data-art-title="'+escHtml(title)+'" style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;cursor:pointer"><span style="display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none">'+icon+'</span><span style="flex:1;min-width:0"><span style="display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(title)+'</span><span style="display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px">'+escHtml(String(lang).toUpperCase())+' · '+escHtml(fname)+'</span></span><span style="flex:none;color:var(--text-time)">›</span></div>';
+    html=html.replace(m[0],card);re.lastIndex=0;
+  }
+  // 旧消息：标记里塞过 HTML 正文，被里面的 `]` 截断，收不了尾 —— 整段吃掉
+  var openRe=/\[ARTIFACT:[\s\S]*$/;
+  if(openRe.test(html)){html=html.replace(openRe,'');changed=true}
+  if(changed)md.innerHTML=html;
+  md.querySelectorAll('.artifact-card[data-art-title]').forEach(function(c){
+    c.onclick=function(){sheet('artifacts',true);if(typeof _renderArtifactsSheet==='function')_renderArtifactsSheet()};
+  });
+}
 function _renderFileCards(row){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;var re=/\[FILE:([^|\]]+)\|([^\]]+)\]/g;var match;var changed=false;while((match=re.exec(html))!==null){changed=true;var name=match[1];var id=match[2];var url='#';var ext=name.lastIndexOf('.')>0?name.slice(name.lastIndexOf('.')+1).toUpperCase():'FILE';var icon='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';var card='<a href="'+url+'" download="'+escHtml(name)+'" class="file-card" data-file-id="'+id+'" data-file-name="'+escHtml(name)+'" style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;max-width:440px;background:var(--bg-surface);border-radius:14px;text-decoration:none;color:var(--text-primary);border:1px solid var(--border);transition:background .15s"><span class="file-card-icon" style="display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:#1E1B18;flex:none">'+icon+'</span><span style="flex:1;min-width:0"><span class="file-card-name" style="display:block;font:600 14px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span><span class="file-card-meta" style="display:block;font:400 12px/1 var(--font-sans);color:var(--text-time);margin-top:3px">'+ext.toLowerCase()+'</span></span><span style="flex:none;color:var(--text-time)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></a>';html=html.replace(match[0],card)}if(changed)md.innerHTML=html;var cards=md.querySelectorAll('.file-card[data-file-id]');cards.forEach(function(card){var fid=card.dataset.fileId;card.onclick=function(ev){return _downloadFile(ev,fid,card.dataset.fileName||'')};api('/api/files/'+fid+'/info').then(function(r){return r.json()}).then(function(info){var fn=card.dataset.fileName||'';var ext2=fn.lastIndexOf('.')>0?fn.slice(fn.lastIndexOf('.')+1).toUpperCase():'FILE';var sizeStr=info.size?_formatFileSize(info.size):'';var parts=[ext2.toLowerCase()];if(sizeStr)parts.push(sizeStr);var meta=card.querySelector('.file-card-meta');if(meta)meta.textContent=parts.join(' · ')}).catch(function(){})})}
 // 08-23 她要的：他打两行就分成两个气泡（「来啦。/ 吃了什么~」应该是两条，不是一条两行）。
 // ⚠️ 不能见换行就切 —— 代码块、列表、表格、多行解释一切就碎。
@@ -3975,6 +4001,8 @@ function _reRenderCards(el){
   try{ if(typeof _renderCmdCapsulesAfter==='function')_renderCmdCapsulesAfter(el); }catch(_){}
   // 08-23：renderMessage 重写 .md 会把 [FILE:] 变回生标记，这里重贴一次文件卡。
   try{ if(typeof _renderFileCards==='function')_renderFileCards(el); }catch(_){}
+  // 09-05：artifact 卡同理 —— `_splitMessages` 分片时会把 .artifact-card 清掉再走这儿重贴
+  try{ if(typeof _renderArtifactCards==='function')_renderArtifactCards(el); }catch(_){}
 }
 function _splitMessages(row){var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=parts[0];_reRenderCards(row)}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;_reRenderCards(row);return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);clone.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){c.remove()});clone.querySelectorAll('.thinking-summary,.trace-row').forEach(function(tb){tb.remove()});var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();clone.querySelectorAll('.memory-save-card,.gallery-album-card-chat,.music-card,.artifact-card,.file-card,.action-report-card').forEach(function(cc){cc.remove()});/* 08-28 空气泡的真正成因：`.clawd-emote-label`（「Clawd替你害羞」那行小字）是**整条消息**的，不是某一片的，`_renderClawdLabel` 把它挂在 .bubble 后面 —— cloneNode(true) 于是把它复制进每一片。一是重复显示，二是更阴的：它让下面 `_rowLooksEmpty` 读到的 textContent 非空，于是「渲染完什么都没有」的那一片删不掉，就留成了空气泡。清掉它，那道网自己就管用了，不用在 `_partIsBlank` 里给 clawd 开特例。 */clone.querySelectorAll('.clawd-emote-label').forEach(function(cc){cc.remove()});parent.insertBefore(clone,next.nextSibling);_reRenderCards(clone);if(_rowLooksEmpty(clone)){clone.remove();return}next=clone})}
 function _addHtmlPreviews(md){if(!md)return;md.querySelectorAll('pre code').forEach(function(block){var cls=block.className||'';var pre=block.parentElement;if(pre.querySelector('.html-preview-btn'))return;var isHtml=/language-html|language-htm|lang-html|lang-htm/i.test(cls);var isCss=/language-css|lang-css/i.test(cls);var isJs=/language-js|language-javascript|lang-js/i.test(cls);if(!isHtml&&!isCss&&!isJs)return;var btn=document.createElement('button');btn.className='html-preview-btn';btn.textContent='▸ Preview';btn.style.cssText='margin-top:6px;padding:5px 14px;border:1px solid var(--accent);border-radius:16px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;font-family:var(--font-sans)';var iframe=null;btn.onclick=function(){if(iframe){iframe.remove();iframe=null;btn.textContent='▸ Preview';return}var code=block.textContent;if(isCss){code='<style>'+code+'<\/style>'}else if(isJs){code='<script>'+code+'<\/script>'}iframe=document.createElement('iframe');iframe.style.cssText='width:100%;max-width:440px;min-height:550px;border:1px solid var(--border);border-radius:14px;background:#fff;margin-top:8px;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob(['<!DOCTYPE html><html><head><meta charset=\"utf-8\"><\/head><body>'+code+'</body></html>'],{type:'text/html'}));pre.after(iframe);btn.textContent='▸ Hide preview'};pre.after(btn)})}
@@ -4638,7 +4666,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       if(typeof setClawdMood==='function'&&_clawdWasStreaming){if(_clawdCurrent==='thinking'||_clawdCurrent==='streaming'){try{setClawdMood('happy',2000)}catch(e){}}_clawdWasStreaming=false}
       setPhase('complete');
       row.dataset.raw=raw;row.dataset.timestamp=new Date().toISOString();
-      _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderClawdLabel(row);
+      _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderArtifactCards(row);_renderClawdLabel(row);
       _renderVoiceCards(row);_renderCallCards(row);
       _splitMessages(row);
       _hideBubbleIfEmpty(row);
@@ -5234,6 +5262,7 @@ function _renderMessagesIntoFragment(slice){
     if(m.role!=='user'){
       try{_renderCmdCapsulesAfter(row)}catch(e){console.warn('[history] cmd capsule:',e)}
       try{_renderFileCards(row)}catch(e){console.warn('[history] file card:',e)}
+      try{_renderArtifactCards(row)}catch(e){console.warn('[history] artifact card:',e)}
       try{_renderClawdLabel(row)}catch(e){console.warn('[history] clawd label:',e)}
       try{_renderToolCardsFromTraces(m.traces,row)}catch(e){console.warn('[history] tool card:',e)}
       try{_renderSourcesFromTraces(m.traces,row)}catch(e){console.warn('[history] sources:',e)}
