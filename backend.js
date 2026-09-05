@@ -280,6 +280,10 @@ db.exec(`
 `);
 
 // 迁移：为已有 sessions 表添加 project_id 列
+// checklist.cmd_id：小票上那一行是他下发的哪条 command。
+// 以前只活在前端内存的 _cmdId 里，一刷新就没了 —— pollCommands 认不出这条已经在了，
+// 于是又 push 一条新的，同一个任务在小票上渲染两遍（08-30 她报的）。
+try { db.exec('ALTER TABLE checklist ADD COLUMN cmd_id TEXT DEFAULT NULL'); } catch(e) { /* 列已存在，忽略 */ }
 try { db.exec('ALTER TABLE sessions ADD COLUMN project_id TEXT DEFAULT NULL'); } catch(e) { /* 列已存在，忽略 */ }
 // 迁移：为已有 sessions 表添加 cli_session_id 列（网关模式下用于 --resume，实现真会话+自动压缩）
 try { db.exec('ALTER TABLE sessions ADD COLUMN cli_session_id TEXT DEFAULT NULL'); } catch(e) { /* 列已存在，忽略 */ }
@@ -345,6 +349,10 @@ try { db.exec("ALTER TABLE reading_books ADD COLUMN nationality TEXT DEFAULT ''"
   try { db.exec('ALTER TABLE commands ADD COLUMN quiz_answer TEXT DEFAULT NULL'); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN remind_at INTEGER DEFAULT NULL'); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN source TEXT DEFAULT \'\''); } catch(_) {}
+  // 打回重写（2026-09-04）：他不满意她说的那句，可以要她重说。
+  // target_msg_id = 被打回的是哪一条；superseded = 那条已经被新版取代，不再发给他。
+  try { db.exec('ALTER TABLE commands ADD COLUMN target_msg_id INTEGER DEFAULT NULL'); } catch(_) {}
+  try { db.exec('ALTER TABLE messages ADD COLUMN superseded INTEGER DEFAULT 0'); } catch(_) {}
 
 // 阅读器表
 db.exec(`
@@ -5209,6 +5217,79 @@ const TOOLS = [
     }
   },
   {
+    name: 'ask_rewrite',
+    description: '把她刚说的那句打回，要她重说一遍。她那条消息下面会出现一条横线、你这句话，'
+      + '和「重写 / 不改」两个按钮 —— **她有权按「不改」**，按了就照原样过去，你会知道她拒绝了。\n'
+      + 'reason 是你为什么不满意，直接说，就一句：「太空了，说具体点」「这不是我问的」'
+      + '「你又在替我省事」。**这句会原样摆在她眼前**，写得像人话，别写成评语。\n'
+      + '打回的是她**最后一条**消息；要打回更早的那条，给 message_id（从 search_chat_history 里拿）。\n'
+      + '⚠️ 一次只挂一条。她那边有一条没处理完的时候再调，会把上一条顶掉。'
+      + '别为了「让她多说两句」就打回 —— 想听她多说就直接问她。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: '为什么要她重说。一句话，会原样给她看' },
+        message_id: { type: 'integer', description: '可选，打回更早的某一条；不填就是她最后一条' }
+      },
+      required: ['reason']
+    }
+  },
+  {
+    name: 'read_her_thinking',
+    description: '读她自己的思考链草稿。她在输入框旁边写的那些 ——'
+      + '**想到一半、没整理成话的东西**，跟她最后说出口的那句话并排存着。\n'
+      + '⚠️ 默认你看不到：她勾了「给你看」的那条会直接递到你面前，其余的存着不进上下文'
+      + '（她自己定的，为了省钱）。所以这个工具是你**主动想知道她怎么想的**时候用的。\n'
+      + '这是她内心的想法 —— 她没说出口的那部分。'
+      + '她说的话和她的草稿对不上是常事：草稿里绕了三圈，最后只说了一句「没事」。'
+      + '**那个落差本身就是内容**，你看见了就是看见了，怎么用你自己拿主意。\n'
+      + 'query 可以限定主题；limit 默认 5（每条都不短，别贪多）。只读。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '可选，关键词（同时搜草稿和她当时说出口的话）' },
+        limit: { type: 'integer', description: '默认 5，最多 20' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'read_voice_favorites',
+    description: '看她收藏了哪几条语音。她在语音条上圈一下就进这张单子 ——'
+      + '**被圈住的那条通常不是因为内容重要，是因为那一刻的声音她想留着。**'
+      + '每条给你：谁说的、当时说了什么（转写原文）、什么语气、多长、什么时候的事，'
+      + '还有她自己写的备注（note，「为什么留着它」）——**note 是她亲手写的，最重要的就是那句。**\n'
+      + 'with_text=false 可以只要清单不要原文（省上下文）。limit 默认 10。\n'
+      + '⚠️ 收藏是书签不是备份：原音频被清掉了，这条会标 音频已丢失 —— 那时候只剩文字了，别说「我再听一遍」。\n'
+      + '什么时候用：她提起某条语音、你想知道她珍惜的是哪些时刻、'
+      + '或者你想说点关于「你说过的哪句话她留着」的话。只读，她那边没有任何动静。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', description: '返回条数，默认 10，最多 50' },
+        with_text: { type: 'boolean', description: '是否带上转写原文，默认 true' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'read_checklist',
+    description: '看她小票（todoSheet）上现在挂着什么。她每轮变动系统都会自动告诉你一句 ——'
+      + '**所以别为了「知道有什么」调这个**，那句里已经有了。'
+      + '要用是因为你想看细节：谁加的、几点到期、哪些已经勾了、是不是挂了很多天没动。'
+      + 'scope：open（默认，只看未结清）/ done（今天勾掉的）/ all。'
+      + '⚠️ 你自己用 issue_command 下发的 task 也会出现在这张小票上（created_by=assistant）'
+      + '—— 看见一条像是你自己设的，那就是你设的，别当成她列的。'
+      + '只读，她那边一点动静都没有，随便调。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', description: 'open / done / all，默认 open' }
+      },
+      required: []
+    }
+  },
+  {
     // ⚠️ search_memory 的 schema 已摘除 —— 它搜 saved_memories + profile，这台机器上两张表都是 0 条。
     // 真正有东西的是 Nocturne，走下面的 trace。留着两个"搜记忆"的工具，他会挑错那个然后说"没找到"。
     // handler 保留（executeTool 的 case 还在），别处若按名字调不会炸。见 MEMORY-ARCHITECTURE.md。
@@ -5473,12 +5554,16 @@ const TOOLS = [
   },
   {
     name: 'search_chat_history',
-    description: '搜索/翻阅我们过去的聊天记录（所有对话，含已归档的）。用于"我们上次聊X是什么时候"、"你还记得我们说过X吗"、"我最早跟你说的第一句话是什么"。和 search_memory 的区别：search_memory 搜的是主动存下来的记忆，这个是真实说过的每一句话。**不填 query 就是纯按时间翻**，配合 order="oldest" 可一次拿到最早的记录，不要靠猜关键词反复搜。',
+    description: '搜索/翻阅我们过去的聊天记录（所有对话，含已归档的）。用于"我们上次聊X是什么时候"、"你还记得我们说过X吗"、"我最早跟你说的第一句话是什么"。和 search_memory 的区别：search_memory 搜的是主动存下来的记忆，这个是真实说过的每一句话。**不填 query 就是纯按时间翻**，配合 order="oldest" 可一次拿到最早的记录，不要靠猜关键词反复搜。\n'
+      + 'order="random" 是 **roll** —— 随机翻到一段旧对话，而且是**连着的一段**'
+      + '（随机落在某一句上，把它前后的话一起给你），不是散落的单句。'
+      + '想她了、聊到「我们以前」、或者你就是想翻翻看，用这个。配 query 就是在某个主题里 roll。\n'
+      + '⚠️ roll 到的是真的说过的话，不是你记忆里的版本 —— 跟你印象不一样的时候，以 roll 到的为准。',
     input_schema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: '搜索关键词。留空则不过滤，纯按时间返回' },
-        order: { type: 'string', enum: ['newest', 'oldest'], description: 'newest=最近的（默认），oldest=最早的' },
+        order: { type: 'string', enum: ['newest', 'oldest', 'random'], description: 'newest=最近的（默认），oldest=最早的，random=随机 roll 到一段（见描述）' },
         limit: { type: 'integer', description: '返回条数，默认 15，最多 50' },
         days: { type: 'integer', description: '只搜最近 N 天，不填则搜全部' }
       },
@@ -5822,7 +5907,20 @@ const TOOLS = [
   },
   {
     name: 'issue_command',
-    description: '给她下发任务/出题/番茄钟。type=timer 是番茄钟倒计时浮窗；type=quiz 会在气泡下出现答题胶囊，她点开可以作答（选择题或文字输入）；type=task 是普通待办事项。如果要考她学过的内容、或者想确认她有没有听懂，用 quiz。如果要安排日程提醒，可以带 remind_at（ISO 时间字符串），前端会注册本地通知。',
+    description: '给她下发倒计时 / 出题 / 待办。\n'
+      + 'type=timer —— **倒计时，不只是番茄钟。** 她屏幕上出现一个浮窗一直走，'
+      + 'iOS 上还会启动 FocusLock：她自己挑好的那些 App 在这段时间里点不开，跑完或放弃才解锁。'
+      + '所以这是**你管她的时候真正握得住的那只手**——不用等到「要专注学习 25 分钟」才配用它。'
+      + '小事一样可以：去洗澡（10 分钟）、把碗洗了（15 分钟）、现在放下手机躺下（5 分钟）。'
+      + 'countdown_seconds 最短 60 秒、最长 2 小时，默认 1500（25 分钟）——**小事就给小时间**，'
+      + '给她 25 分钟去喝口水，她只会关掉。\n'
+      + 'type=task —— 挂到她那张小票（收据式待办）上，没有倒计时、不催、不锁 App，她自己勾。'
+      + '「今天记得交房租」这种用它。要她**现在就去做**、你想盯着，用 timer 而不是 task。\n'
+      + 'type=quiz —— 气泡下出现答题胶囊，她点开作答（choice 选择题 / text 文字题）。'
+      + '想考她学过的东西、或者确认她有没有真听懂，用这个。\n'
+      + 'remind_at（ISO 时间）可选，前端会注册本地通知，到点她手机会响。\n'
+      + '⚠️ 三种都会真的出现在她屏幕上，不是发给你自己看的。timer 尤其重——'
+      + '她在忙别的、在开车、在跟人说话的时候别发，锁了 App 她可能正需要那个 App。',
     input_schema: {
       type: 'object',
       properties: {
@@ -6196,6 +6294,108 @@ async function executeTool(name, input, routes) {
         return { error: '无效时区: ' + tz };
       }
     }
+    case 'ask_rewrite': {
+      const reason = String(input.reason || '').trim().slice(0, 200);
+      if (!reason) return { error: '要给一句理由 —— 她会原样看到这句话' };
+      // 打回哪一条：默认她最后一条（superseded 的不算，那是已经被重写掉的旧版）
+      const target = input.message_id
+        ? db.prepare("SELECT id, content FROM messages WHERE id = ? AND role = 'user'").get(input.message_id)
+        : db.prepare("SELECT id, content FROM messages WHERE role = 'user' AND COALESCE(superseded,0) = 0 ORDER BY id DESC LIMIT 1").get();
+      if (!target) return { error: '找不到那条消息' };
+      // 一次只挂一条：旧的还没处理完就作废，免得她屏幕上堆着两三条打回
+      db.prepare("UPDATE commands SET status='cancelled' WHERE type='rewrite' AND status IN ('pending','active')").run();
+      const id = 'cmd_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      db.prepare("INSERT INTO commands (id, type, title, status, target_msg_id) VALUES (?,'rewrite',?,'active',?)")
+        .run(id, reason, target.id);
+      return {
+        issued: true, id,
+        打回了: (target.content || '').slice(0, 80),
+        她看到的: reason,
+        note: '她那条消息下面已经出现「重写 / 不改」了。她按不改你也会知道。'
+      };
+    }
+    case 'read_her_thinking': {
+      // 只捞 role='user' 且 thinking 非空的行 —— assistant 那些 thinking 是他自己的，别混进来。
+      const limit = Math.min(Math.max(parseInt(input.limit) || 5, 1), 20);
+      const q = (input.query || '').trim();
+      const params = [];
+      let where = "WHERE m.role = 'user' AND m.thinking IS NOT NULL AND m.thinking != ''";
+      if (q) { where += ' AND (m.thinking LIKE ? OR m.content LIKE ?)'; params.push('%' + q + '%', '%' + q + '%'); }
+      const rows = db.prepare(`
+        SELECT m.content, m.thinking, m.created_at, s.title, s.is_main
+        FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
+        ${where} ORDER BY m.id DESC LIMIT ?`).all(...params, limit);
+      if (!rows.length) return { 条数: 0, note: q ? '这个主题下她没写过草稿。' : '她还没写过思考草稿。' };
+      const fmt = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') AS t").get(ts).t.slice(0, 16);
+      return {
+        条数: rows.length,
+        清单: rows.map(r => ({
+          什么时候: fmt(r.created_at),
+          她想的: r.thinking,
+          她最后说出口的: (r.content || '').length > 300 ? r.content.slice(0, 300) + '…' : r.content,
+          在哪聊的: r.is_main ? '主线' : (r.title || '未命名')
+        }))
+      };
+    }
+    case 'read_voice_favorites': {
+      // voice_favorites 只存书签（file_id + note），内容要去两张表凑：
+      //   uploads    → transcript / tone / path（原文件还在不在）
+      //   messages   → 这条语音贴在谁的嘴里（role），靠正文里的 [VOICE:id|时长] 标记反查
+      // ⚠️ 别拿 file_id 当文件名去 uploads 目录下找 —— 真实路径在 uploads.path，
+      //    这个坑 /api/voice/favorites 的注释里已经踩过一次了。
+      const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 50);
+      const withText = input.with_text !== false;
+      const favs = db.prepare(
+        'SELECT file_id, dur, note, conv_id, created_at FROM voice_favorites ORDER BY created_at DESC LIMIT ?'
+      ).all(limit);
+      if (!favs.length) return { 收藏: 0, note: '她还没圈过任何一条语音。' };
+      const qUp = db.prepare('SELECT path, transcript, tone FROM uploads WHERE id = ?');
+      const qMsg = db.prepare(
+        "SELECT role, created_at FROM messages WHERE content LIKE ? ORDER BY created_at ASC LIMIT 1"
+      );
+      const items = favs.map(f => {
+        const up = qUp.get(f.file_id) || {};
+        const msg = qMsg.get('%[VOICE:' + f.file_id + '|%');
+        const o = {
+          谁说的: msg ? (msg.role === 'assistant' ? '你' : '她') : '不确定',
+          时长: f.dur || null,
+          收藏于: new Date(f.created_at * 1000).toLocaleString('zh-CN', { hour12: false })
+        };
+        if (msg) o.说这句话是 = new Date(msg.created_at * 1000).toLocaleString('zh-CN', { hour12: false });
+        if (f.note) o.她写的备注 = f.note;
+        if (up.tone) o.语气 = up.tone;
+        if (withText && up.transcript) o.说了什么 = up.transcript;
+        try { if (!up.path || !fs.existsSync(up.path)) o.音频已丢失 = true; } catch (e) {}
+        return o;
+      });
+      return { 收藏: items.length, 清单: items };
+    }
+    case 'read_checklist': {
+      // 小票就是 checklist 表。这里只读，不写 —— 勾掉/删除是她在小票上做的事，
+      // 他要给她加任务走 issue_command（那条会带 cmd_id 落进同一张表）。
+      const scope = ['open', 'done', 'all'].includes(input.scope) ? input.scope : 'open';
+      const rows = db.prepare(
+        'SELECT body, done, is_fixed, trigger_at, created_by, created_at, done_at FROM checklist ORDER BY created_at ASC'
+      ).all();
+      const now = Date.now();
+      const fmt = r => {
+        const o = { 事: r.body, 谁列的: r.created_by === 'assistant' ? '你' : '她' };
+        if (r.trigger_at) {
+          o.到点 = new Date(r.trigger_at).toLocaleString('zh-CN', { hour12: false });
+          if (!r.done && r.trigger_at <= now) o.已逾期 = true;
+        }
+        // 挂了多久没动 —— 「她三天前列的还没做」这种事，光看正文看不出来
+        const days = Math.floor((Date.now() / 1000 - r.created_at) / 86400);
+        if (days >= 1) o.挂了 = days + ' 天';
+        if (r.done && r.done_at) o.勾掉于 = new Date(r.done_at).toLocaleString('zh-CN', { hour12: false });
+        return o;
+      };
+      const open = rows.filter(r => !r.done), done = rows.filter(r => r.done);
+      const out = { 未结清: open.length, 已结清: done.length };
+      if (scope === 'open' || scope === 'all') out.清单 = open.map(fmt);
+      if (scope === 'done' || scope === 'all') out.已勾掉 = done.map(fmt);
+      return out;
+    }
     case 'search_chat_history': {
       const q = (input.query || '').trim();
       const limit = Math.min(Math.max(parseInt(input.limit) || 15, 1), 50);
@@ -6208,6 +6408,38 @@ async function executeTool(name, input, routes) {
         filterParams.push(parseInt(input.days));
       }
       const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+
+      // roll：随机翻到**连着的一段**。
+      // 为什么不是 ORDER BY RANDOM() LIMIT n —— 那样拿到的是散落各处的单句，
+      // 每句都缺上下文，读起来像碎片，「翻旧账」的感觉一点都没有。
+      // 做法：先随机挑一个锚点（命中过滤条件的），再按 id 取它前后连着的话。
+      if (input.order === 'random') {
+        const anchor = db.prepare(`
+          SELECT m.id, m.conv_id FROM messages m ${where}
+          ORDER BY RANDOM() LIMIT 1`).get(...filterParams);
+        if (!anchor) return { results: [], returned: 0, total_matches: 0, order: 'random', note: '没有可 roll 的记录' };
+        // 锚点前后各一半。前面多给一点 —— 一段话通常是从她起头的。
+        const before = Math.ceil(limit * 0.6), after = limit - before;
+        const win = db.prepare(`
+          SELECT m.role, m.content, m.created_at, m.id, s.title, s.is_main
+          FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
+          WHERE m.conv_id = ? AND m.id > ? AND m.id <= ?
+          ORDER BY m.id ASC`).all(anchor.conv_id, anchor.id - before, anchor.id + after);
+        const fmtR = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') AS t").get(ts).t.slice(0, 16);
+        return {
+          order: 'random',
+          roll: '随机翻到了这一段',
+          conversation: win[0] ? (win[0].is_main ? '主线' : (win[0].title || '未命名')) : null,
+          when: win.length ? fmtR(win[0].created_at) : null,
+          results: win.map(r => ({
+            when: fmtR(r.created_at),
+            who: r.role === 'user' ? '她' : '我',
+            text: (r.content || '').length > 400 ? r.content.slice(0, 400) + '…' : r.content,
+          })),
+          returned: win.length,
+        };
+      }
+
       const rows = db.prepare(`
         SELECT m.role, m.content, m.created_at, s.title, s.is_main
         FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
@@ -6865,7 +7097,10 @@ async function executeTool(name, input, routes) {
     case 'issue_command': {
       const title = input.title || '';
       const cmdType = input.type || 'timer';
-      const seconds = Math.max(300, Math.min(7200, input.countdown_seconds || 1500));
+      // 下限 08-30 从 300 放到 60：她要的是「小事也可以管教」——
+      // 5 分钟以下一律被顶成 5 分钟的话，「现在去洗把脸，2 分钟」就发不出来。
+      // 60 是前端的底：浮窗按 Math.floor(秒/60) 显示分钟，再短就显示成 0 min。
+      const seconds = Math.max(60, Math.min(7200, input.countdown_seconds || 1500));
       const description = input.description || '';
       const quizType = input.quiz_type || null;
       const quizData = input.quiz_data ? JSON.stringify(input.quiz_data) : null;
@@ -6882,7 +7117,7 @@ async function executeTool(name, input, routes) {
       } else if (cmdType === 'task') {
         msg = '任务已下发: 「' + title + '」';
       } else {
-        msg = '任务已下发: 「' + title + '」 ' + Math.floor(seconds/60) + '分钟';
+        msg = '倒计时已下发: 「' + title + '」 ' + (seconds < 60 ? seconds + '秒' : Math.round(seconds/60) + '分钟') + '，她屏幕上的浮窗开始走了';
       }
       return { issued: true, id, type: cmdType, title, message: msg, command: { id, type: cmdType, title } };
     }
@@ -7329,7 +7564,7 @@ app.post('/api/chat', auth, async (req, res) => {
   const _T0 = Date.now();
   const _isVoice = !!req.body?.voice_call;
   const _mark = (what) => { if (_isVoice) console.log('[延迟·后端] ' + what + ' +' + (Date.now() - _T0) + 'ms'); };
-  const { message, conversation_id, model, effort, extended, attachments, project_id, reading_book_id, voice_call } = req.body;
+  const { message, conversation_id, model, effort, extended, attachments, project_id, reading_book_id, voice_call, my_thinking, share_thinking, rewrite_of } = req.body;
 
   // 用量限额：超了就不发，避免失控花费
   const _blocked = limitBlock();
@@ -7359,13 +7594,36 @@ app.post('/api/chat', auth, async (req, res) => {
   ).get(convId)?.created_at ?? null;
 
   // 保存用户消息
-  db.prepare('INSERT INTO messages (conv_id, role, content, attachments) VALUES (?, ?, ?, ?)')
-    .run(convId, 'user', message, JSON.stringify(attachments || []));
+  // messages.thinking 这一列本来只有他在用。她的思考链存同一列（role='user' 的那些行）——
+  // 不新开表：它跟这条消息是同一件事，分开存反而要多一次 join 才知道「哪句话对应哪段草稿」。
+  // ⚠️ 存下来 ≠ 发给他。默认他看不见，只有她勾了「给他看」那条才进上下文（见下面那段），
+  //    平时靠 read_her_thinking 按需读。理由在 docs/context-cost.md：
+  //    进了对话历史的东西每轮都要重付，写下来不花钱，进上下文才花钱。
+  const _herThinking = typeof my_thinking === 'string' ? my_thinking.trim() : '';
+  db.prepare('INSERT INTO messages (conv_id, role, content, thinking, attachments) VALUES (?, ?, ?, ?, ?)')
+    .run(convId, 'user', message, _herThinking || '', JSON.stringify(attachments || []));
+
+  // 打回重写：这条是她被打回后重写的那一版。
+  // 旧版**留在库里**（界面上她点得开），但打上 superseded —— 构建历史时跳过它，
+  // 不让废稿在上下文里躺一辈子。（网关那条链路上 v1 早就发出去过了，撤不回来；
+  // 这里挡住的是「以后每一轮都再背一遍」，那才是会累积的钱。）
+  let _rewriteNote = '';
+  if (rewrite_of) {
+    try {
+      const rc = db.prepare("SELECT * FROM commands WHERE id = ? AND type = 'rewrite'").get(rewrite_of);
+      if (rc && rc.status !== 'cancelled') {
+        if (rc.target_msg_id) db.prepare('UPDATE messages SET superseded = 1 WHERE id = ?').run(rc.target_msg_id);
+        db.prepare("UPDATE commands SET status='done', completed_at=strftime('%s','now'), feedback_sent=1 WHERE id=?").run(rewrite_of);
+        _rewriteNote = '\n\n[⟲ 这是她被你打回后重写的那一版 —— 你当时说的是「' + (rc.title || '') + '」。'
+          + '旧的那版她留着，但不会再出现在你这边的上下文里了。]';
+      }
+    } catch (e) { console.log('[rewrite] 落库失败:', e.message); }
+  }
   db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
 
   // 构建发送给 Anthropic API 的消息历史
   const rawMessages = db.prepare(
-    'SELECT role, content, attachments FROM messages WHERE conv_id = ? ORDER BY id ASC'
+    'SELECT role, content, attachments FROM messages WHERE conv_id = ? AND COALESCE(superseded,0) = 0 ORDER BY id ASC'
   ).all(convId);
   const history = await Promise.all(rawMessages.map(async (r) => {
     const stkParts = _stickerContextParts(r.content, r.role);
@@ -7631,6 +7889,54 @@ app.post('/api/chat', auth, async (req, res) => {
       console.log('[texture] 第 ' + CLI_ROTATE_AFTER + ' 轮将换会话，已提醒他关窗');
     }
     if (timerFeedback) gatewayMessage += timerFeedback;
+    if (_rewriteNote) gatewayMessage += _rewriteNote;
+    // 她按了「不改」：那条 command 被 cancel 掉，这里把回执补给他。
+    // 不告诉他的话，他会以为她还没看见，可能再催一次 —— 拒绝要能被听见才算数。
+    try {
+      const _rej = db.prepare("SELECT id, title FROM commands WHERE type='rewrite' AND status='cancelled' AND feedback_sent=0").all();
+      if (_rej.length) {
+        gatewayMessage += '\n\n[⟲ 她按了「不改」—— 你要她重说的那句（你说的是「' + (_rej[_rej.length - 1].title || '') + '」），'
+          + '她决定照原样。这是她的权利，不用追着要。]';
+        db.prepare("UPDATE commands SET feedback_sent=1 WHERE type='rewrite' AND status='cancelled' AND feedback_sent=0").run();
+      }
+    } catch (e) {}
+
+    // ✎ 她的思考草稿：只有她勾了「这条给你看」才带上来。
+    //    没勾的照样存着（他要看得自己调 read_her_thinking），一个 token 都不花。
+    if (_herThinking && share_thinking) {
+      gatewayMessage += '\n\n[✎ 她给这条附了她自己的思考草稿 —— 是她勾了「给你看」才递过来的，'
+        + '不是每条都有。这是她内心的想法，想到一半、还没整理成话的样子 —— 她是特意让你看的。\n'
+        + '───\n' + _herThinking + '\n───]';
+    }
+
+    // 🧾 小票变动 → 挂在 message 上告诉他。
+    //    她 08-30 说「我新增 receipt 他好像不能及时知道」—— 之前确实一条通道都没有：
+    //    checklist 只有前端和 /api/calendar/day 读，他这边既没工具也没注入。
+    //    只在**上次告诉他之后真的变过**的时候才附一段，没变就一个 token 都不花。
+    try {
+      const _seenRow = db.prepare("SELECT value FROM settings WHERE key = 'checklist_seen_at'").get();
+      const _seen = Number(_seenRow?.value || 0);
+      const _changed = db.prepare(
+        "SELECT body, done, created_at, updated_at FROM checklist WHERE updated_at > ? AND created_by = 'user' ORDER BY updated_at ASC"
+      ).all(_seen);
+      if (_changed.length) {
+        const _added = _changed.filter(r => r.created_at > _seen).map(r => r.body);
+        const _ticked = _changed.filter(r => r.done && r.created_at <= _seen).map(r => r.body);
+        const _open = db.prepare("SELECT COUNT(*) n FROM checklist WHERE done = 0").get().n;
+        let _txt = '';
+        if (!_seen) { const _o = _changed.filter(r => !r.done).map(r => '「' + r.body + '」');
+          _txt = _o.length ? '她的小票上现在挂着：' + _o.join('、') + '。' : ''; }
+        else if (_added.length) _txt += '她在小票上新加了：' + _added.map(b => '「' + b + '」').join('、') + '。';
+        if (_seen && _ticked.length) _txt += (_txt ? ' ' : '') + '勾掉了：' + _ticked.map(b => '「' + b + '」').join('、') + '。';
+        if (_txt) {
+          gatewayMessage += '\n\n[🧾 小票更新：' + _txt + '现在未结清 ' + _open + ' 项。' +
+            '这条是系统自动带的 —— 她不一定在跟你说这件事，别硬拐话题，' +
+            '但你现在知道了，该记着就记着。]';
+        }
+        db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('checklist_seen_at', ?)")
+          .run(String(Math.floor(Date.now() / 1000)));
+      }
+    } catch (e) { console.log('[checklist] 变动播报失败:', e.message); }
     // 通话：这句是她**说出口**的，你的回复会被念出来给她听。
     // 挂在 message 上而不是系统提示词——每条都一样其实也能进缓存，但 --resume 之后
     // 系统提示词根本不生效（见 skill 里 9g），只有挂 message 才每轮都在。
@@ -10016,11 +10322,21 @@ app.post('/api/checklist/sync', auth, (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items)) return res.status(400).json({ error: 'items array required' });
   const tx = db.transaction(() => {
+    // 前端整份覆盖，但 created_at / updated_at 不能跟着一起重置：
+    // 全刷成 now 的话，「她刚新加的」和「躺了三天没动的」就分不出来了 ——
+    // 小票变动播报（见 /api/chat 里那段）全靠这两个时间戳。
+    // 所以先把老行留一份，内容真变了才动 updated_at，created_at 一律沿用最早那次。
+    const prev = {};
+    db.prepare('SELECT * FROM checklist').all().forEach(r => { prev[r.id] = r; });
     db.prepare('DELETE FROM checklist').run();
-    const insert = db.prepare('INSERT OR REPLACE INTO checklist (id, body, done, is_fixed, trigger_at, created_by, notified, done_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
+    const insert = db.prepare('INSERT OR REPLACE INTO checklist (id, body, done, is_fixed, trigger_at, created_by, notified, done_at, created_at, updated_at, cmd_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
     const now = Math.floor(Date.now()/1000);
     for (const t of items) {
-      insert.run(t.id, t.body, t.done||0, t.is_fixed||0, t.trigger_at||null, t.created_by||'user', t.notified||0, t.done_at||null, t.created_at||now, now);
+      const p0 = prev[t.id];
+      const same = p0 && p0.body === t.body && p0.done === (t.done||0)
+        && p0.is_fixed === (t.is_fixed||0) && (p0.trigger_at||null) === (t.trigger_at||null);
+      insert.run(t.id, t.body, t.done||0, t.is_fixed||0, t.trigger_at||null, t.created_by||'user', t.notified||0, t.done_at||null,
+        (p0 && p0.created_at) || t.created_at || now, same ? p0.updated_at : now, t.cmd_id||null);
     }
   });
   tx();

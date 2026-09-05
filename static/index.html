@@ -76,8 +76,29 @@
     <button id="scrollToBottom" class="hidden" aria-label="回到底部"><svg viewBox="0 0 256 256" width="20" height="20" fill="currentColor"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></svg></button>
     <div class="clawd-mini" id="clawdMini" data-mood="idle"></div>
     <div class="clawd-bulb" id="clawdBulb"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 18h6M10 22h4"/><path d="M15.05 16.14A6 6 0 109.08 15.93"/><path d="M10.01 14.7A6.02 6.02 0 0112 7.06"/></svg></div>
+    <!-- ⟲ 他把她刚说的那句打回了。摆在输入框正上方，不挂在气泡上 ——
+         气泡可能已经滚出屏幕了，而这件事她必须看得见。「不改」是她的出口，永远给。 -->
+    <div id="rewriteBar" class="hidden" style="margin:0 8px 6px;padding:10px 12px;border:1px solid var(--accent);border-radius:12px;background:var(--bg-surface)">
+      <div style="display:flex;align-items:center;gap:6px;font:600 12px/1 var(--font-sans);color:var(--accent);margin-bottom:6px">⟲ 他要你重说这句</div>
+      <div id="rewriteReason" style="font:14px/1.5 var(--font-serif);color:var(--text-primary);margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px">
+        <button id="rewriteDoBtn" style="flex:1;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:9px;font:600 13px/1 var(--font-sans);cursor:pointer">重写</button>
+        <button id="rewriteSkipBtn" style="flex:0 0 auto;padding:8px 16px;background:transparent;color:var(--text-secondary);border:1px solid var(--border);border-radius:9px;font:500 13px/1 var(--font-sans);cursor:pointer">不改</button>
+      </div>
+    </div>
     <div class="composer-box">
       <div class="attachment-preview hidden" id="attachmentPreview"></div>
+      <!-- ✎ 她的思考草稿。存下来不花钱，进上下文才花钱（docs/context-cost.md）——
+           所以默认只存不发，勾了「给他看」这一条才递给他。 -->
+      <div id="thinkDraft" class="hidden" style="padding:10px 12px 8px;border-bottom:1px solid var(--border)">
+        <textarea id="thinkText" rows="3" placeholder="想到一半的、还没整理成话的……写给自己看" style="width:100%;border:none;outline:none;resize:none;background:transparent;color:var(--text-primary);font:14px/1.6 var(--font-serif)"></textarea>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+          <label style="display:flex;align-items:center;gap:6px;font:12px/1 var(--font-sans);color:var(--text-secondary);cursor:pointer">
+            <input type="checkbox" id="thinkShare"> 这条给他看
+          </label>
+          <span id="thinkHint" style="font:11px/1 var(--font-sans);color:var(--text-time)">不勾就只有你自己看得见（他能主动去翻）</span>
+        </div>
+      </div>
       <div class="composer">
         <input class="hidden" id="fileInput" type="file" style="display:none" multiple accept="image/*,.pdf,.txt,.text,.md,.py,.js,.jsx,.ts,.tsx,.json,.yaml,.yml,.html,.css,.scss,.sh,.ps1,.java,.c,.cc,.cpp,.h,.hpp,.go,.rs,.rb,.php,.sql,.xml,.toml,.ini,.log,.csv">
         <div class="composer-input-row"><textarea id="input" rows="1" placeholder="Reply to Claude" enterkeyhint="send"></textarea></div>
@@ -85,7 +106,8 @@
           <button class="composer-icon composer-circle" id="attachButton" aria-label="添加文件"></button>
           <button class="model-capsule" id="modelCapsule" aria-label="选择模型"><span id="modelCapsuleText">Sonnet 4.6</span></button>
           <span class="composer-spacer"></span>
-<button class="composer-icon" id="stickerButton" aria-label="表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
+<button class="composer-icon" id="thinkButton" aria-label="思考草稿" title="写下你自己的思考链（默认只有你看得见）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 00-3.5 10.9V17h7v-3.1A6 6 0 0012 3z"/><path d="M9.5 20h5"/></svg></button>
+          <button class="composer-icon" id="stickerButton" aria-label="表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
           <button class="composer-icon" id="callButton" aria-label="实时通话" title="点一下给他打电话 · 实时通话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg></button>
 	          <button id="send" aria-label="语音"></button>
         
@@ -1184,9 +1206,9 @@ if(_todos.length&&_todos[0].text!==undefined){_todos=_todos.map(function(t){retu
 var _todosLastDate=localStorage.getItem('chat_todos_date')||'';
 function _saveTodos(){localStorage.setItem('chat_todos',JSON.stringify(_todos));localStorage.setItem('chat_todos_date',_todayStr());_updateTodoBadge();_syncNativeNotifs();_syncTodosToServer()}
 // 同步到后端（fire-and-forget）
-function _syncTodosToServer(){if(!state.token)return;try{api('/api/checklist/sync',{method:'POST',body:JSON.stringify({items:_todos.map(function(t){return{id:t.id,body:t.body,done:t.done,is_fixed:t.is_fixed,trigger_at:t.trigger_at,created_by:t.created_by,notified:t.notified,done_at:t.done_at}})})}).catch(function(){})}catch(e){}}
+function _syncTodosToServer(){if(!state.token)return;try{api('/api/checklist/sync',{method:'POST',body:JSON.stringify({items:_todos.map(function(t){return{id:t.id,body:t.body,done:t.done,is_fixed:t.is_fixed,trigger_at:t.trigger_at,created_by:t.created_by,notified:t.notified,done_at:t.done_at,cmd_id:t._cmdId||null}})})}).catch(function(){})}catch(e){}}
 // 页面启动时从后端拉取清单（合并策略：后端有的以后端为准，本地独有的保留）
-function _pullTodosFromServer(){if(!state.token)return;api('/api/checklist').then(function(r){return r.json()}).then(function(data){if(!data.items||!data.items.length)return;var serverMap={};data.items.forEach(function(t){serverMap[t.id]=t});var localMap={};_todos.forEach(function(t){localMap[t.id]=t});var merged=[];for(var id in serverMap){merged.push(serverMap[id])}for(var id in localMap){if(!serverMap[id])merged.push(localMap[id])}merged.sort(function(a,b){return(a.created_at||0)-(b.created_at||0)});_todos=merged;_saveTodos();_renderTodos()}).catch(function(){})}
+function _pullTodosFromServer(){if(!state.token)return;api('/api/checklist').then(function(r){return r.json()}).then(function(data){if(!data.items||!data.items.length)return;var serverMap={};data.items.forEach(function(t){if(t.cmd_id)t._cmdId=t.cmd_id;serverMap[t.id]=t});var localMap={};_todos.forEach(function(t){localMap[t.id]=t});var merged=[];for(var id in serverMap){var sv=serverMap[id];if(!sv._cmdId&&localMap[id]&&localMap[id]._cmdId)sv._cmdId=localMap[id]._cmdId;merged.push(sv)}for(var id in localMap){if(!serverMap[id])merged.push(localMap[id])}merged.sort(function(a,b){return(a.created_at||0)-(b.created_at||0)});_todos=merged;_saveTodos();_renderTodos()}).catch(function(){})}
 // 预约原生通知（Capacitor Local Notifications，App 关了也能弹）
 function _syncNativeNotifs(){if(!window.Capacitor||!Capacitor.Plugins||!Capacitor.Plugins.LocalNotifications)return;try{var LN=Capacitor.Plugins.LocalNotifications;LN.cancel({notifications:_todos.map(function(t){return{id:t.id}})}).catch(function(){});var now=Date.now();var pending=_todos.filter(function(t){return t.trigger_at&&t.trigger_at>now&&!t.done});if(pending.length){LN.schedule({notifications:pending.map(function(t){return{id:t.id,title:'⏰ 时间到了',body:t.body,schedule:{at:new Date(t.trigger_at)}}})}).catch(function(){})}}catch(e){}}
 function _todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
@@ -1337,6 +1359,56 @@ function _showTimePicker(anchor,onPick){
 
 function _toggleItem(it){it.done=it.done?0:1;it.done_at=it.done?Date.now():null;_saveTodos();_renderTodos();if(it._cmdId&&it.done){fetch('/api/commands/'+it._cmdId+'/complete',{method:'POST',headers:{'Authorization':'Bearer '+state.token}}).catch(function(){})}}
 function _deleteItem(it){_todos=_todos.filter(function(x){return x.id!==it.id});_saveTodos();_renderTodos();if(it._cmdId){fetch('/api/commands/'+it._cmdId+'/cancel',{method:'POST',headers:{'Authorization':'Bearer '+state.token}}).catch(function(){})}}
+// ── ⟲ 打回重写 ─────────────────────────────────────────────
+// 他调 ask_rewrite 之后，commands 里多一条 type='rewrite'，pollCommands 拉到就弹这条。
+// 她按「不改」= cancel 那条 command，后端下一轮会把「她拒绝了」这件事告诉他 ——
+// 拒绝要能被听见才算数，否则他只会以为她没看见，再催一次。
+var _rewriteCmd=null;
+function showRewriteBar(cmd){
+  _rewriteCmd=cmd;
+  $('rewriteReason').textContent=cmd.title||'再说一遍';
+  $('rewriteBar').classList.remove('hidden');
+}
+function hideRewriteBar(){_rewriteCmd=null;$('rewriteBar').classList.add('hidden')}
+if($('rewriteDoBtn')){
+  $('rewriteDoBtn').onclick=function(){
+    if(!_rewriteCmd)return;
+    // 输入框空着就是空着 —— 不替她把旧话填回去，那样她只会在原句上修修补补。
+    $('rewriteBar').classList.add('hidden');
+    input.focus();
+    toast('重写这条，发出去就替掉旧的');
+  };
+  $('rewriteSkipBtn').onclick=function(){
+    if(!_rewriteCmd)return;
+    var id=_rewriteCmd.id;hideRewriteBar();
+    fetch('/api/commands/'+id+'/cancel',{method:'POST',headers:{'Authorization':'Bearer '+state.token}})
+      .then(function(){toast('照原样过去了')}).catch(function(){});
+  };
+}
+
+// ── ✎ 思考草稿 ──────────────────────────────────────────────
+// 存不花钱，进上下文才花钱：没勾「给他看」的草稿只落库，他要看得自己调 read_her_thinking。
+// 草稿是**跟着这一条消息**走的，发出去就清空 —— 留到下一句就对不上了。
+function _syncThinkBtn(){
+  var b=$('thinkButton');if(!b)return;
+  var has=(($('thinkText')||{}).value||'').trim().length>0;
+  b.style.color=has?'var(--accent)':'';
+}
+if($('thinkButton')){
+  $('thinkButton').onclick=function(){
+    var d=$('thinkDraft'),open=d.classList.contains('hidden');
+    d.classList.toggle('hidden');
+    if(open){$('thinkText').focus()}
+  };
+  $('thinkText').addEventListener('input',_syncThinkBtn);
+  // 勾了「给他看」就把提示换掉 —— 她得知道这一勾是要花钱的那条路
+  $('thinkShare').addEventListener('change',function(){
+    $('thinkHint').textContent=this.checked
+      ? '这条会跟着消息一起递给他（只有这条）'
+      : '不勾就只有你自己看得见（他能主动去翻）';
+  });
+}
+
 $('todoTopBtn').onclick=function(){_renderTodos();sheet('todo',true);$('todoSheet').classList.add('expanded');$('todoSheet').style.transform=''};
 $('closeTodo').onclick=function(){sheet('todo',false)};$('todoOverlay').onclick=function(){sheet('todo',false)};
 // ── 闹钟通知系统 ──
@@ -4758,7 +4830,12 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
     msg=beginClaude(text,attachments);const m=currentModel(),s=modelSetting(m);
     state.abortController=new AbortController();
     const _sentAt=new Date().toISOString();   // 断线重捞时拿它挡住上一轮的旧回复
-    const chatBody=JSON.stringify({message:text,conversation_id:state.convId,model:state.model,effort:(state.settings[state.model]||{}).effort||'medium',extended:(state.settings[state.model]||{}).extended!==false,attachments:attachments.map(item=>item.path||item),project_id:state.projectId||null,reading_book_id:state.readingBookId||null});
+    const _mt=(($('thinkText')||{}).value||'').trim(),_ms=!!(($('thinkShare')||{}).checked);
+    const chatBody=JSON.stringify({rewrite_of:(_rewriteCmd?_rewriteCmd.id:null),my_thinking:_mt||null,share_thinking:_ms,message:text,conversation_id:state.convId,model:state.model,effort:(state.settings[state.model]||{}).effort||'medium',extended:(state.settings[state.model]||{}).extended!==false,attachments:attachments.map(item=>item.path||item),project_id:state.projectId||null,reading_book_id:state.readingBookId||null});
+    // 草稿跟着这条一起走掉：它是「这一句话背后的想法」，留到下一句就对不上了。
+    // ⚠️ 必须在 chatBody 拼好之后清（_mt 是从这两个框里读的），顺序别调。
+    if(_mt&&$('thinkText')){$('thinkText').value='';if($('thinkShare'))$('thinkShare').checked=false;$('thinkDraft').classList.add('hidden');_syncThinkBtn()}
+    if(_rewriteCmd)hideRewriteBar();   // 这一版发出去了，打回就算处理完（后端也会把 command 置 done）
     let r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${state.token}`},body:chatBody,signal:state.abortController.signal});
     if(r.status===429){
       var lim=await r.json().catch(()=>({}));
@@ -6228,6 +6305,13 @@ function pollCommands(){
     // 刷新页面 / 换设备之后，没答完的题就没有入口了。
     if(typeof _refreshQuizQueue==='function')_refreshQuizQueue(cmds);
 
+    // ── ⟲ 打回重写 ──
+    // 只认 active 的那条；他一次只挂一条（ask_rewrite 会把上一条顶掉）。
+    var rwCmd=null;
+    for(var ri=0;ri<cmds.length;ri++){if(cmds[ri].type==='rewrite'&&cmds[ri].status==='active'){rwCmd=cmds[ri];break}}
+    if(rwCmd){ if(!_rewriteCmd||_rewriteCmd.id!==rwCmd.id) showRewriteBar(rwCmd); }
+    else if(_rewriteCmd){ hideRewriteBar(); }
+
     // ── 任务同步 → todoSheet ──
     var changed2=false;
     cmds.forEach(function(cmd2){
@@ -6236,6 +6320,13 @@ function pollCommands(){
       // timer 也进 _todos，body 带 ⏱ 前缀跟手写待办区分开。
       if(cmd2.type!=='task'&&cmd2.type!=='timer')return;
       var existing=_todos.find(function(t){return t._cmdId===cmd2.id});
+      // 认领：老数据（cmd_id 落库之前存的）身上没有 _cmdId，光按 _cmdId 找会漏，
+      // 于是又 push 一条一模一样的。按正文认回来并补上 _cmdId，不再长第二行。
+      if(!existing){
+        var _body2=(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title;
+        existing=_todos.find(function(t){return !t._cmdId&&t.created_by==='assistant'&&t.body===_body2});
+        if(existing){existing._cmdId=cmd2.id;changed2=true}
+      }
       if(cmd2.status==='done'||cmd2.status==='cancelled'){
         if(existing&&!existing.done){existing.done=1;existing.done_at=Date.now();changed2=true}
       }else if(cmd2.status==='active'||(cmd2.type==='timer'&&cmd2.status==='pending')){
