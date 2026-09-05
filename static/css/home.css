@@ -1734,3 +1734,106 @@ html.as-non .gallery-photo-msg{align-self:flex-end}
   .voice-msg.is-playing .vbar{animation:none}
   .voice-msg .vbar{transition:none}
 }
+
+/* ============================================================
+   官端样式（html.ui-plain）—— 2026-09-05
+   开关在抽屉「Dark mode」下面那行，记 localStorage.chat_ui_plain。
+   不改任何 DOM 结构，纯覆盖：他那侧藏头像、气泡脱壳；
+   她那侧留右对齐小气泡，但换成官端那颗中性灰。
+   ⚠️ 深色那两条 `.msg-claude .bubble{background:#F0ECE4}` 特异度比这里高一层，
+      下面 dark 段必须原样再覆盖一次，否则一进深色气泡就回来了。 */
+html.ui-plain .msg-claude>.msg-avatar{display:none}
+html.ui-plain .msg-claude{gap:0}
+/* 头像没了，那两条「按摘要/trace 高度下移头像」的补偿也就没有对象了，
+   :has() 那两条自然失效，不用管。 */
+/* padding / max-width 在别处带着 !important（707、1205、1474 行），
+   这里必须同样 !important 才盖得住 —— 实测不加就只脱了背景，内边距还在。 */
+html.ui-plain .msg-claude .bubble{
+  background:none!important;padding:0!important;border-radius:0;
+  max-width:100%!important;min-width:0;
+  color:var(--text-primary);line-height:1.8;
+}
+html.ui-plain .msg-user .bubble{padding:9px 15px!important}
+/* 表情脱壳 / 语音条本来就是自带底的，别被上面这条剥掉 */
+html.ui-plain .msg-claude .bubble.sticker-only,
+html.ui-plain .msg-claude .bubble.voice-only{background:none}
+/* 气泡没了内边距，挂在它后面的卡片跟着靠左：胶囊、文件卡、artifact、
+   思考摘要、trace 行本来就在 .msg-body 里，对齐自然一致，这里只收窄一点上边距 */
+html.ui-plain .msg-claude .cmd-capsule{margin-left:0}
+
+/* 她那侧：保留右对齐气泡，换官端配色，去掉头像 */
+html.ui-plain .msg-user>.msg-avatar{display:none}
+html.ui-plain .msg-user .bubble{
+  background:var(--bubble-user);color:var(--text-primary);
+  padding:9px 15px;line-height:1.45;border-radius:18px;max-width:76%;
+}
+
+/* 行距：官端两条消息之间比气泡版松 */
+html.ui-plain .stream-inner>*+*{margin-top:26px}
+/* 段与段之间（他一条回复里的多个自然段）也拉开，官端那种呼吸感 */
+html.ui-plain .msg-claude .md p+p,
+html.ui-plain .msg-claude .bubble>div+div{margin-top:14px}
+
+@media(prefers-color-scheme:dark){
+  html.ui-plain:not([data-theme="light"]) .msg-claude .bubble{background:none;color:#F5F4EF}
+  html.ui-plain:not([data-theme="light"]) .msg-user .bubble{background:#30302E;color:#F5F4EF}
+}
+html.ui-plain[data-theme="dark"] .msg-claude .bubble{background:none;color:#F5F4EF}
+html.ui-plain[data-theme="dark"] .msg-user .bubble{background:#30302E;color:#F5F4EF}
+
+/* 官端样式续：思考摘要行 + 常驻操作栏（2026-09-05） */
+/* 摘要行结构本来就跟官端一样（钟表 + 一行灰字 + 右尖角），只差字号和深浅。
+   官端是 14px、比正文淡一档、跟正文之间留 12px。 */
+html.ui-plain .thinking-summary{
+  font-size:14px;color:var(--text-faint);margin-bottom:12px;
+}
+html.ui-plain .thinking-summary .thinking-clock,
+html.ui-plain .thinking-summary .thinking-chevron{opacity:.75}
+/* 尖角紧跟摘要文字，不被 spacer 顶到最右边。
+   spacer 那条 flex:1 在 228 行，只在 ui-plain 下收掉；气泡版仍旧靠右。 */
+html.ui-plain .thinking-summary .thinking-summary-spacer{flex:0 0 auto}
+/* 1317 行把操作栏藏起来、长按 .show-actions 才出。官端是常驻。 */
+html.ui-plain .msg-claude .message-actions{display:flex}
+html.ui-plain .msg-claude .message-actions{margin-top:10px;gap:14px;color:var(--text-faint)}
+
+/* 官端样式续二：配色再冷一档（2026-09-05，她说气泡该是灰的）
+   只在 ui-plain 下改变量，有头像那套的暖米色一点不动。
+   --bg-primary 暖米 #faf9f5 → 中性 #F5F5F3；她的气泡 #E9E3D8（暖）→ #EBEBE9（灰）。 */
+html.ui-plain{
+  --bg-primary:#F5F5F3;
+  --bg-surface:#EDEDEB;
+  --bubble-user:#EBEBE9;
+}
+html.ui-plain .msg-user .bubble{background:#EBEBE9}
+@media(prefers-color-scheme:dark){
+  html.ui-plain:not([data-theme="light"]){--bg-primary:#242426;--bg-surface:#2E2E30;--bubble-user:#1A1A1C}
+  html.ui-plain:not([data-theme="light"]) .msg-user .bubble{background:#1A1A1C}
+}
+html.ui-plain[data-theme="dark"]{--bg-primary:#242426;--bg-surface:#2E2E30;--bubble-user:#1A1A1C}
+html.ui-plain[data-theme="dark"] .msg-user .bubble{background:#1A1A1C}
+/* 输入框那层玻璃底色本来是暖的 rgba(242,239,237,.25)，跟冷背景搭着发黄，一起调中性 */
+html.ui-plain .composer-box{background:rgba(238,238,240,.28)}
+html.ui-plain[data-theme="dark"] .composer-box{background:rgba(48,48,52,.32)}
+/* 667 行那条 `body{background:var(--claude-sidebar-bg)}` 让 body 走的是侧栏那套变量，
+   不是 --bg-primary —— 只改 --bg-primary 时深色底还是暖褐 #1E1B18，就是被它盖的。 */
+html.ui-plain{--claude-sidebar-bg:#F5F5F3;--claude-main-surface:#F5F5F3;--claude-main-surface-soft:#EDEDEB}
+@media(prefers-color-scheme:dark){
+  html.ui-plain:not([data-theme="light"]){--claude-sidebar-bg:#242426;--claude-main-surface:#242426;--claude-main-surface-soft:#2E2E30}
+}
+html.ui-plain[data-theme="dark"]{--claude-sidebar-bg:#242426;--claude-main-surface:#242426;--claude-main-surface-soft:#2E2E30}
+html.ui-plain[data-theme="light"]{--claude-sidebar-bg:#F5F5F3;--claude-main-surface:#F5F5F3;--claude-main-surface-soft:#EDEDEB}
+
+/* 官端深色：输入区那几颗按钮跟着底一起压黑（浅色下本来就是黑圆，不用动）。
+   #send 默认 background:var(--text-primary) —— 深色下那是浅色，所以会白得很跳。 */
+html.ui-plain[data-theme="dark"] #send{background:#1A1A1C;color:#F5F4EF}
+html.ui-plain[data-theme="dark"] #send.ready{background:var(--accent);color:var(--accent-fg)}
+html.ui-plain[data-theme="dark"] .composer-circle,
+html.ui-plain[data-theme="dark"] .model-capsule{background:#1A1A1C;color:#F5F4EF}
+html.ui-plain[data-theme="dark"] #micButton{background:#1A1A1C;color:#F5F4EF;border-radius:var(--radius-full)}
+@media(prefers-color-scheme:dark){
+  html.ui-plain:not([data-theme="light"]) #send{background:#1A1A1C;color:#F5F4EF}
+  html.ui-plain:not([data-theme="light"]) #send.ready{background:var(--accent);color:var(--accent-fg)}
+  html.ui-plain:not([data-theme="light"]) .composer-circle,
+  html.ui-plain:not([data-theme="light"]) .model-capsule{background:#1A1A1C;color:#F5F4EF}
+  html.ui-plain:not([data-theme="light"]) #micButton{background:#1A1A1C;color:#F5F4EF;border-radius:var(--radius-full)}
+}

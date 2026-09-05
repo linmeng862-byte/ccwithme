@@ -7,6 +7,9 @@
    浏览器一打开就拿到 URL，第一帧就带着 class 渲染。
    放到 DOM ready 之后 = 先闪一下她的视角，截图就废了。 */
 (function(){try{if(/[?&]as=non\b/.test(location.search))document.documentElement.classList.add('as-non')}catch(e){}})();
+/* ui-plain — 官端那套皮：他那侧不出头像、不出气泡，正文直接铺开。
+   跟 as-non 同理，必须在这儿同步跑：晚一步就会先闪一下气泡版。 */
+(function(){try{if(localStorage.getItem('chat_ui_plain')==='1')document.documentElement.classList.add('ui-plain')}catch(e){}})();
 </script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -21,7 +24,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1788490800">
+<link rel="stylesheet" href="/css/home.css?v=1788681000">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -320,6 +323,13 @@
             <span id="themeKnob" style="display:block;width:22px;height:22px;border-radius:50%;background:var(--text-primary);position:absolute;top:2px;left:2px;transition:left 200ms,background 200ms"></span>
           </button>
         </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0 4px">
+          <span style="font:14px var(--font-sans);color:var(--text-secondary)">官端样式</span>
+          <button id="plainToggle" style="width:44px;height:26px;border-radius:13px;border:none;cursor:pointer;background:var(--border-strong);position:relative;transition:background 200ms">
+            <span id="plainKnob" style="display:block;width:22px;height:22px;border-radius:50%;background:var(--text-primary);position:absolute;top:2px;left:2px;transition:left 200ms,background 200ms"></span>
+          </button>
+        </div>
+        <div style="font:11px/1.5 var(--font-sans);color:var(--text-faint)">他那侧不出头像和气泡，正文直接铺开，配色跟官端一致。</div>
       </div></nav>
     <div class="mobile-sidebar-section-title">Recents</div>
     <div class="drawer-list" id="sessionList"></div>
@@ -4004,7 +4014,21 @@ function _reRenderCards(el){
   // 09-05：artifact 卡同理 —— `_splitMessages` 分片时会把 .artifact-card 清掉再走这儿重贴
   try{ if(typeof _renderArtifactCards==='function')_renderArtifactCards(el); }catch(_){}
 }
-function _splitMessages(row){var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=parts[0];_reRenderCards(row)}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;_reRenderCards(row);return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);clone.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){c.remove()});clone.querySelectorAll('.thinking-summary,.trace-row').forEach(function(tb){tb.remove()});var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();clone.querySelectorAll('.memory-save-card,.gallery-album-card-chat,.music-card,.artifact-card,.file-card,.action-report-card').forEach(function(cc){cc.remove()});/* 08-28 空气泡的真正成因：`.clawd-emote-label`（「Clawd替你害羞」那行小字）是**整条消息**的，不是某一片的，`_renderClawdLabel` 把它挂在 .bubble 后面 —— cloneNode(true) 于是把它复制进每一片。一是重复显示，二是更阴的：它让下面 `_rowLooksEmpty` 读到的 textContent 非空，于是「渲染完什么都没有」的那一片删不掉，就留成了空气泡。清掉它，那道网自己就管用了，不用在 `_partIsBlank` 里给 clawd 开特例。 */clone.querySelectorAll('.clawd-emote-label').forEach(function(cc){cc.remove()});parent.insertBefore(clone,next.nextSibling);_reRenderCards(clone);if(_rowLooksEmpty(clone)){clone.remove();return}next=clone})}
+function _splitMessages(row){
+  /* 官端样式不分条 —— 官端一次回复就是一整段。09-05
+     不能直接 return：`---` 会被 markdown 渲成一条 <hr>，那更难看。
+     把分隔符换成空行、重渲一次再走人，卡片也要跟着重贴。
+     他那边照样按老规矩写 `---`，省不省 token 跟这儿无关（分条本来就是前端干的）。 */
+  if(document.documentElement.classList.contains('ui-plain')){
+    var _raw=row.dataset.raw||'';
+    if(/\n---\n/.test(_raw)){
+      var _md=row.querySelector('.msg-body .md');
+      var _clean=_raw.replace(/\n---\n/g,'\n\n');
+      if(_md){renderMessage(_md,_clean);row.dataset.raw=_clean;_reRenderCards(row)}
+    }
+    return;
+  }
+  var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=parts[0];_reRenderCards(row)}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;_reRenderCards(row);return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);clone.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){c.remove()});clone.querySelectorAll('.thinking-summary,.trace-row').forEach(function(tb){tb.remove()});var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();clone.querySelectorAll('.memory-save-card,.gallery-album-card-chat,.music-card,.artifact-card,.file-card,.action-report-card').forEach(function(cc){cc.remove()});/* 08-28 空气泡的真正成因：`.clawd-emote-label`（「Clawd替你害羞」那行小字）是**整条消息**的，不是某一片的，`_renderClawdLabel` 把它挂在 .bubble 后面 —— cloneNode(true) 于是把它复制进每一片。一是重复显示，二是更阴的：它让下面 `_rowLooksEmpty` 读到的 textContent 非空，于是「渲染完什么都没有」的那一片删不掉，就留成了空气泡。清掉它，那道网自己就管用了，不用在 `_partIsBlank` 里给 clawd 开特例。 */clone.querySelectorAll('.clawd-emote-label').forEach(function(cc){cc.remove()});parent.insertBefore(clone,next.nextSibling);_reRenderCards(clone);if(_rowLooksEmpty(clone)){clone.remove();return}next=clone})}
 function _addHtmlPreviews(md){if(!md)return;md.querySelectorAll('pre code').forEach(function(block){var cls=block.className||'';var pre=block.parentElement;if(pre.querySelector('.html-preview-btn'))return;var isHtml=/language-html|language-htm|lang-html|lang-htm/i.test(cls);var isCss=/language-css|lang-css/i.test(cls);var isJs=/language-js|language-javascript|lang-js/i.test(cls);if(!isHtml&&!isCss&&!isJs)return;var btn=document.createElement('button');btn.className='html-preview-btn';btn.textContent='▸ Preview';btn.style.cssText='margin-top:6px;padding:5px 14px;border:1px solid var(--accent);border-radius:16px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;font-family:var(--font-sans)';var iframe=null;btn.onclick=function(){if(iframe){iframe.remove();iframe=null;btn.textContent='▸ Preview';return}var code=block.textContent;if(isCss){code='<style>'+code+'<\/style>'}else if(isJs){code='<script>'+code+'<\/script>'}iframe=document.createElement('iframe');iframe.style.cssText='width:100%;max-width:440px;min-height:550px;border:1px solid var(--border);border-radius:14px;background:#fff;margin-top:8px;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob(['<!DOCTYPE html><html><head><meta charset=\"utf-8\"><\/head><body>'+code+'</body></html>'],{type:'text/html'}));pre.after(iframe);btn.textContent='▸ Hide preview'};pre.after(btn)})}
 async function refineThoughtSummary(summary,thinking){if(!thinking)return;setThoughtSummary(summary,thinking,'Thinking summary...');try{const r=await api('/api/thinking-summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thinking})});if(!r.ok)throw Error();const data=await r.json();setThoughtSummary(summary,thinking,data.summary||'')}catch{setThoughtSummary(summary,thinking)}}
 function thoughtSummary(thinking){const summary=document.createElement('button');summary.className='thinking-summary show';setThoughtSummary(summary,thinking);refineThoughtSummary(summary,thinking);summary.onclick=()=>{$('thoughtContent').textContent=thinking;sheet('thought',true)};return summary}
@@ -7018,6 +7042,31 @@ async function testMiniMax(btn){
   matchMedia('(prefers-color-scheme:dark)').addEventListener('change', e => {
     if(!localStorage.getItem('chat_theme')) updateThemeToggle();
   });
+})();
+
+// === 官端样式开关 ===
+// class 是 head 里那段同步脚本先加好的，这里只负责切换和抽屉里那颗按钮的样子。
+(function(){
+  updatePlainToggle();
+  /* 委托到 document 的 capture 阶段：抽屉那块 DOM 将来要是被重建，
+     直接绑在按钮上的监听器会跟着旧节点丢掉，委托不会。 */
+  document.addEventListener('click', function(ev){
+    if(!ev.target.closest || !ev.target.closest('#plainToggle')) return;
+    var on = !document.documentElement.classList.contains('ui-plain');
+    document.documentElement.classList.toggle('ui-plain', on);
+    localStorage.setItem('chat_ui_plain', on ? '1' : '0');
+    updatePlainToggle();
+    /* 09-05：光切 class 不够。分条是 `_splitMessages` 在**消息渲染那一刻**做的，
+       屏幕上已经渲好的消息不会自己重排 —— 关掉开关后旧消息还是整段，
+       看着就像「关了还是不分」（她碰到的就是这个）。重载一次，两套状态才干净。 */
+    setTimeout(function(){location.reload()}, 180);
+  }, true);
+  function updatePlainToggle(){
+    var on = document.documentElement.classList.contains('ui-plain');
+    var knob = $('plainKnob'), btn = $('plainToggle');
+    if(knob){knob.style.left = on ? '20px' : '2px';knob.style.background = on ? '#fff' : 'var(--text-primary)';}
+    if(btn){btn.style.background = on ? '#E8A8B8' : 'var(--border-strong)';}
+  }
 })();
 // === 会客厅 Atrio ===
 // 只管会客厅，不掺别的。（下面那段 Projects 的老代码里混着 artifacts 和 workplace

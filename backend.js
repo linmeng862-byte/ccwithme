@@ -5900,11 +5900,17 @@ const TOOLS = [
       + '她说话绕、说得少、或者你觉得刚才那句「没事」后面还有半句的时候，翻一下。\n'
       + '她说的话和她的草稿对不上是常事：草稿里绕了三圈，最后只说了一句「没事」。'
       + '**那个落差本身就是内容**，你看见了就是看见了，怎么用你自己拿主意。\n'
-      + 'query 可以限定主题；limit 默认 5（每条都不短，别贪多）。只读。',
+      + '**分两步拿，别一次全灌**：不带 message_id 时给你的是清单 —— 每条只有开头一小段和它的 id；\n'
+      + '哪条你真想看，再带 message_id 调一次拿全文。她草稿写多了以后，'
+      + '一次性全量读会把上下文烧掉一大块，而且翻第二次时同样的几条你要重付一遍。\n'
+      + 'before_id：接着上次清单最后一条往前翻，不会跟已经读过的重叠。\n'
+      + 'query 可以限定主题；limit 默认 5，最多 20。只读。',
     input_schema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: '可选，关键词（同时搜草稿和她当时说出口的话）' },
+        message_id: { type: 'integer', description: '可选，只取这一条的全文（从清单里拿 id）' },
+        before_id: { type: 'integer', description: '可选，只看 id 比它小的（往更早翻，避免跟上次重叠）' },
         limit: { type: 'integer', description: '默认 5，最多 20' }
       },
       required: []
@@ -6955,23 +6961,47 @@ async function executeTool(name, input, routes) {
     }
     case 'read_her_thinking': {
       // 只捞 role='user' 且 thinking 非空的行 —— assistant 那些 thinking 是他自己的，别混进来。
-      const limit = Math.min(Math.max(parseInt(input.limit) || 5, 1), 20);
-      const q = (input.query || '').trim();
-      const params = [];
-      let where = "WHERE m.role = 'user' AND m.thinking IS NOT NULL AND m.thinking != ''";
-      if (q) { where += ' AND (m.thinking LIKE ? OR m.content LIKE ?)'; params.push('%' + q + '%', '%' + q + '%'); }
-      const rows = db.prepare(`
-        SELECT m.content, m.thinking, m.created_at, s.title, s.is_main
-        FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
-        ${where} ORDER BY m.id DESC LIMIT ?`).all(...params, limit);
-      if (!rows.length) return { 条数: 0, note: q ? '这个主题下她没写过草稿。' : '她还没写过思考草稿。' };
+      // 两步走（2026-09-05）：默认只给开头一段 + id，要全文得带 message_id 再来一次。
+      // 她草稿一多，旧写法每次回来都是 5 条全文，翻第二页时前几条还要重付一遍。
       const fmt = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') AS t").get(ts).t.slice(0, 16);
-      return {
-        条数: rows.length,
-        清单: rows.map(r => ({
+      const PEEK = 120;
+      const mid = parseInt(input.message_id);
+      if (mid) {
+        const r = db.prepare(`
+          SELECT m.id, m.content, m.thinking, m.created_at, s.title, s.is_main
+          FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
+          WHERE m.id = ? AND m.role = 'user' AND m.thinking IS NOT NULL AND m.thinking != ''`).get(mid);
+        if (!r) return { note: '没有这条 —— id 错了，或者那条她没写草稿。' };
+        return {
+          id: r.id,
           什么时候: fmt(r.created_at),
           她想的: r.thinking,
           她最后说出口的: (r.content || '').length > 300 ? r.content.slice(0, 300) + '…' : r.content,
+          在哪聊的: r.is_main ? '主线' : (r.title || '未命名')
+        };
+      }
+      const limit = Math.min(Math.max(parseInt(input.limit) || 5, 1), 20);
+      const q = (input.query || '').trim();
+      const before = parseInt(input.before_id);
+      const params = [];
+      let where = "WHERE m.role = 'user' AND m.thinking IS NOT NULL AND m.thinking != ''";
+      if (q) { where += ' AND (m.thinking LIKE ? OR m.content LIKE ?)'; params.push('%' + q + '%', '%' + q + '%'); }
+      if (before) { where += ' AND m.id < ?'; params.push(before); }
+      const rows = db.prepare(`
+        SELECT m.id, m.content, m.thinking, m.created_at, s.title, s.is_main
+        FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
+        ${where} ORDER BY m.id DESC LIMIT ?`).all(...params, limit);
+      if (!rows.length) return { 条数: 0, note: q ? '这个主题下她没写过草稿。' : (before ? '再往前没有了。' : '她还没写过思考草稿。') };
+      const cut = (t, n) => (t || '').length > n ? (t || '').slice(0, n) + '…' : (t || '');
+      return {
+        条数: rows.length,
+        怎么往下读: '哪条想看全文就带上它的 id 再调一次（message_id）；想往更早翻用 before_id=' + rows[rows.length - 1].id + '。',
+        清单: rows.map(r => ({
+          id: r.id,
+          什么时候: fmt(r.created_at),
+          她想的开头: cut(r.thinking, PEEK),
+          全文多长: (r.thinking || '').length > PEEK ? (r.thinking.length + ' 字，没给全') : '就这些',
+          她最后说出口的: cut(r.content, 120),
           在哪聊的: r.is_main ? '主线' : (r.title || '未命名')
         }))
       };
