@@ -9325,6 +9325,17 @@ async function handleAnthropicChat(req, res, ctx) {
 
     let assistantText = '';
     let thinkingText = '';
+    // 09-05：断线兜底。以前只在流**干净读完**之后才 INSERT，中途一断就把已经生成的
+    //   整段全扔了 —— 前端 recoverAfterBreak() 去库里捞那条，库里根本没有，
+    //   轮询 40 秒必然落空，她看到的就是「正在找回他刚说的话…」然后失败。
+    //   （2026-09-05 那篇告解室 HTML 就是这么没的。）
+    //   所以这里镜像一份：流到哪儿存到哪儿，收尾时若正常路径没落库，就把这半截存进去。
+    let _saved = false;            // 正常路径落过库 → 兜底不再重复写
+    let _partialText = '';
+    let _partialThinking = '';
+    let _clientGone = false;       // 她切后台/刷新/隧道断，res 先关（只用来标日志）
+    let _streamOk = false;         // 流干净读完了 → 没落库是**故意的**（比如整条都是 <feel>），别兜底
+    res.on('close', () => { _clientGone = true; });
     let currentContentBlockType = '';
     let currentToolId = '';
     let currentToolName = '';
@@ -9380,6 +9391,7 @@ async function handleAnthropicChat(req, res, ctx) {
                       currentImageB64 = src.data;
                     } else if (src.type === 'url' && src.url) {
                       assistantText += '\n![](' + src.url + ')\n';
+                      _partialText += '\n![](' + src.url + ')\n';
                       res.write('event: delta\ndata: ' + JSON.stringify({text: '\n![](' + src.url + ')\n'}) + '\n\n');
                       currentContentBlockType = '';
                     }
@@ -9390,9 +9402,11 @@ async function handleAnthropicChat(req, res, ctx) {
               } else if (d.type === 'content_block_delta') {
                 if (d.delta?.type === 'thinking_delta') {
                   thinkingText += d.delta.thinking || '';
+                  _partialThinking += d.delta.thinking || '';
                   res.write('event: thinking\ndata: ' + JSON.stringify({text: d.delta.thinking || ''}) + '\n\n');
                 } else if (d.delta?.type === 'text_delta') {
                   assistantText += d.delta.text || '';
+                  _partialText += d.delta.text || '';
                   res.write('event: delta\ndata: ' + JSON.stringify({text: expandGalleryTags(d.delta.text || '')}) + '\n\n');
                 } else if (d.delta?.type === 'input_json_delta') {
                   currentToolInput += d.delta.partial_json || '';
@@ -9415,6 +9429,7 @@ async function handleAnthropicChat(req, res, ctx) {
                     fs.writeFileSync(dest, Buffer.from(currentImageB64, 'base64'));
                     const imgUrl = '/gallery-photo/' + fname;
                     assistantText += '\n![](' + imgUrl + ')\n';
+                    _partialText += '\n![](' + imgUrl + ')\n';
                     res.write('event: delta\ndata: ' + JSON.stringify({text: '\n![](' + imgUrl + ')\n'}) + '\n\n');
                   } catch(e) { console.error('[image] save failed:', e.message); }
                   currentImageB64 = '';
@@ -9469,6 +9484,7 @@ async function handleAnthropicChat(req, res, ctx) {
           db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
             .run(convId, 'assistant', assistantText, thinkingText);
           db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
+          _saved = true;
         }
       }
 
@@ -9572,9 +9588,11 @@ async function handleAnthropicChat(req, res, ctx) {
                     if (dd.message?.usage) usage = { ...(usage || {}), ...dd.message.usage };
                   } else if (dd.type === 'content_block_delta' && dd.delta?.type === 'thinking_delta') {
                     secondThinkingText += dd.delta.thinking || '';
+                    _partialThinking += dd.delta.thinking || '';
                     res.write('event: thinking\ndata: ' + JSON.stringify({text: dd.delta.thinking || ''}) + '\n\n');
                   } else if (dd.type === 'content_block_delta' && dd.delta?.type === 'text_delta') {
                     secondAssistantText += dd.delta.text || '';
+                    _partialText += dd.delta.text || '';
                     res.write('event: delta\ndata: ' + JSON.stringify({text: expandGalleryTags(dd.delta.text || '')}) + '\n\n');
                   } else if (dd.type === 'message_delta' && (dd.delta?.stop_reason === 'end_turn' || dd.delta?.stop_reason === 'tool_use')) {
                     if (dd.usage?.output_tokens !== undefined) {
@@ -9645,6 +9663,7 @@ async function handleAnthropicChat(req, res, ctx) {
             } catch (e) { _tracesJson = '[]'; }
             db.prepare('INSERT INTO messages (conv_id, role, content, thinking, traces) VALUES (?, ?, ?, ?, ?)')
               .run(convId, 'assistant', cleanFullText, fullThinking, _tracesJson);
+            _saved = true;
           }
           // 文字一条、表情一条 —— 拆开存，历史里表情才是一张裸图而不是气泡里的插图
           for (const u of stickerUrls) {
@@ -9653,8 +9672,38 @@ async function handleAnthropicChat(req, res, ctx) {
           }
         }
       }
+      _streamOk = true;
     } catch (e) {
       console.error('Stream error:', e);
+    }
+
+    // 09-05：走到这儿还没落库 = 这一轮中途断了（她切后台/刷新、隧道抖、CLI 卡死不吐字）。
+    //   已经生成的那半必须存下来 —— 前端 recoverAfterBreak() 就是去库里捞这条，
+    //   不存的话她等 40 秒只会等到一句「找不回」，而他写的东西是真的没了。
+    //   标一句「断在这里」，免得她以为他只说了这么多。
+    if (!_saved && !_streamOk && _partialText.trim()) {
+      try {
+        let _t = _partialText;
+        try {
+          const _mx = extractMindTags(_t, convId);
+          _t = _mx.cleanedText;
+          _mx.feels.forEach(_insertMindItem);
+          _mx.memories.forEach(_insertMindItem);
+          _mx.dreams.forEach(_insertMindItem);
+          _mx.flashes.forEach(_insertMindItem);
+        } catch (_) {}   // 半截标签解析不了就存原文，宁可多几个尖括号也别丢
+        _t = (_t || _partialText) + '\n\n_（连接断在这里，这条只写到一半）_';
+        db.prepare('INSERT INTO messages (conv_id, role, content, thinking) VALUES (?, ?, ?, ?)')
+          .run(convId, 'assistant', _t, _partialThinking || '');
+        db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
+        console.error('[stream] 中断兜底：存下已生成的 ' + _partialText.length + ' 字' + (_clientGone ? '（客户端先断开）' : ''));
+      } catch (e2) {
+        console.error('[stream] 中断兜底存库失败：', e2.message);
+      }
+    } else if (!_saved && !_partialText.trim()) {
+      // 一个字都没生成就断了 —— 多半是上游卡住（网关日志里见过首字 472 秒）。
+      // 这种以前是完全静默的，只能靠翻库比时间戳才发现，所以这行必须打。
+      console.error('[stream] 这一轮一个字都没生成就结束了' + (_clientGone ? '（客户端先断开）' : '（上游没吐内容）') + ' conv=' + convId);
     }
 
     res.end();
