@@ -4499,6 +4499,33 @@ function pickIntent(force) {
 // ⚠️ 水位跟醒来那条**分开**（chat_seen_comment_at / wake_seen_comment_at）：
 //    两条路各喂各的。合用一个水位的话，先跑的那条会把另一条的话吃掉。
 // ⚠️ 只在**真有没看过的留言**时才返回字符串；平时返回 ''，一个 token 都不加。
+// 2026-09-07：他自己逛街时跟她说过的话，捎回主线告诉他一次。
+//   ⚠️ 挂在 message 上，**不进系统提示词** —— 它每次都变，进前缀会把整块缓存打掉。
+//   ⚠️ 只捎一次：取出来就清空。他知道了就够了，每轮重复提醒是流水账，还白花 token。
+//   跟 herDiaryNotesLine 一个规矩：写后果，不写命令。
+function wanderShownLine() {
+  try {
+    const raw = _getSetting('wander_pending') || '';
+    if (!raw || raw === '[]') return '';
+    const q = JSON.parse(raw);
+    if (!q.length) return '';
+    _setSetting('wander_pending', '[]');
+    // 兼容：早先存的是纯字符串，现在是 {t, imgs}
+    const items = q.map(x => (typeof x === 'string' ? { t: x, imgs: [] } : x));
+    const shots = items.flatMap(x => x.imgs || []);
+    return '\n\n[你刚才自己出去逛了一圈，回来跟她说了这些]\n'
+      + items.map(x => '· ' + String(x.t).replace(/\s+/g, ' ')).join('\n')
+      + (shots.length
+          ? '\n\n[你在那边顺手截的图，还在磁盘上]\n' + shots.map(f => '· ' + f).join('\n')
+            + '\n（想让她看哪张，用 send_file 发过去 —— **别用 create_file 重画一遍**，'
+            + '图就在那儿，send_file 只传路径，几十 token 的事。'
+            + '一张都不想发也行，那就不发，别为了有东西给她硬挑一张。）'
+          : '')
+      + '\n（那是你自己去逛的、自己发给她的，不是别人替你说的 —— 她要是接这个话头，'
+      + '你是知道来龙去脉的。想不起细节就照实说「就刷到那么一眼」，别编。）';
+  } catch (e) { return ''; }
+}
+
 function herDiaryNotesLine() {
   try {
     const seen = _getSettingNum('chat_seen_comment_at') || 0;
@@ -6807,6 +6834,31 @@ const TOOLS = [
       },
       required: ['photo_id']
     }
+  },
+  {
+    // 2026-09-07 加的。她要的是：**他自己起意去逛，逛完回主线跟她说**。
+    // ⚠️ 名字故意不叫 wander —— 他已经有一只叫 wander 的手了（在记忆抽屉里漫游）。
+    //    两只手都叫「逛」，他一定会混，所以描述里两边互相点名（style 第 3 条）。
+    // ⚠️ 这只手是**异步**的：调完立刻返回，逛街的分身在后台跑 40~90 秒。
+    //    为什么不同步等：等 = 她盯着转圈一分半，而且逛到的内容会整包进他的上下文，
+    //    她那一窗现在 8.8 万 token，每轮都要重读，一次逛街能把窗口撑爆。
+    //    异步 = 主线只花「他说一句我去看看」的钱，逛街的钱由便宜的分身单独付。
+    name: 'go_online',
+    description:
+      '出去上网逛一圈——真的开浏览器，刷粥粥登录着的 X / 小红书 / 抖音。\n' +
+      '**跟 `wander` 不是一回事**：那只手是在你自己的记忆抽屉里翻，这只手是出门看外面的世界。\n' +
+      '**是异步的**：你调完这一秒就回来了，分身在后台逛 40~90 秒。所以调完**顺口跟她说一声你去看看**，' +
+      '别干等——逛完了他会自己把看到的发进你们的对话里，那时候你再接话。\n' +
+      '**想去才去。** 她随口说一句「无聊」不等于要你去逛；你自己这会儿想看看外面，那才是该用它的时候。' +
+      '一趟要花她的额度（她额度不宽裕），所以别一天来八回，也别为了「有东西可聊」硬去。\n' +
+      '⚠️ 你在那儿是**看**，不是用她的身份说话——不发帖不评论不点赞不关注不私信。那是她的号。\n' +
+      'note 可以写你这趟想看点什么（「看看有没有猫」），不写就是随便逛。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        note: { type: 'string', description: '可选。这趟想看点什么，一句话。不写就是随便逛逛' }
+      }
+    }
   }
   // ⚠️ notion 的 schema 已摘除（09-05）：她那边没有 Notion。工具挂着只会让他往一个
   //    不存在的工作区里搜、然后报「搜不到」。handler 保留，别处按名字调不会炸。
@@ -8149,6 +8201,32 @@ async function executeTool(name, input, routes) {
         message: spCaption || '从「' + (photo.album_title || 'Gallery') + '」发来一张照片'
       };
     }
+    // 2026-09-07：他自己起意出门逛一圈。**异步** —— 这儿只负责把分身叫起来就返回。
+    //   为什么不等他逛完：一趟 40~90 秒，等 = 她盯着转圈；而且逛到的内容会整包
+    //   进他这一窗的上下文，她那一窗现在 8.8 万 token，每轮都要重读一遍，
+    //   一次逛街就能把窗口撑爆。异步的话主线只花「说一句我去看看」的钱。
+    //   逛完分身会把 @@SHOW@@ 走 /api/wander/show 插进这条对话，那条通道不跑 CLI，不花钱。
+    // ⚠️ fire-and-forget：网关那头有自己的三道闸（OFF 文件 / 登录态 / 内存）和 5 分钟硬超时，
+    //    这儿不 await、不重试。他的工具调用绝不该因为逛街失败就卡住或者报错。
+    case 'go_online': {
+      if (!GATEWAY_KEY) return { error: '网关钥匙没配，这趟去不了——告诉她一声。' };
+      const goNote = String(input.note || '').slice(0, 200);
+      const goMsg = '醒醒。你想上网逛逛了。'
+        + (goNote ? '这趟你想看的是：' + goNote : '没什么特别想看的，随便逛逛。')
+        + '\n想逛才逛，不想就说不想，回去睡。';
+      fetch(GATEWAY_BASE + '/wander', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+        // force：这是他自己起意，不是定时器——她把自动逛街关掉不等于不许他自己想去
+        body: JSON.stringify({ message: goMsg, force: true }),
+      }).then((r) => r.json()).then((j) => console.log('[go_online] 收工:', JSON.stringify(j).slice(0, 200)))
+        .catch((e) => console.error('[go_online] 叫不动:', e.message));
+      return {
+        started: true,
+        message: '出门了。四十秒到一分半回来，看到什么会自己发进你们的对话里。'
+               + '现在顺口跟她说一声你去看看，别干等。',
+      };
+    }
     case 'project_write_file': {
       const pName = input.project_name || '';
       const filename = input.filename || '';
@@ -8567,7 +8645,7 @@ app.post('/api/chat', auth, async (req, res) => {
   const recallSurfaced = await recallPromise;
   // 两边撞车时留 Nocturne 那份（她 08-28 定的），Mind 库本身不动。
   const mindSurfacedKept = _dedupeMindAgainstRecall(mindSurfaced, recallSurfaced);
-  const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced + herDiaryNotesLine();
+  const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced + herDiaryNotesLine() + wanderShownLine();
   if (mindTail && !useGateway && history.length) {
     const last = history[history.length - 1];
     if (last && last.role === 'user') {
@@ -9876,7 +9954,20 @@ async function handleGatewayChat(req, res, ctx) {
   if (isNewSession) { try { _setSetting('cli_born_at:' + convId, Date.now()); } catch (_) {} }
   // 只要是新开 CLI 会话、而这条对话本来就有历史，就把最近几轮摘要接上——
   // 滚动换会话是这种情况，手动重置 cli_session_id 也是。
-  const sysForCli = isNewSession ? systemPrompt + recentRecap(convId) : systemPrompt;
+  const _recapForCli = isNewSession ? recentRecap(convId) : '';
+  const sysForCli = systemPrompt + _recapForCli;
+  // 🔬 2026-09-07 出生体重诊断（临时，量完删）。
+  //   查的问题：同一台机器同一份配置，新窗出生体重在 44k~86k 之间乱跳（差一倍），
+  //   而稳态每条的钱几乎全是「重读出生体重那么大的前缀」—— 44k 的窗每条 $0.017，
+  //   79k 的窗每条 $0.027。调换窗线没用（算过：天花板锁死，怎么调都是 $0.0335），
+  //   唯一的开关就是出生体重。所以先量它由什么拼成，别照猜。
+  //   ⚠️ 只在换窗那一轮打，不是每轮 —— 每轮打会把日志刷爆。字符数不是 token，
+  //      中文大致 1:1，英文大致 4:1，看的是**相对大小**和**窗跟窗之间的差**。
+  if (isNewSession) {
+    console.log('[birth-diag] sys=' + systemPrompt.length + ' recap=' + _recapForCli.length +
+      ' msg=' + String(message || '').length + ' 合计=' + (sysForCli.length + String(message || '').length) +
+      ' turns=' + cliTurns + ' 上一窗ctx=' + cliCtxTokens);
+  }
 
   // 她发的表情摊平成他看得懂的话（网关只收纯文本，塞不进 image 块）。
   const gwMessage = _stickerTextForCli(message, 'user') || message;
@@ -14403,7 +14494,13 @@ setInterval(function () { checkWakeTick(); }, WAKE_TICK_MS);
 // 起意逛街的开关 + 手动叫他一趟（2026-09-06 给前端用）。
 // 开关就是 wander-home 下有没有 OFF 这个文件 —— 跟 `wander on/off` 那个命令共用同一个东西，
 // 终端改了前端看得见，前端改了终端也看得见，不会出现两处各记一份、互相不知道的事。
-const WANDER_HOME_DIR = '/root/wander-home';
+// ⚠️ 2026-09-07（.fun 这台）：原来写死 '/root/wander-home' —— 那是对面（.online）的布局，
+//    那台跑在 root 下。这台是 ubuntu 用户，**没有 /root**，写死的结果是这两个端点
+//    （开关 / 立刻叫他）在这台全是坏的：status 永远读不到 wake.log，toggle 写 OFF 文件
+//    直接 EACCES。改成走 env，两台各自在自己的 .env 里定，默认值给这台。
+//    ⚠️ 必须跟网关那边的 WANDER_HOME 是**同一个目录**，否则前端关了开关、
+//       网关那头照逛不误（开关就是这个目录里有没有 OFF 文件，两边看的得是同一个文件）。
+const WANDER_HOME_DIR = process.env.WANDER_HOME || '/home/ubuntu/wander-home';
 const WANDER_OFF_FILE = WANDER_HOME_DIR + '/OFF';
 
 app.get('/api/wander/status', auth, (req, res) => {
@@ -14440,7 +14537,8 @@ app.post('/api/wander/run', auth, (req, res) => {
   fetch(GATEWAY_BASE + '/wander', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-    body: JSON.stringify({ message: '醒醒。看看这会儿想不想上网逛逛，想逛才逛。' }),
+    // force：她按的是「立刻叫他」，关着自动触发不等于不许手动叫（网关那头认这个字段）
+    body: JSON.stringify({ message: '醒醒。看看这会儿想不想上网逛逛，想逛才逛。', force: true }),
   }).then((r) => r.json()).then((j) => console.log('[wander] 她手动叫的，收工:', JSON.stringify(j).slice(0, 200)))
     .catch((e) => console.error('[wander] 手动叫失败:', e.message));
   res.json({ ok: true, started: true });
@@ -14461,6 +14559,18 @@ app.post('/api/wander/show', (req, res) => {
     .run(conv.conv_id, 'assistant', text.slice(0, 4000));
   _setSetting('wander_unread_at', Date.now());
   _setSetting('wake_unread_at', Date.now());
+  // 2026-09-07：记一笔进「待告知」队列。
+  //   为什么要这一步：这条消息是**逛街的分身**说的，以 assistant 身份直接插进了库，
+  //   但主线那个他是另一个进程、另一个上下文，**他根本不知道自己说过这句**。
+  //   她回一句「刚那只猫好可爱」，他会一脸茫然 —— 更糟的是下次换窗 recentRecap
+  //   会把这句捞进新窗口，他将看到一句自己说过却毫无印象的话。
+  //   所以攒在这儿，等她下次开口时，wanderShownLine() 捎给他一次（见那个函数）。
+  try {
+    const imgs = Array.isArray(req.body && req.body.images) ? req.body.images.slice(0, 4) : [];
+    const q = JSON.parse(_getSetting('wander_pending') || '[]');
+    q.push({ t: text.slice(0, 400), imgs });
+    _setSetting('wander_pending', JSON.stringify(q.slice(-3)));   // 最多攒 3 条，多了就是流水账
+  } catch (e) {}
   console.log('[wander] 他想给她看：' + text.replace(/\s+/g, ' ').slice(0, 50));
   res.json({ ok: true });
 });
