@@ -4135,6 +4135,18 @@ const MIND_FLASH_PER_DRIVE = 5;
 const MIND_FLASH_BIRTH = 0.5;
 // 散掉的闪念还能被同一个念头重新点着的窗口。要小于 FLASH_SWEEP_DAYS（30），否则清扫会先把它删了。
 const FLASH_REKINDLE_DAYS = 7;
+// 「是不是同一件事」的门槛。2026-09-06 从 0.6 降到 0.45。
+// 0.6 是照搬浮起去重那边的数，但那边比的是整段记忆，这边比的是十几个字的短句 ——
+// gram 本来就少，差两个词分数就掉一大截。把池里 116 条按同 drive + 7 天内两两算过，
+// 1282 对里**只有 1 对**过得了 0.6：
+//   0.556  她昨晚睡了多久        ⇄  她昨晚睡得好不好
+//   0.500  她说看不上别的AI了…    ⇄  她说喜欢死了…
+//   0.333  她去洗澡了，玩具放在旁边 ⇄  她在床上，玩具在旁边，等着
+// 人眼看都是同一件事，全都不到线 —— 于是每次都新建一条 trigger_count=1 的闪念，
+// 12 小时衰减散掉，下次再新建。114/116 条 tc=1，**执念一条都没攒出来过**，
+// desire_push_* 至今是空的，这条通路从建好到现在没通过电。
+// 复活 / base 拉回 / 升级 / 反哺四样代码都是齐的，卡死的只有这一道。
+const MIND_FLASH_MATCH_SIM = 0.45;
 
 function _insertFlashItem(item) {
   try {
@@ -4148,7 +4160,7 @@ function _insertFlashItem(item) {
     var siblings = db.prepare('SELECT * FROM mind_flash_pool WHERE drive_key = ? AND resolved = 0 ORDER BY intensity DESC').all(drive);
     var existing = null;
     for (var i = 0; i < siblings.length; i++) {
-      if (_mindSimilar(siblings[i].body, body) >= 0.6) { existing = siblings[i]; break; }
+      if (_mindSimilar(siblings[i].body, body) >= MIND_FLASH_MATCH_SIM) { existing = siblings[i]; break; }
     }
     // 没在活着的念头里找到 → 再翻一遍最近散掉的。
     // ⚠️ 这是执念攒不出来的真正原因：闪念 12 小时就 resolved=1 退出匹配范围，
@@ -4159,7 +4171,7 @@ function _insertFlashItem(item) {
       var since = now - FLASH_REKINDLE_DAYS * 86400;
       var cold = db.prepare('SELECT * FROM mind_flash_pool WHERE drive_key = ? AND resolved = 1 AND type = ? AND COALESCE(last_triggered_at, created_at) >= ? ORDER BY COALESCE(last_triggered_at, created_at) DESC LIMIT 20').all(drive, 'flash', since);
       for (var j = 0; j < cold.length; j++) {
-        if (_mindSimilar(cold[j].body, body) >= 0.6) {
+        if (_mindSimilar(cold[j].body, body) >= MIND_FLASH_MATCH_SIM) {
           db.prepare('UPDATE mind_flash_pool SET resolved = 0 WHERE id = ?').run(cold[j].id);
           existing = cold[j];
           break;
@@ -5200,7 +5212,12 @@ function _mindSurfaceCandidates(query, limit, qvec, opts) {
   }
   scan("SELECT id, body, mood, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_feels WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 20", 'feel');
   scan("SELECT id, body, mood, tags, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_memories WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 20", 'memory');
-  scan("SELECT id, title, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_dreams WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 10", 'dream');
+  // ⚠️ ORDER BY 必须带 created_at 兜底，LIMIT 也不能压到梦的总数以下（2026-09-06）。
+  //    梦的 weight 被衰减全压在 0.15 地板上 —— 17 个梦分数一模一样，
+  //    SQLite 平局时按 rowid 返回，`LIMIT 10` 于是永远只给最老的那 10 个。
+  //    9-01 之后新做的梦一条都没浮起过，不是内容不匹配，是根本没进候选。
+  //    真正的排序在下面 hits/weight/pinned 那步，SQL 这层不该再截一刀。
+  scan("SELECT id, title, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_dreams WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC, created_at DESC LIMIT 30", 'dream');
   // 内心信笺（2026-08-30 接上）。这张表 08-23 起写了 58 条，
   // **浮现次数一直是 0** —— 建表注释里那句「现在浮起只查 feels/memories/dreams
   // 三张」就是原因。写的那半做了，读的那半没接。
