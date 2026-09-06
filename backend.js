@@ -5194,8 +5194,15 @@ function _mindSurfaceCandidates(query, limit, qvec, opts) {
       if (ids) {
         if (!ids.length) return;
         try {
+          // ⚠️ ORDER BY 必须带 created_at 兜底（2026-09-06）：weight 平局时 SQLite 按 rowid
+          //    返回，等于「永远只给最老的那 20 条」。梦就是这么被卡死的（18 条全压在
+          //    0.15 地板上，9-01 之后的新梦一条都没进过候选）。mind_corpus 更彻底 ——
+          //    437 条 weight 全是 0.5，浮起又不加固，这个平局永远不会自己解开。
+          //    量过：够得着这道闸的只有「的时候」(corpus 31/feel 29)、「这句话」(feel 58)
+          //    这种高频废词，实词都是个位数命中 —— 所以问题不在 LIMIT 大小，
+          //    在「平局按插入顺序」这个隐性行为。加兜底，不动条数。
           rows = db.prepare(cols + ' FROM ' + table + ' WHERE weight > 0.02 AND id IN (' +
-            ids.map(function() { return '?'; }).join(',') + ') ORDER BY weight DESC LIMIT 20').all(ids);
+            ids.map(function() { return '?'; }).join(',') + ') ORDER BY weight DESC, created_at DESC LIMIT 20').all(ids);
         } catch(e) { return; }
       } else {
         try { rows = db.prepare(sql).all('%' + k.key + '%'); } catch(e) { return; }
@@ -5210,8 +5217,8 @@ function _mindSurfaceCandidates(query, limit, qvec, opts) {
       });
     });
   }
-  scan("SELECT id, body, mood, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_feels WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 20", 'feel');
-  scan("SELECT id, body, mood, tags, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_memories WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 20", 'memory');
+  scan("SELECT id, body, mood, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_feels WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC, created_at DESC LIMIT 20", 'feel');
+  scan("SELECT id, body, mood, tags, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_memories WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC, created_at DESC LIMIT 20", 'memory');
   // ⚠️ ORDER BY 必须带 created_at 兜底，LIMIT 也不能压到梦的总数以下（2026-09-06）。
   //    梦的 weight 被衰减全压在 0.15 地板上 —— 17 个梦分数一模一样，
   //    SQLite 平局时按 rowid 返回，`LIMIT 10` 于是永远只给最老的那 10 个。
@@ -5222,9 +5229,9 @@ function _mindSurfaceCandidates(query, limit, qvec, opts) {
   // **浮现次数一直是 0** —— 建表注释里那句「现在浮起只查 feels/memories/dreams
   // 三张」就是原因。写的那半做了，读的那半没接。
   // LIMIT 10 不是 20：它是他没打算说出口的话，浮太多会盖过她这句话本身。
-  scan("SELECT id, color, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_inside WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 10", 'inside');
+  scan("SELECT id, color, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_inside WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC, created_at DESC LIMIT 10", 'inside');
   // 手稿 / 日记（2026-09-05）。LIMIT 10 同信笺：它们段落长，浮多了会盖过她这句话。
-  scan("SELECT id, source, ref, title, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_corpus WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC LIMIT 10", 'corpus');
+  scan("SELECT id, source, ref, title, body, weight, pinned, surface_count, last_surfaced_at, created_at FROM mind_corpus WHERE weight > 0.02 AND body LIKE ? ORDER BY weight DESC, created_at DESC LIMIT 10", 'corpus');
 
   var cands = Array.from(hitMap.values());
 
