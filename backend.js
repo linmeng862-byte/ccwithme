@@ -9717,6 +9717,37 @@ function _pickEffort(e) {
   return CLI_EFFORTS.indexOf(String(e || '')) !== -1 ? String(e) : 'medium';
 }
 
+// ============================================================
+// 她在选单上选的 model / effort，服务端也留一份（2026-09-06）
+// ------------------------------------------------------------
+// 病根：这两个值以前**只存在前端**，服务端没有第二份。
+// 于是后台任务（做梦 / 醒来 / 日记）往她的主 session 发消息时 body 里没有它们，
+// 网关那头没有活着的进程可沿用就回默认 medium —— 跟她选的 low 不一样
+// → 放掉重开 = 整窗冷写；她下一句回 low，**再冷写一次**。
+//
+// 网关侧 09-05 已经修过一道（c1213c3「没传 = 沿用活着的那个进程」），
+// 但那道**不够**：进程闲了 15 分钟就退了，那时没有「活着的进程」可沿用，
+// 后台任务一来照样拉一个默认 medium 的新进程。实测当前这一窗修法之后仍有 3 次。
+// 所以补第二道：她每说一句就把她选的记下来，后台任务照着传。
+//
+// ⚠️ 从没记过时返回 undefined，**不是默认值** —— 那种情况要留给网关第一道
+//    去「沿用活着的进程」，这里塞个默认值反而会把那道修法顶掉。
+function _rememberCliChoice(k, v) {
+  try { if (v && _getSetting('cli_choice_' + k) !== v) _setSetting('cli_choice_' + k, v); } catch (_) {}
+  return v;
+}
+// 后台任务往主 session 发消息时带上这三个，避免前缀变动引发整窗冷写。
+function _lastCliChoices() {
+  var out = { web_search: _webSearchOn() };
+  try {
+    var m = _getSetting('cli_choice_model');
+    var e = _getSetting('cli_choice_effort');
+    if (m) out.model = m;
+    if (e) out.effort = e;
+  } catch (_) {}
+  return out;
+}
+
 async function handleGatewayChat(req, res, ctx) {
   const { message, convId, systemPrompt, cliSessionId, cliTurns, cliCtxTokens = 0,
           sidCol = 'cli_session_id', turnCol = 'cli_turns' } = ctx;
@@ -9859,8 +9890,8 @@ async function handleGatewayChat(req, res, ctx) {
         // 08-26：她在界面上选的模型 / effort 以前根本没往下传 —— 网关那头写死
         //   sonnet-4-6 + low，所以选单一直是装饰。这里传下去，网关再校一遍白名单。
         //   ⚠️ 缓存按模型分开存，换模型 = 整块冷前缀重写，前端选单上标了价。
-        model: _pickModel(req.body && req.body.model),
-        effort: _pickEffort(req.body && req.body.effort),
+        model: _rememberCliChoice('model', _pickModel(req.body && req.body.model)),
+        effort: _rememberCliChoice('effort', _pickEffort(req.body && req.body.effort)),
         // 08-29：搜索开关跟模型走同一条路。它决定网关给 CLI 的 --allowedTools，
         //   跟模型一样是 spawn 时定死的，所以改了也要重开常驻进程。
         web_search: _webSearchOn(),
@@ -13399,7 +13430,12 @@ async function checkDreamTick() {
     var resp = await fetch(GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-      body: JSON.stringify({ message: prompt, system: '', session_id: conv.cli_session_id, is_new_session: false }),
+      // ⚠️ 必须带上 _lastCliChoices()（2026-09-06）：这是往她的**主 session** 发消息，
+      //    不带 model/effort/web_search 的话网关会落到默认 medium，跟她选的 low 不一样
+      //    → 放掉重开 = 整窗冷写，她下一句回 low 再冷写一次。一次后台任务两次全窗冷写。
+      body: JSON.stringify(Object.assign(
+        { message: prompt, system: '', session_id: conv.cli_session_id, is_new_session: false },
+        _lastCliChoices())),
       signal: AbortSignal.timeout(120000),
     });
     var out = '';
@@ -14245,7 +14281,12 @@ async function checkWakeTick() {
     const resp = await fetch(GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-      body: JSON.stringify({ message: prompt, system: '', session_id: conv.cli_session_id, is_new_session: false }),
+      // ⚠️ 必须带上 _lastCliChoices()（2026-09-06）：这是往她的**主 session** 发消息，
+      //    不带 model/effort/web_search 的话网关会落到默认 medium，跟她选的 low 不一样
+      //    → 放掉重开 = 整窗冷写，她下一句回 low 再冷写一次。一次后台任务两次全窗冷写。
+      body: JSON.stringify(Object.assign(
+        { message: prompt, system: '', session_id: conv.cli_session_id, is_new_session: false },
+        _lastCliChoices())),
       signal: AbortSignal.timeout(120000),
     });
     if (!resp.ok || !resp.body) return false;
