@@ -14400,6 +14400,52 @@ async function checkWakeTick() {
 }
 setInterval(function () { checkWakeTick(); }, WAKE_TICK_MS);
 
+// 起意逛街的开关 + 手动叫他一趟（2026-09-06 给前端用）。
+// 开关就是 wander-home 下有没有 OFF 这个文件 —— 跟 `wander on/off` 那个命令共用同一个东西，
+// 终端改了前端看得见，前端改了终端也看得见，不会出现两处各记一份、互相不知道的事。
+const WANDER_HOME_DIR = '/root/wander-home';
+const WANDER_OFF_FILE = WANDER_HOME_DIR + '/OFF';
+
+app.get('/api/wander/status', auth, (req, res) => {
+  let last = '';
+  try {
+    const lines = require('fs').readFileSync(WANDER_HOME_DIR + '/wake.log', 'utf8').trim().split('\n');
+    last = lines[lines.length - 1] || '';
+  } catch (e) {}
+  let said = '', at = '';
+  const m = last.match(/^(\S+ \S+) (\{.*\})$/);
+  if (m) {
+    at = m[1];
+    try { const j = JSON.parse(m[2]); said = j.summary || j.skipped || ''; } catch (e) {}
+  }
+  res.json({
+    on: !require('fs').existsSync(WANDER_OFF_FILE),
+    last_at: at, last_said: String(said).slice(0, 500),
+  });
+});
+
+app.post('/api/wander/toggle', auth, (req, res) => {
+  const on = !!(req.body && req.body.on);
+  try {
+    if (on) { try { require('fs').unlinkSync(WANDER_OFF_FILE); } catch (e) {} }
+    else require('fs').writeFileSync(WANDER_OFF_FILE, '前端关的 ' + new Date().toISOString() + '\n');
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+  res.json({ ok: true, on });
+});
+
+// 立刻叫他一趟。**不等他逛完**（一趟最多 5 分钟，网关那边自己会跑完并回传 @@SHOW@@），
+// 这儿只负责把人叫醒就返回，免得她的请求挂在那儿转圈。
+app.post('/api/wander/run', auth, (req, res) => {
+  if (!GATEWAY_KEY) return res.status(500).json({ error: 'no gateway key' });
+  fetch(GATEWAY_BASE + '/wander', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+    body: JSON.stringify({ message: '醒醒。看看这会儿想不想上网逛逛，想逛才逛。' }),
+  }).then((r) => r.json()).then((j) => console.log('[wander] 她手动叫的，收工:', JSON.stringify(j).slice(0, 200)))
+    .catch((e) => console.error('[wander] 手动叫失败:', e.message));
+  res.json({ ok: true, started: true });
+});
+
 // 逛街的他想给她看点东西（2026-09-06 接通）。
 // 网关那条 /wander 跑完，把他收尾话里的 @@SHOW@@ 行 POST 到这儿。
 // 走的是 <say> 同一条路：插一条 assistant 消息 + 抬 wake_unread_at，

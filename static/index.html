@@ -5480,6 +5480,40 @@ function _usageBar(label,spent,limit){
       +'<span style="font:600 12px var(--font-sans);color:'+col+'">'+escHtml(txt)+(limit>0?'  '+Math.round(pct)+'%':'')+'</span></div>'
     +'<div style="height:7px;background:var(--bg-sunken);border-radius:4px;overflow:hidden">'
       +'<div style="height:100%;width:'+pct+'%;background:'+col+';border-radius:4px;transition:width .3s"></div></div></div>'}
+// Wander —— 起意逛街的开关（2026-09-06）。
+// 开关状态就是 wander-home 下有没有 OFF 文件，跟终端的 `wander on/off` 是同一个东西，
+// 两边改了互相看得见 —— 别在这儿再存一份状态，那就是「同一件事记两遍」。
+// 放在花费上限旁边是有道理的：一趟逛街 ≈ 20 万 token，她额度紧的时候
+// 正好在看额度条的时候顺手就关了。
+function _wanderCard(w){
+  if(!w)return '';
+  var on=!!w.on;
+  return '<div style="margin-bottom:22px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:14px 16px">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
+      +'<div><div style="font:600 13px var(--font-sans);color:var(--text-secondary)">Wander</div>'
+      +'<div style="font:11px/1.5 var(--font-sans);color:var(--text-faint);margin-top:2px">每天 12:07 / 21:07 叫他一次，他自己决定想不想逛。一趟约 20 万 token。</div></div>'
+      +'<label style="flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:pointer">'
+        +'<input id="wanderOn" type="checkbox" '+(on?'checked':'')+' style="accent-color:var(--accent)">'
+        +'<span id="wanderOnTxt" style="font:12px var(--font-sans);color:var(--text-secondary)">'+(on?'on':'off')+'</span></label>'
+    +'</div>'
+    +(w.last_said?'<div style="margin-top:11px;padding:9px 11px;background:var(--bg-sunken);border-radius:10px">'
+      +'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-bottom:3px">上一趟 '+escHtml(w.last_at||'')+'</div>'
+      +'<div style="font:12px/1.6 var(--font-sans);color:var(--text-secondary)">'+escHtml(w.last_said)+'</div></div>':'')
+    +'<button id="wanderNow" style="width:100%;margin-top:11px;padding:9px 16px;border:1px solid var(--bg-sunken);border-radius:10px;background:var(--bg-primary);color:var(--text-primary);font:600 13px var(--font-sans);cursor:pointer">Wander now</button>'
+    +'</div>'}
+async function _wanderToggle(){
+  var c=$('wanderOn'),on=c.checked;
+  if($('wanderOnTxt'))$('wanderOnTxt').textContent=on?'on':'off';
+  try{await api('/api/wander/toggle',{method:'POST',body:JSON.stringify({on:on})})}
+  catch(e){toast('改不动，看看后端');c.checked=!on;if($('wanderOnTxt'))$('wanderOnTxt').textContent=!on?'on':'off'}}
+async function _wanderNow(){
+  var b=$('wanderNow');if(b){b.textContent='叫他了，最多 5 分钟…';b.disabled=true}
+  try{
+    await api('/api/wander/run',{method:'POST',body:'{}'});
+    // 后端把人叫醒就返回、不等他逛完，所以这儿只能隔一会儿自己去刷。
+    // 5 分半 = 网关那边的 5 分钟超时再加点余量。
+    setTimeout(function(){loadUsage()},330000);
+  }catch(e){toast('叫不动他');if(b){b.textContent='Wander now';b.disabled=false}}}
 function _usageLimitsCard(d){
   var L=d.limits||{},s=d.spent||{};
   return '<div style="margin-bottom:22px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:14px 16px">'
@@ -5555,6 +5589,7 @@ function _fmtAbs(v){
 }
 var _WINDOW_NAME={five_hour:'5 小时窗口',seven_day:'7 天窗口'};
 var _liveUsageData=null;
+var _wanderData=null;   // Wander 卡片的数据。var 不是 const —— 顶层 const 不挂 window（踩坑 2）
 function _subscriptionCards(list){
   list=list||[];
   if(!list.length){
@@ -5675,6 +5710,7 @@ function _renderUsage(data){
   $('usageBody').innerHTML=
      _liveUsageCard(_liveUsageData)
     +_usageLimitsCard(data)
+    +_wanderCard(_wanderData)
     +_cacheCard(data.recent)
     +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">缓存命中越高越省钱。</div>';
   // 2026-08-22 她说「api 估算的不要，只要真实的」：
@@ -5682,12 +5718,16 @@ function _renderUsage(data){
   // 全部撤掉，只留上面的订阅额度（真实）+ 日限卡（那个还管着真的拦截）+ 缓存命中。
   // _usageBlock() 和 bars 的代码留着没删 —— 哪天想看估算，接回来就行。
   if($('limSave'))$('limSave').onclick=_saveLimits;
+  if($('wanderOn'))$('wanderOn').onchange=_wanderToggle;
+  if($('wanderNow'))$('wanderNow').onclick=_wanderNow;
   _bindLiveRefresh();
   // 快照那些是从数据库读的，秒回；/usage 要 spawn 一个进程，所以不挡着面板先开
   if(!_liveUsageData)_loadLiveUsage()}
 async function loadUsage(){
   $('usageBody').innerHTML='<div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载中…</div>';
   _liveUsageData=null;
+  // Wander 状态跟 usage 一起取。读的是本地文件，秒回，失败就当没有这张卡（不挡住整个面板）。
+  try{var wr=await api('/api/wander/status');_wanderData=await wr.json()}catch(e){_wanderData=null}
   try{var r=await api('/api/usage');var d=await r.json();_renderUsage(d)}
   catch(e){$('usageBody').innerHTML='<div style="color:var(--text-faint);font:14px var(--font-sans);text-align:center;padding:40px 0">加载失败：'+escHtml(e.message||'未知错误')+'</div>'}}
 function openUsagePanel(){var p=$('usagePanel');p.style.display='flex';p.setAttribute('aria-hidden','false');loadUsage()}
