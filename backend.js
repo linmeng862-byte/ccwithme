@@ -14400,6 +14400,25 @@ async function checkWakeTick() {
 }
 setInterval(function () { checkWakeTick(); }, WAKE_TICK_MS);
 
+// 逛街的他想给她看点东西（2026-09-06 接通）。
+// 网关那条 /wander 跑完，把他收尾话里的 @@SHOW@@ 行 POST 到这儿。
+// 走的是 <say> 同一条路：插一条 assistant 消息 + 抬 wake_unread_at，
+// 她那边的轮询就看见了 —— **不再跑一次 CLI**，所以这条通道是不花钱的。
+// 会话选法跟 checkWakeTick 一致（主会话优先，其次最近活跃的那个）。
+app.post('/api/wander/show', (req, res) => {
+  if (!GATEWAY_KEY || req.get('x-gateway-key') !== GATEWAY_KEY) return res.status(403).json({ error: 'forbidden' });
+  const text = String((req.body && req.body.text) || '').trim();
+  if (!text) return res.status(400).json({ error: 'text required' });
+  const conv = db.prepare('SELECT conv_id FROM sessions ORDER BY is_main DESC, updated_at DESC LIMIT 1').get();
+  if (!conv) return res.json({ ok: false, skipped: 'no_session' });
+  db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?,?,?)')
+    .run(conv.conv_id, 'assistant', text.slice(0, 4000));
+  _setSetting('wander_unread_at', Date.now());
+  _setSetting('wake_unread_at', Date.now());
+  console.log('[wander] 他想给她看：' + text.replace(/\s+/g, ' ').slice(0, 50));
+  res.json({ ok: true });
+});
+
 // 她那边每隔一会儿问一次「他有没有主动说什么」
 app.get('/api/wake/unread', auth, (req, res) => {
   const since = parseInt(req.query.since) || 0;
