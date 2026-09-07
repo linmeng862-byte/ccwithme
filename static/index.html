@@ -449,14 +449,14 @@
 <section id="stickerPanel" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:25;background:var(--bg-primary);border-top:1px solid var(--border);padding:12px 16px;max-height:46vh;overflow-y:auto;border-radius:20px 20px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.1)">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
     <span style="font:600 14px var(--font-sans)">Stickers</span>
-    <!-- 她的 / 他的：owner 分栏。库里 owner 就是 user / assistant 两个值 -->
+    <!-- Vicky / Cis：owner 分栏。库里 owner 就是 user / assistant 两个值 -->
     <div style="display:flex;background:var(--bg-sunken);border-radius:12px;padding:2px" id="stickerOwnerTabs">
-      <button class="stk-tab" data-owner="user" style="padding:5px 14px;border:none;border-radius:10px;font:500 12px var(--font-sans);cursor:pointer">她的</button>
-      <button class="stk-tab" data-owner="assistant" style="padding:5px 14px;border:none;border-radius:10px;font:500 12px var(--font-sans);cursor:pointer">他的</button>
+      <button class="stk-tab" data-owner="user" style="padding:5px 14px;border:none;border-radius:10px;font:500 12px var(--font-sans);cursor:pointer">Vicky</button>
+      <button class="stk-tab" data-owner="assistant" style="padding:5px 14px;border:none;border-radius:10px;font:500 12px var(--font-sans);cursor:pointer">Cis</button>
     </div>
     <div style="flex:1"></div>
     <label id="stickerAddBtn" title="添加" style="width:30px;height:30px;border-radius:50%;background:var(--bg-sunken);display:grid;place-items:center;cursor:pointer;font-size:17px;color:var(--text-secondary)">+
-      <input type="file" id="stickerFileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" style="display:none" />
+      <input type="file" id="stickerFileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" style="display:none" />
     </label>
     <button id="stickerEditToggle" title="编辑" style="width:30px;height:30px;border-radius:50%;background:var(--bg-sunken);border:none;cursor:pointer;color:var(--text-secondary);display:grid;place-items:center">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
@@ -482,8 +482,8 @@
     <input id="stkEditName" style="width:100%;padding:11px;border:1px solid var(--border);border-radius:11px;font:15px var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;margin-bottom:15px">
     <div style="font:500 12px var(--font-sans);color:var(--text-secondary);margin-bottom:5px">属于谁</div>
     <div style="display:flex;background:var(--bg-sunken);border-radius:12px;padding:3px;margin-bottom:15px" id="stkEditOwner">
-      <button class="stk-own" data-owner="user" style="flex:1;padding:9px;border:none;border-radius:10px;font:500 14px var(--font-sans);cursor:pointer">她的</button>
-      <button class="stk-own" data-owner="assistant" style="flex:1;padding:9px;border:none;border-radius:10px;font:500 14px var(--font-sans);cursor:pointer">他的</button>
+      <button class="stk-own" data-owner="user" style="flex:1;padding:9px;border:none;border-radius:10px;font:500 14px var(--font-sans);cursor:pointer">Vicky</button>
+      <button class="stk-own" data-owner="assistant" style="flex:1;padding:9px;border:none;border-radius:10px;font:500 14px var(--font-sans);cursor:pointer">Cis</button>
     </div>
     <div style="font:500 12px var(--font-sans);color:var(--text-secondary);margin-bottom:5px">这个表情正在做什么？通常代表什么情绪或语气？<span style="color:#E54D2E">必填</span></div>
     <textarea id="stkEditDesc" rows="3" style="width:100%;padding:11px;border:1px solid var(--border);border-radius:11px;font:14px/1.5 var(--font-sans);background:var(--bg-surface);color:var(--text-primary);outline:none;resize:vertical;margin-bottom:15px"></textarea>

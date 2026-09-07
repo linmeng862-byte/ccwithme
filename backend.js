@@ -1715,15 +1715,27 @@ function _stickerContextParts(raw, role) {
 // 这里把表情摊平成他读得懂的文本，并给出**首帧 png 的绝对路径**，让他能用 Read 真去看一眼。
 // ⚠️ 只改发给网关的那一份；落库的 content 仍是 [Sticker] /stickers/xxx，
 //    前端靠这个正则渲染裸图（index.html renderMessage），改了气泡就变成一坨文字。
+// ⚠️ 09-07 第二次踩：这里原来是 `^...$` 全串锚定的 match。
+//    但送进来的 `message` 早就不是她那一句了 —— 到这一步 gatewayMessage 上已经
+//    可能贴了时间戳 / mindTail / 小票 / 通话说明，首轮还会把「记忆浮现」整段**前置**。
+//    只要粘了任何一样，锚定就不匹配 → 原样把 `[Sticker] /stickers/x.gif` 发给他，
+//    表现就是他说「还是看不见，路径读不到」。
+//    所以改成**在整段里替换那一处**，不管前后贴了什么都认得出来。
 function _stickerTextForCli(raw, role) {
-  const m = String(raw || '').match(/^\[Sticker\]\s*\/stickers\/([\w.-]+)\s*$/);
-  if (!m) return null;
+  const src = String(raw || '');
+  const re = /\[Sticker\]\s*\/stickers\/([\w.-]+)/g;
+  if (!re.test(src)) return null;
+  re.lastIndex = 0;
+  return src.replace(re, (_m, fname) => _stickerBlurb(fname, role));
+}
+
+function _stickerBlurb(fname, role) {
   const who = role === 'assistant' ? 'Noct' : '粥粥';
   let s = null;
   try {
     if (!_stkQuery) _stkQuery = db.prepare(
       'SELECT name, description, emotion_tags, thumbnail FROM stickers WHERE filename = ?');
-    s = _stkQuery.get(m[1]);
+    s = _stkQuery.get(fname);
   } catch (_) {}
   if (!s) return '[' + who + '发了个表情]';
 
@@ -1732,20 +1744,29 @@ function _stickerTextForCli(raw, role) {
   let out = '[' + who + '发了个表情：' + (s.name || '没名字') + ']';
   if (s.description) out += '\n画面：' + s.description;
   if (tags.length) out += '\n语气：' + tags.join('、');
-  // 动图存的是 GIF，首帧另存了一张 png —— 给他首帧那张，GIF 他读不了。
-  const shot = s.thumbnail || m[1];
-  const abs = path.join(stickerDir, shot);
-  if (fs.existsSync(abs)) out += '\n（想细看就 Read 这张首帧：' + abs + '）';
+  // ⚠️ 09-07：这里以前还附一句「想细看就 Read 这张首帧：<绝对路径>」。
+  //    结果他每收一个表情就真去 Read 一次 —— 慢、费钱，而且她看到的就是
+  //    「他只看见路径、还要读一下」。名字+画面+语气已经是上传时就认好的，
+  //    足够他知道这是什么表情了。**别再把路径塞回去。**
   return out;
 }
 
 app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, async (req, res) => {
   const tmpPath = req.file && req.file.path;
+  let srcPath = tmpPath;          // HEIC 转码后会指向新文件，收尾要按它删
   try {
     if (!req.file) return res.status(400).json({ error: '请选择图片' });
-    const ext = path.extname(req.file.originalname).toLowerCase();
+    // 09-07：iPhone 相册导出的图**文件名是 .jpeg、内容是 HEIC**。
+    //   以前一路裸走：sharp 解不了 → _shrinkSticker 吞异常存原图 → 首帧提不出来 →
+    //   _analyzeSticker 拿不到能读的图，认出来一句「文件损坏，内容非有效图片格式」。
+    //   库里那张就是这么来的。这里按魔数嗅一遍先转成 JPEG（复用普通上传那条路的
+    //   _heicToJpeg，它自己会验 ftyp brand，不是 HEIC 就返回 null，成本几乎为零）。
+    //   ⚠️ 必须在扩展名判断**之前**：真叫 .heic 的会被 STICKER_EXT 挡在门外。
+    let ext = path.extname(req.file.originalname).toLowerCase();
+    const heic = _heicToJpeg(srcPath);
+    if (heic) { srcPath = heic.path; ext = '.jpg'; }
     const mime = STICKER_EXT[ext];
-    if (!mime) return res.status(400).json({ error: '支持 GIF / WebP 动图，或 PNG / JPEG 图片' });
+    if (!mime) return res.status(400).json({ error: '支持 GIF / WebP 动图，或 PNG / JPEG / HEIC 图片' });
 
     // 08-27 改：以前描述必填，空了直接 400。现在没填就交给他自动认（_analyzeSticker），
     // 认完再落 active。人工填了的**优先**，绝不被自动结果覆盖 —— 她写的比模型准。
@@ -1766,12 +1787,12 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
     const thumbName = sid + '_thumb.png';
 
     // 静态图先压再存，动图原样拷（_shrinkSticker 里分的岔）
-    const shrunk = await _shrinkSticker(tmpPath, ext);
+    const shrunk = await _shrinkSticker(srcPath, ext);
     const realExt = shrunk.ext;
     const realFname = sid + realExt;
     const realMime = STICKER_EXT[realExt] || mime;
     if (shrunk.buf) fs.writeFileSync(path.join(stickerDir, realFname), shrunk.buf);
-    else fs.copyFileSync(tmpPath, path.join(stickerDir, realFname));
+    else fs.copyFileSync(srcPath, path.join(stickerDir, realFname));
 
     // 提首帧。给他看的就是这一张 —— 单张图 token 可控，比让他逐帧读稳。
     // 提不出来不算致命：表情照样能发，只是自动识别会少一张图。
@@ -1818,7 +1839,10 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
   } catch(e) {
     res.status(500).json({ error: '上传失败: ' + e.message });
   } finally {
-    if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch(_) {} }
+    // 转过码的话 tmpPath 已经被 _heicToJpeg 删了，要删的是 srcPath 那份
+    for (const f of new Set([tmpPath, srcPath].filter(Boolean))) {
+      try { fs.unlinkSync(f); } catch(_) {}
+    }
   }
 });
 
