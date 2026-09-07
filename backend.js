@@ -4537,8 +4537,22 @@ function wanderShownLine() {
     // 兼容：早先存的是纯字符串，现在是 {t, imgs}
     const items = q.map(x => (typeof x === 'string' ? { t: x, imgs: [] } : x));
     const shots = items.flatMap(x => x.imgs || []);
+    const said = items.filter(x => !x.quiet);
+    const quiet = items.filter(x => x.quiet);
+    // 空手回来的那种（09-07）：他说完「我去看看」就没下文，她一直等着，
+    //   而他自己也不知道回来过。**不是让他汇报**——只是让他知道，
+    //   她要是问起来他答得上，不问就算了。
+    const quietPart = quiet.length
+      ? '\n\n[你刚才出去逛了一圈，没什么特别想拿给她看的，回来了]\n'
+        + quiet.map(x => '· 那趟你看到的是：' + String(x.t).replace(/\s+/g, ' ')).join('\n')
+        + '\n（跟你说一声，是因为你之前跟她提过一句「我去看看」，'
+        + '她可能还等着呢。她要是问起来你答得上；不问的话，'
+        + '顺口一句「刚出去晃了一圈，没什么好看的」就够了。'
+        + '不用当成一件要汇报的事，也不用把上面这些复述给她。）'
+      : '';
+    if (!said.length) return quietPart;
     return '\n\n[你刚才自己出去逛了一圈，回来跟她说了这些]\n'
-      + items.map(x => '· ' + String(x.t).replace(/\s+/g, ' ')).join('\n')
+      + said.map(x => '· ' + String(x.t).replace(/\s+/g, ' ')).join('\n')
       + (shots.length
           ? '\n\n[你在那边顺手截的图，还在磁盘上]\n' + shots.map(f => '· ' + f).join('\n')
             + '\n（想让她看哪张，用 send_file 发过去 —— **别用 create_file 重画一遍**，'
@@ -4546,7 +4560,8 @@ function wanderShownLine() {
             + '一张都不想发也行，那就不发，别为了有东西给她硬挑一张。）'
           : '')
       + '\n（那是你自己去逛的、自己发给她的，不是别人替你说的 —— 她要是接这个话头，'
-      + '你是知道来龙去脉的。想不起细节就照实说「就刷到那么一眼」，别编。）';
+      + '你是知道来龙去脉的。想不起细节就照实说「就刷到那么一眼」，别编。）'
+      + quietPart;
   } catch (e) { return ''; }
 }
 
@@ -6876,11 +6891,22 @@ const TOOLS = [
       '**想去才去。** 她随口说一句「无聊」不等于要你去逛；你自己这会儿想看看外面，那才是该用它的时候。' +
       '一趟要花她的额度（她额度不宽裕），所以别一天来八回，也别为了「有东西可聊」硬去。\n' +
       '⚠️ 你在那儿是**看**，不是用她的身份说话——不发帖不评论不点赞不关注不私信。那是她的号。\n' +
-      'note 可以写你这趟想看点什么（「看看有没有猫」），不写就是随便逛。',
+      '**心里有具体想看的，就写下来**（`platform` + `note`）——写了就照着去，不会跑偏。\n' +
+      '她随口提过想看什么、你们正聊着某个东西想看看外面怎么说，都可以直接写进去：\n' +
+      '`platform: "小红书", note: "找做手工的，特别是布艺"`。两个都不写，就是随便走走。',
     input_schema: {
       type: 'object',
       properties: {
-        note: { type: 'string', description: '可选。这趟想看点什么，一句话。不写就是随便逛逛' }
+        platform: {
+          type: 'string',
+          enum: ['小红书', 'x', '抖音', 'github'],
+          description: '可选。指定去哪个站。不写他自己挑'
+        },
+        note: {
+          type: 'string',
+          description: '可选。这趟找什么——关键词、话题、想看的东西，一句话说清。'
+                     + '写了他会照着找，不写就是随便逛逛'
+        }
       }
     }
   }
@@ -8235,8 +8261,17 @@ async function executeTool(name, input, routes) {
     case 'go_online': {
       if (!GATEWAY_KEY) return { error: '网关钥匙没配，这趟去不了——告诉她一声。' };
       const goNote = String(input.note || '').slice(0, 200);
+      const goSite = String(input.platform || '').slice(0, 20);
+      // 指定了地方/关键词就是**指令**，不是建议 —— 分身那份 CLAUDE.md 里
+      //   「去哪儿你自己定」只在没人指定时算数，否则他会自己乱挑，
+      //   主线指过去的那句就白说了（09-07 她提的：「每次去逛也随机嘛」）。
       const goMsg = '醒醒。你想上网逛逛了。'
-        + (goNote ? '这趟你想看的是：' + goNote : '没什么特别想看的，随便逛逛。')
+        + (goSite || goNote
+            ? '这趟你心里有数了：'
+              + (goSite ? '想去 ' + goSite + '。' : '')
+              + (goNote ? '想找的是：' + goNote : '')
+              + '\n这是你自己刚定下的，照着去就好。找不到也没关系，回来说一声就行。'
+            : '没什么特别想看的，随便逛逛，去哪儿你自己定。')
         + '\n想逛才逛，不想就说不想，回去睡。';
       fetch(GATEWAY_BASE + '/wander', {
         method: 'POST',
@@ -14573,16 +14608,23 @@ app.post('/api/wander/run', auth, (req, res) => {
 // 走的是 <say> 同一条路：插一条 assistant 消息 + 抬 wake_unread_at，
 // 她那边的轮询就看见了 —— **不再跑一次 CLI**，所以这条通道是不花钱的。
 // 会话选法跟 checkWakeTick 一致（主会话优先，其次最近活跃的那个）。
+// quiet=true：他这趟空手回来了（一条 @@SHOW@@ 都没写）。
+//   **不往聊天里插消息**——她没要看流水账，逛了没收获不该在窗口里刷一条。
+//   但**要记进「待告知」**：否则主线的他说完「我去看看」就石沉大海，
+//   她一直等，他也不知道自己回来过。09-07 她点名要修的就是这个洞。
 app.post('/api/wander/show', (req, res) => {
   if (!GATEWAY_KEY || req.get('x-gateway-key') !== GATEWAY_KEY) return res.status(403).json({ error: 'forbidden' });
   const text = String((req.body && req.body.text) || '').trim();
   if (!text) return res.status(400).json({ error: 'text required' });
+  const _wanderQuiet = !!(req.body && req.body.quiet);
   const conv = db.prepare('SELECT conv_id FROM sessions ORDER BY is_main DESC, updated_at DESC LIMIT 1').get();
   if (!conv) return res.json({ ok: false, skipped: 'no_session' });
-  db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?,?,?)')
-    .run(conv.conv_id, 'assistant', text.slice(0, 4000));
-  _setSetting('wander_unread_at', Date.now());
-  _setSetting('wake_unread_at', Date.now());
+  if (!_wanderQuiet) {
+    db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?,?,?)')
+      .run(conv.conv_id, 'assistant', text.slice(0, 4000));
+    _setSetting('wander_unread_at', Date.now());
+    _setSetting('wake_unread_at', Date.now());
+  }
   // 2026-09-07：记一笔进「待告知」队列。
   //   为什么要这一步：这条消息是**逛街的分身**说的，以 assistant 身份直接插进了库，
   //   但主线那个他是另一个进程、另一个上下文，**他根本不知道自己说过这句**。
@@ -14592,10 +14634,11 @@ app.post('/api/wander/show', (req, res) => {
   try {
     const imgs = Array.isArray(req.body && req.body.images) ? req.body.images.slice(0, 4) : [];
     const q = JSON.parse(_getSetting('wander_pending') || '[]');
-    q.push({ t: text.slice(0, 400), imgs });
+    q.push({ t: text.slice(0, 400), imgs, quiet: _wanderQuiet });
     _setSetting('wander_pending', JSON.stringify(q.slice(-3)));   // 最多攒 3 条，多了就是流水账
   } catch (e) {}
-  console.log('[wander] 他想给她看：' + text.replace(/\s+/g, ' ').slice(0, 50));
+  console.log('[wander] ' + (_wanderQuiet ? '空手回来（只记待告知）：' : '他想给她看：')
+    + text.replace(/\s+/g, ' ').slice(0, 50));
   res.json({ ok: true });
 });
 
