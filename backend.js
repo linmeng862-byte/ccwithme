@@ -1581,11 +1581,19 @@ async function _analyzeSticker(imgPath) {
     '只回一个 JSON，不要任何别的话：' +
     '{"name":"两到四个字的名字","description":"这个表情在做什么、通常代表什么情绪或语气，一句话",' +
     '"emotion_tags":["三到五个情绪词"],"category":"一个大类"}';
+  // ⚠️ 09-07：这里以前是 `session_id: crypto.randomUUID()` 直接写在 body 里，
+  //    跑完谁也拿不到那个 id，于是**没人 drop 它** —— 一张图留一个 260MB 的常驻
+  //    进程挂满 15 分钟。她一次传 5 张表情包 = 5 个孤儿进程，2G 机器直接吃穿，
+  //    主线被挤进 swap，那轮首字等了 164 秒（看着就是「他不回话」）。
+  //    两处一起修：id 提出来好在 finally 里放掉；effort 显式给 low —— 不传的话
+  //    网关落到默认 medium（server.js:467），拿 medium 干一个「只回 JSON」的活。
+  const _gwSid = crypto.randomUUID();
   try {
     const resp = await fetch(GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-      body: JSON.stringify({ message: prompt, system: '', session_id: crypto.randomUUID(), is_new_session: true }),
+      body: JSON.stringify({ message: prompt, system: '', session_id: _gwSid, is_new_session: true,
+        effort: 'low' }),
       signal: AbortSignal.timeout(120000),
     });
     if (!resp.ok || !resp.body) return null;
@@ -1616,6 +1624,9 @@ async function _analyzeSticker(imgPath) {
   } catch (e) {
     console.warn('[sticker] 自动识别失败: ' + e.message);
     return null;
+  } finally {
+    // 一次性的活，认完就放 —— 别等 15 分钟空闲超时。
+    dropGatewayProc(_gwSid, '表情包识别跑完，一次性会话');
   }
 }
 
