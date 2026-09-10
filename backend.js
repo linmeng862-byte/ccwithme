@@ -4844,16 +4844,23 @@ const MIND_EMBED_SIM_MIN = 0.62;
 const MIND_EMBED_SIM_HOT = 0.68;
 const MIND_EMBED_TIMEOUT_MS = 800;    // 她在等着回话，宁可这轮没有语义
 const MIND_EMBED_BATCH = 32;
+// 回填没人在等，给宽的。跟上面那 800ms 是两回事，别合并成一个常量。
+const MIND_EMBED_BACKFILL_TIMEOUT_MS = 30000;
 
 // 向他要向量。失败一律返回 null，调用方按「没有语义」走。
-async function _embedTexts(texts) {
+// ⚠️ timeoutMs 要能覆盖（2026-09-10）：默认那 800ms 是给**实时查询**的
+//    —— 她在等着回话，宁可这轮没有语义，那个值是对的。但后台回填共用这个函数，
+//    800ms 根本算不完一批 32 条长文本，于是 `if (!vecs) break;` 整拍放弃，
+//    回填每分钟只推得动第一张表的 32 条，mind_corpus 一直钉在 160 不动。
+//    没人在等回填，给它一个宽松的超时。
+async function _embedTexts(texts, timeoutMs) {
   if (!texts || !texts.length) return null;
   try {
     const r = await fetch(MIND_EMBED_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ texts: texts }),
-      signal: AbortSignal.timeout(MIND_EMBED_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs || MIND_EMBED_TIMEOUT_MS),
     });
     if (!r.ok) return null;
     const j = await r.json();
@@ -4993,7 +5000,7 @@ async function _mindEmbedBackfillTick() {
           ' ORDER BY created_at DESC LIMIT ?').all(MIND_EMBED_BATCH);
       } catch(e) { continue; }
       if (!rows.length) continue;
-      const vecs = await _embedTexts(rows.map(function(r) { return String(r.body).slice(0, 1000); }));
+      const vecs = await _embedTexts(rows.map(function(r) { return String(r.body).slice(0, 1000); }), MIND_EMBED_BACKFILL_TIMEOUT_MS);
       if (!vecs) break;             // 服务不在，这一拍整个放弃，下一拍再来
       const upd = db.prepare('UPDATE ' + t + ' SET embedding = ? WHERE id = ?');
       const tx = db.transaction(function(pairs) {
