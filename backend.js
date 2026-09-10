@@ -1762,6 +1762,43 @@ function _stickerBlurb(fname, role) {
   return out;
 }
 
+// 他那半表情库的清单，拼成一段人话塞进 send_sticker 的 description（09-10）。
+// ⚠️ 病根：以前他手上只有 category 一个枚举（happy/cry/love/…），
+//    「有哪些表情、每张长什么样」他一个字都看不到 —— 后端拿 category 去 LIKE 一把、
+//    `ORDER BY RANDOM()` 替他抽一张。那不是他在挑，是后端在摇骰子，
+//    所以她看到的就是「都是随机发」。清单给了他，他才谈得上选。
+//
+// 缓存：这段进每轮前缀，但只要表情库不动，字符串就是稳的 → 走 cache_read。
+// 只有上传/改/删表情才会让前缀失效一次，那本来就不频繁。
+let _stkRosterCache = null;   // { sig, text }
+function _stickerRoster() {
+  try {
+    const rows = db.prepare(
+      "SELECT filename, name, emotion_tags, description FROM stickers " +
+      "WHERE owner = 'assistant' AND status = 'active' ORDER BY id"
+    ).all();
+    if (!rows.length) return '';
+    // 每次都重查库，所以签名一变自然就重拼了，不需要在 7 个写入点挂失效钩子。
+    // 描述改了也要重拼（签名带上它的长度），代价是一次 cache_write，认了。
+    const sig = rows.map(r => r.filename + ':' + (r.name || '') + ':' + (r.description || '').length).join('|');
+    if (_stkRosterCache && _stkRosterCache.sig === sig) return _stkRosterCache.text;
+
+    const lines = rows.map(r => {
+      let tags = [];
+      try { tags = JSON.parse(r.emotion_tags || '[]'); } catch (_) {}
+      // emotion_tags 两种写法混着：["a","b"] 和 ["a/b/c"]，都摊平成顿号
+      tags = tags.join('、').split(/[\/,，、]/).map(s => s.trim()).filter(Boolean);
+      let desc = String(r.description || '').replace(/\s+/g, ' ');
+      if (desc.length > 42) desc = desc.slice(0, 42) + '…';
+      return '· ' + (r.name || '没名字')
+        + (tags.length ? '（' + tags.slice(0, 5).join('、') + '）' : '')
+        + (desc ? ' —— ' + desc : '');
+    });
+    const text = '\n\n**你手上这些（共 ' + rows.length + ' 张，填 name 点名发）：**\n' + lines.join('\n');
+    _stkRosterCache = { sig, text };
+    return text;
+  } catch (_) { return ''; }
+}
 app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, async (req, res) => {
   const tmpPath = req.file && req.file.path;
   let srcPath = tmpPath;          // HEIC 转码后会指向新文件，收尾要按它删
@@ -3726,7 +3763,14 @@ async function buildToolRoutes() {
   for (const t of TOOLS) {
     if (muted.has(t.name)) continue;
     routes.set(t.name, { source: 'local', key: null, realName: t.name });
-    defs.push(t);
+    // send_sticker 的清单是活的（库里有什么就列什么），拼进 description 里给他看。
+    // 浅拷贝，别改到 TOOLS 那份常量上 —— 它是进程级的，改了会一轮轮往上叠。
+    if (t.name === 'send_sticker') {
+      const roster = _stickerRoster();
+      defs.push(roster ? Object.assign({}, t, { description: t.description + roster }) : t);
+    } else {
+      defs.push(t);
+    }
   }
 
   // 外挂组撞名就加限定名：组 key + 下划线 + 原名；再撞就往后缀数字。
@@ -6689,14 +6733,17 @@ const TOOLS = [
       + '就像人聊天顺手发一个。\n'
       + '**为什么**：文字里的「哈哈」和一张脸不一样。你发的表情她会截图存起来。\n'
       + '**后续**：发完就发完了，不用解释你为什么发它。\n'
-      + '⚠️ 别每轮都发，那就成刷屏 —— 一段话里最多一个，够了。',
+      + '**发多少随你。** 想发就发，一段话里发两个也行 —— 她说了不嫌多。\n'
+      + '**怎么挑**：下面列了你手上每一张的名字、语气和画面 —— **看着挑，把名字填进 name**。'
+      + '只填 category 的话是后端替你在那一类里random抽，抽到哪张你自己都不知道，'
+      + '她那边看到的就是「每次都随机发」。你是有得选的，就别摇骰子。',
     input_schema: {
       type: 'object',
       properties: {
-        category: { type: 'string', description: '表情分类: happy, cry, love, angry, surprise, shy。根据当前对话情绪选择。' },
+        name: { type: 'string', description: '点名要发的表情名字，照下面清单里的写（推荐）。填了就发这张。' },
+        category: { type: 'string', description: '表情分类: happy, cry, love, angry, surprise, shy。只在你懒得点名时用——会在这一类里随机抽。' },
         q: { type: 'string', description: '搜索关键词（可选），如"猫""狗""加油"' }
-      },
-      required: ['category']
+      }
     }
   },
   {
@@ -7909,8 +7956,21 @@ async function executeTool(name, input, routes) {
     case 'send_sticker': {
       const cat = input.category || 'happy';
       const search = input.q || '';
+      const want = String(input.name || '').trim();
       try {
         let sticker;
+        // 他点名了就发那张 —— 这是 09-10 之后的主路径。
+        // 先精确、再模糊（他可能把「（万能）似乎有些触动」记成「似乎有些触动」）。
+        if (want) {
+          sticker = db.prepare(
+            "SELECT * FROM stickers WHERE owner = 'assistant' AND status = 'active' AND name = ?"
+          ).get(want);
+          if (!sticker) {
+            sticker = db.prepare(
+              "SELECT * FROM stickers WHERE owner = 'assistant' AND status = 'active' AND name LIKE ? LIMIT 1"
+            ).get('%' + want + '%');
+          }
+        }
         // ⚠️ 库里的 category 是自动识别写进去的中文（「可爱动物」「亲密互动」），
         //    工具 schema 里让他填的却是 happy/cry/love/…… —— 两边**永远对不上**，
         //    所以 09-10 之前每一次 send_sticker 都掉进 fallback 随机抽整库：
@@ -7923,7 +7983,7 @@ async function executeTool(name, input, routes) {
           surprise: ['惊讶','震惊','懵','茫然','困惑','呆'],
           shy: ['害羞','娇羞','脸红','不好意思','被撩']
         };
-        const words = EMO[cat] || [];
+        const words = sticker ? [] : (EMO[cat] || []);
         if (words.length) {
           const cond = words.map(() => '(emotion_tags LIKE ? OR name LIKE ? OR description LIKE ? OR category LIKE ?)').join(' OR ');
           const args = [];
@@ -7945,7 +8005,20 @@ async function executeTool(name, input, routes) {
         //    2026-09-10 之前这三条查询都没带 owner，他随机抽整库，抽到过她的。
         if (!sticker) sticker = db.prepare("SELECT * FROM stickers WHERE owner = 'assistant' AND status = 'active' ORDER BY RANDOM() LIMIT 1").get();
         if (!sticker) return { error: '你自己那半表情库是空的——让她给你传几张（上传时 owner 选「他的」）。' };
-        return { sticker_url: '/stickers/' + sticker.filename, category: cat, tags: sticker.tags };
+        // ⚠️ 09-10 之前这里只回 url —— 他发完自己都不知道发的是哪张，
+        //    也就没法在下一句里接住它。名字和画面必须回给他。
+        let outTags = [];
+        try { outTags = JSON.parse(sticker.emotion_tags || '[]'); } catch (_) {}
+        const out = {
+          sticker_url: '/stickers/' + sticker.filename,
+          name: sticker.name || '',
+          description: sticker.description || '',
+          emotion_tags: outTags,
+          category: sticker.category || cat
+        };
+        // 他没点名 = 后端替他抽的，说一声，免得他以为这是自己挑的
+        if (!want) out.note = '这张是按 category 随机抽的。下次直接填 name 点名，清单在工具说明里。';
+        return out;
       } catch(e) {
         return { error: '表情包查找失败: ' + e.message };
       }
