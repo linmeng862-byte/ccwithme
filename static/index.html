@@ -1090,17 +1090,44 @@ function _artifactBlob(art){
 //   app 里改走后端的下载接口 + 系统浏览器：那条 URL 带 Content-Disposition: attachment，
 //   iOS 会弹出「存到文件」。浏览器里维持原来的 blob 下载不变。
 //   ⚠️ 系统浏览器带不了 Authorization 头，所以用 ?t=（跟 /api/files/:id 一个路子）。
+// 09-10：她说「点下载显示在浏览器里打开了但是并没有」。两处硬伤都在这儿：
+//   ① `API_BASE` 这个全局**根本不存在** —— 真名是 `_API_BASE`（见本文件上方那段）。
+//      `typeof API_BASE!=='undefined'` 永远是 false，前缀恒为空。
+//   ② 就算写对也没用：切成远程加载之后这一页本身就是 https，`_API_BASE` 也是空
+//      （那段判断是故意的，走同源）。于是递给 Browser.open 的是**相对路径**
+//      `/api/artifacts/…` —— iOS 侧 `URL(string:)` 解不出来，静默什么都不做。
+//   而 toast 是**同步**发的，promise reject 了没人管 —— 所以「说打开了，其实没有」。
+//   现在：URL 一律补成绝对地址；toast 等 open 真的 resolve 了再发；失败退到 window.open。
+//   ⚠️ `ios/App/Podfile` 里**没有 CapacitorBrowser**（package.json 里有 @capacitor/browser，
+//      但 Podfile 是手写的、没跟着加）—— 也就是插件很可能压根没编进包里。
+//      三条路各发各的 toast，就是为了让她一眼认出走的是哪条。
+function _absApiUrl(p){
+  var base=(typeof _API_BASE!=='undefined'&&_API_BASE)?_API_BASE:(location.origin||'');
+  return base+p;
+}
+function _downloadViaSystem(url,okMsg){
+  var B=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.Browser;
+  if(B&&B.open){
+    try{
+      var p=B.open({url:url});
+      if(p&&p.then){
+        p.then(function(){toast(okMsg)}).catch(function(){
+          try{window.open(url,'_blank')}catch(e){}
+          toast('用系统浏览器打开了（Browser 插件没接上）');
+        });
+        return true;
+      }
+      toast(okMsg);return true;
+    }catch(e){}
+  }
+  try{var w=window.open(url,'_blank');if(w){toast('用系统浏览器打开了');return true}}catch(e){}
+  return false;
+}
 function _downloadArtifactNative(art){
   if(!art||!art.id)return false;
-  var B=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.Browser;
-  if(!B||!B.open)return false;
-  try{
-    var url=(typeof API_BASE!=='undefined'?API_BASE:'')+'/api/artifacts/'+encodeURIComponent(art.id)
-           +'/download?t='+encodeURIComponent(state.token||'');
-    B.open({url:url});
-    toast('在浏览器里打开了，右上角可以存到「文件」');
-    return true;
-  }catch(e){return false}
+  var url=_absApiUrl('/api/artifacts/'+encodeURIComponent(art.id)
+         +'/download?t='+encodeURIComponent(state.token||''));
+  return _downloadViaSystem(url,'在浏览器里打开了，右上角可以存到「文件」');
 }
 function _downloadArtifact(art){if(!art)return;if(_isNativeApp&&_downloadArtifactNative(art))return;if(art._lazy&&!art.content){_fetchArtifactContent(art).then(function(){if(art.content)_downloadArtifact(art);else toast('这个作品没有正文')});return}if(!art.content)return;var blob=_artifactBlob(art);if(!blob){toast('这个文件坏了，下不了');return}var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=_artFilename(art);document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(url)},2000)}
 function _downloadAllArtifacts(){var list=_artifactsList.filter(function(a){return a.content});if(!list.length){toast('No artifacts to download');return}list.forEach(function(art,i){setTimeout(function(){_downloadArtifact(art)},i*350)});toast('Downloading '+list.length+' artifacts…')}
@@ -1245,13 +1272,65 @@ var _todos=JSON.parse(localStorage.getItem('chat_todos')||'[]');
 // 迁移旧格式：{id,text,done} → {id,body,done,is_fixed,trigger_at,created_by}
 if(_todos.length&&_todos[0].text!==undefined){_todos=_todos.map(function(t){return {id:t.id,body:t.text,done:t.done?1:0,is_fixed:1,trigger_at:null,created_by:'user',notified:0}})}
 var _todosLastDate=localStorage.getItem('chat_todos_date')||'';
-function _saveTodos(){localStorage.setItem('chat_todos',JSON.stringify(_todos));localStorage.setItem('chat_todos_date',_todayStr());_updateTodoBadge();_syncNativeNotifs();_syncTodosToServer()}
+// 09-10：他下发的 task 在小票上的 id **从命令 id 推出来**，不再是 `Date.now()+Math.random()`。
+//   随机 id 是「显示两遍」的病根，而且比多一行更坏 —— 09-10 当场抓到的：
+//   一台没有本地缓存的设备开页，pollCommands 先跑，看见四条 task 本地一条都没有，
+//   于是**重新造了四个 id**，`_saveTodos` 整份覆盖服务器（DELETE+INSERT）——
+//   旧 id 连同它们身上的 `done` 一起没了。也就是说换设备/清缓存不只是多一行，
+//   是**把已经勾掉的又打回未完成**。id 只要跟命令绑死，几台设备算出来的就是同一个，
+//   谁先写都无所谓。⚠️ 这个 id 是字符串（`cmd_xxx`），别拿它做算术。
+function _cmdTodoId(cmdId){var s=String(cmdId);return /^cmd_/.test(s)?s:'cmd_'+s}
+// 落盘前收一次口 —— 去重放这儿是因为长出重复行的入口有三个（pollCommands、
+// 点他的 task 胶囊、_pullTodosFromServer），而它们最后都得从这儿过。见 _dedupeTodos。
+function _saveTodos(){_todos=_dedupeTodos(_todos);localStorage.setItem('chat_todos',JSON.stringify(_todos));localStorage.setItem('chat_todos_date',_todayStr());_updateTodoBadge();_syncNativeNotifs();_syncTodosToServer()}
 // 同步到后端（fire-and-forget）
 function _syncTodosToServer(){if(!state.token)return;try{api('/api/checklist/sync',{method:'POST',body:JSON.stringify({items:_todos.map(function(t){return{id:t.id,body:t.body,done:t.done,is_fixed:t.is_fixed,trigger_at:t.trigger_at,created_by:t.created_by,notified:t.notified,done_at:t.done_at,cmd_id:t._cmdId||null}})})}).catch(function(){})}catch(e){}}
 // 页面启动时从后端拉取清单（合并策略：后端有的以后端为准，本地独有的保留）
-function _pullTodosFromServer(){if(!state.token)return;api('/api/checklist').then(function(r){return r.json()}).then(function(data){if(!data.items||!data.items.length)return;var serverMap={};data.items.forEach(function(t){if(t.cmd_id)t._cmdId=t.cmd_id;serverMap[t.id]=t});var localMap={};_todos.forEach(function(t){localMap[t.id]=t});var merged=[];for(var id in serverMap){var sv=serverMap[id];if(!sv._cmdId&&localMap[id]&&localMap[id]._cmdId)sv._cmdId=localMap[id]._cmdId;merged.push(sv)}for(var id in localMap){if(!serverMap[id])merged.push(localMap[id])}merged.sort(function(a,b){return(a.created_at||0)-(b.created_at||0)});_todos=merged;_saveTodos();_renderTodos()}).catch(function(){})}
+// 09-10：`_todosPulled` = 「这台设备已经知道服务器上有哪些待办了」。
+//   在它变 true 之前，pollCommands **不许**给他的 task 新造行 —— 否则就是 09-10 抓到的那一幕：
+//   新设备（或清过缓存的）开页，poll 先跑、看见本地空空如也，把四条 task 全部重造一遍，
+//   紧接着 _saveTodos 整份覆盖服务器，把原来那几行连同 `done` 一起抹掉。
+//   拉完再造，本来就有的那几行才认得回来。
+var _todosPulled=false;
+function _pullTodosFromServer(){if(!state.token)return;api('/api/checklist').then(function(r){return r.json()}).then(function(data){_todosPulled=true;if(!data.items||!data.items.length)return;var serverMap={};data.items.forEach(function(t){if(t.cmd_id)t._cmdId=t.cmd_id;serverMap[t.id]=t});var localMap={};_todos.forEach(function(t){localMap[t.id]=t});var merged=[];for(var id in serverMap){var sv=serverMap[id];if(!sv._cmdId&&localMap[id]&&localMap[id]._cmdId)sv._cmdId=localMap[id]._cmdId;merged.push(sv)}for(var id in localMap){if(!serverMap[id])merged.push(localMap[id])}merged.sort(function(a,b){return(a.created_at||0)-(b.created_at||0)});merged=_dedupeTodos(merged);
+  // 09-10：这个函数原来只在开页 2 秒后跑一次，现在 pollCommands 每轮都会叫它
+  //   （他有了 settle_checklist，能在她那边勾掉一条 —— 不定期拉就得重开 app 才看得见）。
+  //   所以必须先看「拉回来的跟手上这份到底一样不一样」：
+  //   ① `_renderTodos` 是整片重建 DOM，她正在小票底下那行打字的话，光标当场就没了；
+  //   ② `_saveTodos` 会整份回推服务器（DELETE+INSERT），没必要每轮来一遍。
+  var _before=JSON.stringify(_todos.map(function(t){return[t.id,t.body,t.done]}));
+  var _after=JSON.stringify(merged.map(function(t){return[t.id,t.body,t.done]}));
+  if(_before===_after)return;
+  _todos=merged;_saveTodos();_renderTodos()}).catch(function(){})}
+// 09-10：她说「receipt 会显示两遍」——同一条任务在小票上占两行。
+//   病根：认领是**按设备**去重的。他下发一条 task 之后，
+//   pollCommands 在每台设备上各 push 一行，`id` 是 `Date.now()+Math.random()`，**两台必然不同**；
+//   而 /api/checklist/sync 是整份覆盖、按 `id` 存 —— 服务器于是收下了两行同一件事，
+//   下次 _pullTodosFromServer 合并时按 id 合，两行都留着。清过缓存 / 换设备也是同一个形状。
+//   （`_cmdId` 那层去重只在同一台机器的内存里管用，跨设备管不着。）
+//   所以合并完再按 `_cmdId` 收一次口：同一条命令只留一行。
+//   ⚠️ 只对**有 _cmdId 的**行去重 —— 她自己手打的两条同名待办是合法的，别替她合。
+//   ⚠️ 别指望她自己删掉多余那行：`_deleteItem` 会顺手 cancel 掉那条 command，
+//      等于把他设的任务也一起撤了。
+function _dedupeTodos(list){
+  var seen={},out=[];
+  for(var i=0;i<list.length;i++){
+    var t=list[i];
+    if(!t._cmdId){out.push(t);continue}
+    var prev=seen[t._cmdId];
+    if(prev===undefined){seen[t._cmdId]=out.length;out.push(t);continue}
+    // 已经有一行了：勾过的那行说了算（别让一次同步把她刚勾的又打回未完成）
+    if(t.done&&!out[prev].done){out[prev]=t}
+  }
+  return out;
+}
 // 预约原生通知（Capacitor Local Notifications，App 关了也能弹）
-function _syncNativeNotifs(){if(!window.Capacitor||!Capacitor.Plugins||!Capacitor.Plugins.LocalNotifications)return;try{var LN=Capacitor.Plugins.LocalNotifications;LN.cancel({notifications:_todos.map(function(t){return{id:t.id}})}).catch(function(){});var now=Date.now();var pending=_todos.filter(function(t){return t.trigger_at&&t.trigger_at>now&&!t.done});if(pending.length){LN.schedule({notifications:pending.map(function(t){return{id:t.id,title:'⏰ 时间到了',body:t.body,schedule:{at:new Date(t.trigger_at)}}})}).catch(function(){})}}catch(e){}}
+function _syncNativeNotifs(){if(!window.Capacitor||!Capacitor.Plugins||!Capacitor.Plugins.LocalNotifications)return;try{var LN=Capacitor.Plugins.LocalNotifications;
+  // ⚠️ 09-10：LocalNotifications 的 id 必须是数字。他下发的 task 现在用 `cmd_xxx` 这种
+  //   字符串 id（见 _cmdTodoId），塞进去 iOS 侧会拒。那些行 trigger_at 一律是 null、
+  //   本来就不排通知，所以这儿直接把非数字 id 滤掉，别让它们把整批 cancel 一起带崩。
+  var _numId=function(t){return typeof t.id==='number'||/^\d+(\.\d+)?$/.test(String(t.id))};
+  LN.cancel({notifications:_todos.filter(_numId).map(function(t){return{id:t.id}})}).catch(function(){});var now=Date.now();var pending=_todos.filter(function(t){return _numId(t)&&t.trigger_at&&t.trigger_at>now&&!t.done});if(pending.length){LN.schedule({notifications:pending.map(function(t){return{id:t.id,title:'⏰ 时间到了',body:t.body,schedule:{at:new Date(t.trigger_at)}}})}).catch(function(){})}}catch(e){}}
 function _todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function _dailyReset(){var today=_todayStr();if(_todosLastDate===today)return;
   _todos.forEach(function(t){if(t.is_fixed&&t.done){t.done=0;t.done_at=null}});
@@ -3873,6 +3952,15 @@ function _renderActionReportCard(phases,traceRow,parent){
 // **token 一个字节都不进 URL**。
 function _downloadFile(ev,id,name){
   if(ev&&ev.preventDefault)ev.preventDefault();
+  // 09-10：app（WKWebView）里 `a.download` + blob URL 是静默失效的 —— 点了什么都不发生、
+  //   控制台也不报错。artifact 那条 09-05 已经改走后端接口了，这条（[FILE:] 卡，他
+  //   create_file 发给她的那些）一直没跟上，走的还是下面那套 blob。现在跟 artifact 同一条路：
+  //   `/api/files/:id` 本来就走 authFile，`?t=` 带 token，交给系统浏览器存。
+  //   浏览器里维持原来的 blob 下载不变（那边 a.download 是好使的，还能保住文件名）。
+  if(typeof _isNativeApp!=='undefined'&&_isNativeApp){
+    var nurl=_absApiUrl('/api/files/'+encodeURIComponent(id)+'?t='+encodeURIComponent(state.token||''));
+    if(_downloadViaSystem(nurl,'在浏览器里打开了，右上角可以存到「文件」'))return false;
+  }
   api('/api/files/'+id).then(function(r){if(!r.ok)throw Error(r.status);return r.blob()}).then(function(b){
     var u=URL.createObjectURL(b),a=document.createElement('a');
     a.href=u;a.download=name||'file';document.body.appendChild(a);a.click();a.remove();
@@ -5038,7 +5126,12 @@ function _watchInflight(){
     try{if(state.abortController)state.abortController.abort()}catch(e){}
     _inflight=null;
     recoverAfterBreak(f.msg,f.convId,'这条没接住。下拉刷新看看 —— 他多半已经写完了，就在历史里。',f.sentAt);
-  },8000);
+  // 09-07：原来是 8000。可 /api/chat 那会儿还没有心跳，他调工具时（read_body / wander
+  //   那种跑二三十秒的）流里一个字节都没有 —— 她切回前台正好撞上这个空档，
+  //   这里就把**还活着的流**判死、abort 掉，于是「总是」看见「正在找回他刚说的话…」。
+  //   后端现在每 10 秒发一个 event:ping，活着的流一定有字节，20 秒静默才是真断了。
+  //   ⚠️ 这个阈值必须 > 心跳间隔，改后端心跳周期时要一起改。
+  },20000);
 }
 document.addEventListener('visibilitychange',_watchInflight);
 send.onclick=()=>{if(state.busy&&state.abortController){state.abortController.abort();laStopThinking();toast('已停止生成');return}
@@ -6480,6 +6573,7 @@ function getScreenTimeReport(){
   try{return Capacitor.Plugins.ScreenTime.screenTimeReport({}).then(function(r){return r;}).catch(function(){return null;})}catch(e){return Promise.resolve(null);}
 }
 
+var _pullTick=0;   // 见下面「每三轮拉一次小票」
 function pollCommands(){
   if(!state.token)return;
   fetch('/api/commands/pending',{headers:{'Authorization':'Bearer '+state.token}}).then(function(r){return r.json()}).then(function(cmds){
@@ -6534,13 +6628,22 @@ function pollCommands(){
       if(cmd2.status==='done'||cmd2.status==='cancelled'){
         if(existing&&!existing.done){existing.done=1;existing.done_at=Date.now();changed2=true}
       }else if(cmd2.status==='active'||(cmd2.type==='timer'&&cmd2.status==='pending')){
-        if(!existing){
-          _todos.push({id:Date.now()+Math.random(),body:(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd2.id});
+        // 没拉过就先别造 —— 见 _todosPulled 那段。这一轮跳过，下一轮（4 秒后）就有了。
+        if(!existing&&!_todosPulled){_pullTodosFromServer()}
+        else if(!existing){
+          _todos.push({id:_cmdTodoId(cmd2.id),body:(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd2.id});
           changed2=true;
         }
       }
     });
     if(changed2){_saveTodos();_updateTodoBadge()}
+    // 09-10：他有了 settle_checklist（能勾掉小票上的一条），那笔只写在服务器上。
+    //   小票的权威副本是 localStorage 里的 _todos，不主动拉就永远看不见 ——
+    //   原来 _pullTodosFromServer 只在开页 2 秒后跑一次，等于要重开 app 才生效。
+    //   poll 是 4 秒一轮，这儿每三轮拉一次（约 12 秒），够快又不至于一直刷。
+    //   没变化的时候 _pullTodosFromServer 会自己 return，不会重建 DOM、也不回推服务器。
+    _pullTick=(_pullTick+1)%3;
+    if(_pullTick===0)_pullTodosFromServer();
   }).catch(function(e){console.log('pollCommands error:',e)});
 }
 // 番茄钟结束时结清小票上那一行。
@@ -7805,7 +7908,7 @@ $('stickerFileInput').onchange = async function() {
 	    else if(cmd.type==='task'){
 	      var _t=_todos.find(function(x){return x._cmdId===cmd.id});
 	      if(!_t&&cmd.status!=='done'&&cmd.status!=='cancelled'){
-	        _t={id:Date.now()+Math.random(),body:cmd.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd.id};
+	        _t={id:_cmdTodoId(cmd.id),body:cmd.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd.id};
 	        _todos.push(_t);_saveTodos();_updateTodoBadge();
 	      }
 	      // 跟顶部那颗小票按钮走同一套开法（见 todoTopBtn.onclick），别另开一条路

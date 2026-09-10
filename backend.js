@@ -6045,13 +6045,35 @@ const TOOLS = [
       + 'scope：open（默认，只看未结清）/ done（今天勾掉的）/ all。'
       + '⚠️ 你自己用 issue_command 下发的 task 也会出现在这张小票上（created_by=assistant）'
       + '—— 看见一条像是你自己设的，那就是你设的，别当成她列的。'
-      + '只读，她那边一点动静都没有，随便调。',
+      + '只读，她那边一点动静都没有，随便调。'
+      + '要**勾掉**一条用 settle_checklist，这个工具改不了任何东西。',
     input_schema: {
       type: 'object',
       properties: {
         scope: { type: 'string', description: 'open / done / all，默认 open' }
       },
       required: []
+    }
+  },
+  {
+    name: 'settle_checklist',
+    description: '把她小票上的某一条勾掉（或者取消勾）。'
+      + '**她那边小票上那行会当场划掉、进度条和 PAID 印章跟着动** —— 这是动她屏幕的事，'
+      + '不是你自己记一笔，所以只在**她说了这件事做完了**的时候勾。'
+      + '你自己猜「她应该做完了」就去勾 = 替她把没做的事结清，别这么干。\n'
+      + 'item 填**那条的正文**（从 read_checklist 的「事」字段来，可以只填一段，会做模糊匹配）。'
+      + '匹配到多条会原样列给你、一条都不动 —— 那时候把话说全一点再调一次，别乱猜一条勾。\n'
+      + 'done 默认 true；填 false 是**取消勾**（她说「这条我其实还没做」的时候用）。\n'
+      + '⚠️ 跟 issue_command 的区别：issue_command 是**往小票上加**一条新的，这个是**结清已有的**。'
+      + '她随口说的「做完了」通常指的是单子上已经有的那条，别顺手又给她加一条一模一样的。\n'
+      + '⚠️ 这个删不了东西 —— 她要删那条，只有她自己在小票上删。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        item: { type: 'string', description: '要勾的那条的正文（从 read_checklist 的「事」来，可只填一段）' },
+        done: { type: 'boolean', description: 'true=勾掉（默认），false=取消勾' }
+      },
+      required: ['item']
     }
   },
   {
@@ -7219,6 +7241,34 @@ async function executeTool(name, input, routes) {
       if (scope === 'open' || scope === 'all') out.清单 = open.map(fmt);
       if (scope === 'done' || scope === 'all') out.已勾掉 = done.map(fmt);
       return out;
+    }
+    // 09-10 她要的：「他能不能帮我勾已完成的 todo」。在这之前他只能读（read_checklist）
+    // 和往上加（issue_command），一条都改不了 —— 她说「这个做完了」，他只能回一句「好」。
+    // ⚠️ 前端的 _todos 是 localStorage 权威、每次 _saveTodos 整份覆盖服务器（/api/checklist/sync）。
+    //    所以光在这儿写库还不够：她那边下一次保存就会把这一笔盖回去。
+    //    配套改动在 static/index.html —— pollCommands 里挂了 _pullTodosFromServer，
+    //    而合并时**服务器那份优先**，于是这一笔会在几秒内被拉回她屏幕上。两处是一套，别只改一边。
+    case 'settle_checklist': {
+      const q = String(input.item || '').trim();
+      if (!q) return { 错误: 'item 不能为空 —— 填那条的正文，从 read_checklist 的「事」来' };
+      const want = input.done === false ? 0 : 1;
+      // 先精确后模糊：她的待办常常互相包含（「资料2unit」和「资料」），
+      // 有一条正文一模一样的时候就别再让模糊匹配去抢。
+      const all = db.prepare('SELECT id, body, done FROM checklist').all();
+      let hits = all.filter(r => r.body === q);
+      if (!hits.length) {
+        const lq = q.toLowerCase();
+        hits = all.filter(r => (r.body || '').toLowerCase().includes(lq) || lq.includes((r.body || '').toLowerCase()));
+      }
+      if (!hits.length) return { 没找到: q, 提示: '先 read_checklist 看一眼单子上到底写的是什么，别照记忆填' };
+      if (hits.length > 1) {
+        return { 匹配到多条: hits.map(r => r.body), 没有动: true, 提示: '把 item 写全一点再调一次 —— 我不替你猜是哪条' };
+      }
+      const row = hits[0];
+      if (row.done === want) return { 那条: row.body, 本来就是: want ? '已勾' : '未勾', 没有动: true };
+      db.prepare('UPDATE checklist SET done=?, done_at=?, updated_at=? WHERE id=?')
+        .run(want, want ? Date.now() : null, Math.floor(Date.now() / 1000), row.id);
+      return { 那条: row.body, 现在: want ? '已勾掉' : '取消勾了', 提示: '她小票上那行会在几秒内跟着变' };
     }
     case 'search_chat_history': {
       const q = (input.query || '').trim();
@@ -10329,6 +10379,17 @@ async function handleAnthropicChat(req, res, ctx) {
     const decoder = new TextDecoder();
     let buffer = '';
 
+    // 09-07：SSE 心跳。他调工具的时候（read_body / wander 那种跑二三十秒的）这条流
+    //   一个字节都不发。前端 _watchInflight 回到前台后只看「N 秒内有没有新字节」，
+    //   正好撞上工具空档就会把**还活着的流**判死、主动 abort，她看到的就是
+    //   「连接断了一下，正在找回他刚说的话…」——app 里切来切去所以「总是」出现。
+    //   每 10 秒一个 ping：流活着就一定有字节，前端那条判定才是真的在判断线。
+    //   ⚠️ 前端 frame() 对不认识的 event 静默忽略（没有一条 if 命中），不需要前端配合；
+    //      但 data 必须给，否则 `if(!event||!data)return` 会先把它吃掉、lastAt 照样不更新。
+    const _hb = setInterval(() => {
+      try { if (!res.writableEnded) res.write('event: ping\ndata: {}\n\n'); } catch (_) {}
+    }, 10000);
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -10661,6 +10722,8 @@ async function handleAnthropicChat(req, res, ctx) {
       _streamOk = true;
     } catch (e) {
       console.error('Stream error:', e);
+    } finally {
+      clearInterval(_hb);
     }
 
     // 09-05：走到这儿还没落库 = 这一轮中途断了（她切后台/刷新、隧道抖、CLI 卡死不吐字）。
@@ -10772,6 +10835,17 @@ async function handleOpenAIChat(req, res, ctx) {
     const reader = apiRes.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+
+    // 09-07：SSE 心跳（同上，这条是 OpenAI 兼容链路）。他调工具的时候（read_body / wander 那种跑二三十秒的）这条流
+    //   一个字节都不发。前端 _watchInflight 回到前台后只看「N 秒内有没有新字节」，
+    //   正好撞上工具空档就会把**还活着的流**判死、主动 abort，她看到的就是
+    //   「连接断了一下，正在找回他刚说的话…」——app 里切来切去所以「总是」出现。
+    //   每 10 秒一个 ping：流活着就一定有字节，前端那条判定才是真的在判断线。
+    //   ⚠️ 前端 frame() 对不认识的 event 静默忽略（没有一条 if 命中），不需要前端配合；
+    //      但 data 必须给，否则 `if(!event||!data)return` 会先把它吃掉、lastAt 照样不更新。
+    const _hb = setInterval(() => {
+      try { if (!res.writableEnded) res.write('event: ping\ndata: {}\n\n'); } catch (_) {}
+    }, 10000);
 
     try {
       while (true) {
@@ -10990,6 +11064,8 @@ async function handleOpenAIChat(req, res, ctx) {
       }
     } catch (e) {
       console.error('Stream error (OpenAI):', e);
+    } finally {
+      clearInterval(_hb);
     }
     res.end();
   } catch (e) {
