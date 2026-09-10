@@ -3494,7 +3494,13 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
     }
     _tapAt=now;_tapX=ev.clientX;_tapY=ev.clientY;
   });
-  if(files.length){const fc=document.createElement('div');fc.className='message-attachments';files.forEach(item=>fc.append(attachmentCard(item)));b.append(fc)}
+  // 09-10：她发的文件以前走 attachmentCard → 一个 20px 灰图标 + 文件名，跟他发过来的
+  //   .file-card（图标/大小/后缀/下载箭头）根本不是一个东西 —— 两条渲染路径从来没共用过。
+  //   现在统一走 _renderToolFileCard。⚠️ 上传返回的 id 在 `path` 字段里（不是 `id`），
+  //   `_hydrateAttachments` 刷新后回填的也是 path，两条路形状一致，别改成 a.id。
+  if(files.length){const fc=document.createElement('div');fc.className='message-attachments';
+    files.forEach(function(item){_renderToolFileCard({id:item.path||item.id,filename:item.filename||item.name,size:item.size},fc)});
+    b.append(fc)}
   if(text){const content=document.createElement('div');content.className='u-md';renderMessage(content,text,true);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(text);toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}
   if(text||files.length)col.append(b);
   if(imgs.length)row.append(col);

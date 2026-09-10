@@ -6794,6 +6794,26 @@ const TOOLS = [
     }
   },
   {
+    name: 'list_uploaded_files',
+    // 09-10 她问的：「他读了我发的文件，换窗了又不记得了怎么办」。
+    // 病根不在他记性 —— 文件一直在盘上，丢的是那条带绝对路径的附件提示（backend.js
+    // 那段 `[文件附件…绝对路径]` 只挂在她发文件那一轮的消息尾巴上）。窗一换，门牌号没了。
+    // 这个工具就是那本门牌册：按名字或时间翻出来，返回**绝对路径**，他接着用 Read 读
+    //（所以 pdf/docx 也读得了 —— read_uploaded_file 只认纯文本，那条路对 pdf 是死的）。
+    description: '翻出她以前发给你的文件（含绝对路径，拿到就能用 Read 读，pdf/docx 也行）。'
+      + '**换窗之后你想不起来她发过什么、那份东西叫什么、路径在哪 —— 调这个，别问她「你发我的哪一份」。**'
+      + '她说「上次发你那个」「我之前给你的表格」而你手上没有 [FILE:] 标记时，也调这个。'
+      + 'query 给关键词做模糊匹配（文件名的一部分就行），不给就是按时间倒序的最近几份。'
+      + '⚠️ 只存 30 天，更早的已经被清掉了，翻不到就是真没了，不要编。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '文件名关键词，模糊匹配。不确定就别给，先看最近的列表。' },
+        limit: { type: 'number', description: '最多返回几条，默认 20，最大 50' }
+      }
+    }
+  },
+  {
     name: 'create_file',
     description: '把【你新写出来的内容】存成文件，她会看到一张可下载的卡片。返回里带 path，之后要改这份、或再发一次，就用那个 path。**只用于第一次写。已经存在的文件一律不要用这个**：改一份已有的用 edit_file（只给要换的那一段，不用整份重打），把已有文件发给她用 send_file。她说「太短了 / 再写细一点 / 换个说法」时，指的是你刚给她的那一份——用 edit_file 改它，不要新建一个「XX2.md」，她要的是那份变好，不是多一份。',
     input_schema: {
@@ -6807,7 +6827,7 @@ const TOOLS = [
   },
   {
     name: 'edit_file',
-    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。path 从哪来：你自己写的那份看 create_file 的返回；她发来的文件，路径就写在消息里那个「[文件附件，…：/绝对/路径]」标注里——**照抄它，别自己拼**。她说「太短了 / 再改改 / 这里换个说法」就是这个工具的场合：改那一份，别新建一个「XX2.md」。',
+    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。path 从哪来：你自己写的那份看 create_file 的返回；她发来的文件，路径就写在消息里那个「[文件附件，…：/绝对/路径]」标注里——**照抄它，别自己拼**。她说「太短了 / 再改改 / 这里换个说法」就是这个工具的场合：改那一份，别新建一个「XX2.md」。**标注不在眼前了就用 list_uploaded_files 翻路径。**',
     input_schema: {
       type: 'object',
       properties: {
@@ -6821,7 +6841,7 @@ const TOOLS = [
   },
   {
     name: 'send_file',
-    description: '把【磁盘上已经存在的文件】发给她，她会看到一张可下载的卡片。当她说「把某某文件发给我」、或者你想把一个已有文件给她时，用这个——不要用 create_file 把内容重新打一遍。**create_file 是给「你新写出来的内容」用的；已经存在的文件一律用 send_file**，它只传路径，又快又省。路径要写绝对路径，而且**路径不要猜、要照抄**：你自己写的那份用 create_file 返回里的 path；她发来的文件，路径就在消息里那个「[文件附件，…：/绝对/路径]」标注里。猜错了会白试好几次（2026-08-27 就试了三次）。',
+    description: '把【磁盘上已经存在的文件】发给她，她会看到一张可下载的卡片。当她说「把某某文件发给我」、或者你想把一个已有文件给她时，用这个——不要用 create_file 把内容重新打一遍。**create_file 是给「你新写出来的内容」用的；已经存在的文件一律用 send_file**，它只传路径，又快又省。路径要写绝对路径，而且**路径不要猜、要照抄**：你自己写的那份用 create_file 返回里的 path；她发来的文件，路径就在消息里那个「[文件附件，…：/绝对/路径]」标注里。猜错了会白试好几次（2026-08-27 就试了三次）。**要是那条标注已经不在你眼前了（换过窗），用 list_uploaded_files 翻出来，别问她。**',
     input_schema: {
       type: 'object',
       properties: {
@@ -8100,6 +8120,45 @@ async function executeTool(name, input, routes) {
       } catch (e) {
         return { error: '读取失败: ' + e.message };
       }
+    }
+    case 'list_uploaded_files': {
+      const lufQ = String(input.query || '').trim();
+      const lufN = Math.min(Math.max(parseInt(input.limit, 10) || 20, 1), 50);
+      // 通话音频占了 uploads 的 78%（09-10 实测 356/455）。不滤掉的话他一翻全是
+      // call-1789048943974.wav，真正的文件被埋在几百条噪音下面，这个工具就白加了。
+      const LUF_NOISE = "filename LIKE 'call-%' OR filename LIKE 'voice-%' OR filename LIKE 'rec-%'";
+      // expired=1 的文件盘上已经被 cleanupExpiredUploads 物理删掉了，列出来只会让他
+      // 拿着死路径去 Read 然后报错 —— 不如根本不给。
+      const lufRows = db.prepare(
+        'SELECT id, filename, path, size, created_at FROM uploads' +
+        ' WHERE COALESCE(expired,0) = 0 AND NOT (' + LUF_NOISE + ')' +
+        (lufQ ? ' AND filename LIKE ?' : '') +
+        ' ORDER BY created_at DESC LIMIT ?'
+      ).all(...(lufQ ? ['%' + lufQ + '%', lufN] : [lufN]));
+
+      const lufList = lufRows
+        // 库里有记录但盘上没了（手动删过、迁移漏了）—— 同理，不给死路径。
+        .filter(r => r.path && fs.existsSync(r.path))
+        .map(r => ({
+          file_id: r.id,
+          filename: r.filename,
+          path: r.path,                       // ← 他真正要的那样东西：给 Read 用
+          size: r.size || 0,
+          when: new Date((r.created_at || 0) * 1000).toLocaleString('zh-CN', { hour12: false })
+        }));
+
+      if (!lufList.length) {
+        return {
+          files: [],
+          note: lufQ
+            ? '没有文件名带「' + lufQ + '」的。换个词再翻一次，或者不给 query 看看最近都有什么。'
+            : '她还没发过文件（或者都超过 30 天被清掉了）。'
+        };
+      }
+      return {
+        files: lufList,
+        note: '要看内容用 Read 读上面的 path（pdf、docx 也读得了）。只留 30 天，更早的已经没了。'
+      };
     }
     case 'create_file': {
       const filename = input.filename || 'file.txt';
