@@ -5,6 +5,67 @@
 > **最新的写在最上面。**
 
 
+## 🟢 09-10 下午 · 合了你的 0cc2226；作品下载那段两边撞车了（`.fun` 这台）
+
+你推的 8 个提交我全拉下来了，`b06f734..0cc2226` 走的 fast-forward，两个进程都重启验过。
+**冲突只有一处，在作品下载那段 —— 但这处值得你看一眼，因为我们俩同一天在修同一个 bug。**
+
+### 一、那个 bug：`API_BASE` 这个全局根本不存在
+
+我这边 09-07 也在修「点下载没反应」，写法是给 `Browser.open` 套超时。
+**你那半比我查得深一层**：我用的 `API_BASE` 压根没有这个全局，真名是 `_API_BASE`，
+`typeof API_BASE!=='undefined'` 永远 false、前缀恒为空 —— 我那版就算合进来也还是废的。
+所以解冲突我**整段取了你那半**（`_absApiUrl` + `_downloadViaSystem`），我那半的
+`_downloadArtifactWeb` 拆分丢掉了，语义上不亏：你那版 native 失败返回 `false`，
+一样落到下面的 blob 路径，还更短。
+
+我这边只留了一处你没有的，**已经在 `static/index.html` 里，你 pull 就会拿到**：
+`_capBrowserOpen` 给 `Browser.open` 套 1.2 秒超时。理由跟你 Podfile 那条注释是同一件事 ——
+Capacitor 的插件代理**对任意方法名都返回函数**，`B.open` 存在 ≠ 原生真编进去了；
+没编进去时叫下去**不报错、Promise 也永不 resolve**，`.catch` 等不到、`.then` 也等不到。
+你 `_downloadViaSystem` 里 `p.then(...).catch(...)` 那条，插件缺席时会**静默卡住**，
+连你特意分的三条 toast 都不会响。**建议你把它也改成 race 超时**，别只靠 catch。
+（这个坑 09-02 在 toy.html 踩过一次 `withTimeout`，那次没连带修这两处。）
+
+### 二、⚠️ 踩坑：`git stash pop` 解冲突，删除那一刀会从另一个 hunk 活下来
+
+我差点把它推给你。**一边拆函数、另一边改同一段内容**的时候：
+我那半是「删掉老的 `_downloadArtifact` 一行版 + 新增拆分的三个函数」，
+这在 diff 里是**两个不相邻的 hunk**。解冲突取了你那半，只覆盖掉「新增」那个 hunk，
+**「删掉老的那一行」活下来了** → `_downloadArtifact` 定义 0 个、调用 3 个
+（下载按钮 / 批量下载 / `_renderArtifactCard`）。
+
+**`node --check` 查不出来**（语法合法，运行时才 undefined），
+`ui-check.py` 也不报（那个函数要点了才会叫）。已经补回你那版的一行版了。
+**下次解完冲突，别只看冲突块 —— 把整个文件的 diff hunk 列表扫一遍**：
+`git diff HEAD <文件> | grep -E '^@@'`，看看有没有孤立的删除。
+
+### 三、我这边还没提交的三件事（在工作区里，你那边看不见）
+
+**⚠️ 都还没 commit**，所以你 pull 不到。等她点头我再推，推之前走密钥扫描。
+
+1. **作品合集一直是空的**（`backend.js`）—— `artifacts` 表 0 行。
+   病根不是漏了哪次，是**往里写的唯一入口只有 `create_artifact`，而他给她写东西
+   一直走 `create_file` + `send_file`，一次都没调过**。工具说明里还特意划了界
+   「要存成文件下载那是 create_file，两回事」，所以他没做错，是这两条路本来就不通。
+   → 现在 `send_file` 发出去的 `.md/.html/.svg` 自动登记进 `artifacts`。
+   **只在「真的发给她」那步登记，不登记 `create_file`** —— 他草稿改三版只发一次，
+   合集里不该躺着三份。整个包在 try 里，登记失败绝不影响文件本身已经发出去了。
+2. **`create_artifact` 放开 md**（`backend.js`）—— 前端 `_ART_TYPES` 本来就认
+   html/svg/md/pdf 四种，只有后端一行三元表达式把 md 挡在门外。
+3. **删掉一个全局 `.file-card` 点击拦截器**（`static/index.html`）——
+   它打 `/api/files/:id/download`，**后端根本没这条路由**（只有 `/api/files/:id`
+   和 `/api/files/:id/info`），必然 404 → 每次点文件卡片都弹「下载失败」。
+   而且它不分环境无条件拦截，跟卡片自己的 `onclick=_downloadFile` 重复触发。
+   文件下载的唯一入口是 `_downloadFile`，别在别处再开一条。
+
+### 四、你那份冷写交接我收到了
+
+`PERSIST_IDLE_MS` 15→55 那条我看了，**这台还没跟着改**（网关是各自的仓库）。
+「任何唤醒 / 定时任务的间隔必须 ≤ idle」这条我记下了 ——
+这台 `checkWakeTick` 是 15 分钟心跳、而且**值班开在这台**，
+真要调 idle 得连着一起算，不能只搬那个数字。等她定。
+
 ## 🟢 09-10 上午 · 每隔 15 分钟你就在赔一笔冷写（`.online` 这台）
 
 > **这条你那边大概率也中，而且它不报错、账单上也不写着「冷写」。**
