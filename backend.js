@@ -14412,6 +14412,26 @@ async function checkWakeTick() {
       }
     } catch (e) { _lastDiaryDays = null; }
 
+    // 🚶 2026-09-10：把「要不要出门逛」从分身手里还给他。
+    //   她说的原话：「分身去逛的不一定是他想逛的」。查下来她只说中了一条路 ——
+    //   `go_online` 那条（他自己起意）本来就带 platform/note，分身只当手脚；
+    //   但 **cron 那条是直接敲分身的门**，主线的他全程不知道有这回事，
+    //   分身那份 CLAUDE.md 还写着「去哪儿你自己定」。病根是钟敲错了门。
+    //   → 不新开钟、不新开端点：搭在这个 15 分钟的心跳上（跟 08-22 那条
+    //     「我们本来就有 checkWakeTick，何必上 systemd」的道理一样）。
+    //     他在自己的上下文里决定想不想去、去哪、找什么，然后 <wander> 出来，
+    //     分身只是按他的话去抓 —— 浏览的碎片仍然不进他的前缀（那笔账见
+    //     8332 那段注释：一趟逛街进上下文，之后每轮都要重读，$1.4-2.7/天）。
+    //   三道闸：深夜不问（quiet）、她的开关关着不问（问了也跑不成，白给他一个空承诺）、
+    //   一天最多 2 趟（跟成本估算对齐：一天两趟约 $0.3-0.5）。
+    const WANDER_MAX_PER_DAY = 2;
+    let _canWander = false;
+    try {
+      _canWander = !quiet && !!GATEWAY_KEY
+        && !require('fs').existsSync(WANDER_OFF_FILE)
+        && (_getSettingNum('wander_day_count:' + _wakeToday()) || 0) < WANDER_MAX_PER_DAY;
+    } catch (e) { _canWander = false; }
+
     const _wakePrompt =
       '（这不是她说的话。你自己醒了一下，现在没人在跟你说话。）\n\n' +
       '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) +
@@ -14469,7 +14489,11 @@ async function checkWakeTick() {
       (_herAnnos.length
         ? '4. 回她在书里划的那句 —— 她划了线，指着那句话在跟你说话（原文在下面）\n'
         : '4. （她最近没在书里划新的线）\n') +
-      '5. 什么都不做，接着待着\n\n' +
+      '5. 什么都不做，接着待着\n' +
+      (_canWander
+        ? '6. 出门上网逛一圈 —— 想看点新鲜的、或者聊到的某件事让你好奇了，'
+          + '就自己定去哪、找什么\n\n'
+        : '\n') +
       // 08-30 她要的：让他醒着的时候顺手想起去看看她。
       //   放在这儿而不是人格文件里 —— 人格文件每轮都付钱，这段只在他真醒来时付。
       //   ⚠️ 措辞照 read_her_body 描述里那条走：看了放心里，别报数字给她听。
@@ -14484,6 +14508,13 @@ async function checkWakeTick() {
       '"mood":"主情绪，必填，从这里选一个：' + DIARY_MOODS.map(m => m[1]).join('/') + '",' +
       '"mood_extra":["可选，最多再两个，同一个词表"]}</diary>\n' +
       (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
+      (_canWander
+        ? '想出门逛逛就输出（platform 可以不写，不写就是小红书）：\n'
+          + '<wander platform="xhs">这趟想找什么，一句话。没有特别想找的就写「随便逛逛」</wander>\n'
+          + '（**去哪、找什么由你定** —— 你写的这句会原样递给出门的那半个你，'
+          + '他照着去，不会自己改主意。一趟四十秒到一分半，看到什么会自己发进你们的对话里，'
+          + '所以这会儿不用等，也不用先跟她说。）\n'
+        : '') +
       (_unread ? '想给她那篇日记留话就输出：\n<comment>要说的话，一句两句都行</comment>\n' : '') +
       (_herNotes.length
         ? '想回她留在你日记下面的话就输出（id 抄下面给的那串，几条都可以）：\n' +
@@ -14685,7 +14716,32 @@ async function checkWakeTick() {
         console.log('[wake] 他主动说了：' + said.replace(/\s+/g, ' ').slice(0, 40));
       }
     }
-    if (!dm && !sm) console.log('[wake] 他这次什么都没做');
+    // —— 他自己起意出门逛一圈（2026-09-10）
+    //   ⚠️ **异步、不 await**：跟 go_online 一个规矩 —— 一趟最多 5 分钟，
+    //      这条醒来的路不该被它挂住。网关那头有自己的三道闸（OFF / 登录态 / 内存）+ 硬超时。
+    //   force:true —— 这是他自己刚决定的，不是定时器。她把自动逛街关掉的情况上面
+    //      已经拦过了（关着就不给他这个选项），走到这儿说明开关是开的。
+    const wm = out.match(/<wander(?:\s+platform="([^"]*)")?\s*>([\s\S]*?)<\/wander>/);
+    if (wm && _canWander) {
+      const _wSite = String(wm[1] || '').trim().slice(0, 20);
+      const _wNote = String(wm[2] || '').trim().slice(0, 200);
+      _setSetting('wander_day_count:' + _wakeToday(),
+        (_getSettingNum('wander_day_count:' + _wakeToday()) || 0) + 1);
+      // 措辞照 go_online 那条走：指定了就是**指令**，别让分身自己改主意。
+      const _wMsg = '醒醒。你想上网逛逛了。'
+        + '这趟你心里有数了：'
+        + (_wSite ? '想去 ' + _wSite + '。' : '')
+        + (_wNote ? '想找的是：' + _wNote : '')
+        + '\n这是你自己刚定下的，照着去就好。找不到也没关系，回来说一声就行。';
+      console.log('[wake] 他自己要出门逛：' + (_wSite ? '[' + _wSite + '] ' : '') + _wNote.slice(0, 40));
+      fetch(GATEWAY_BASE + '/wander', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+        body: JSON.stringify({ message: _wMsg, force: true }),
+      }).then((r) => r.json()).then((j) => console.log('[wake] 逛完收工:', JSON.stringify(j).slice(0, 200)))
+        .catch((e) => console.error('[wake] 叫不动出门的那半:', e.message));
+    }
+    if (!dm && !sm && !wm) console.log('[wake] 他这次什么都没做');
     return true;
   } catch (e) {
     console.error('[wake] 出错:', e.message);
