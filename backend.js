@@ -6787,15 +6787,16 @@ const TOOLS = [
   // === Artifact 工具 ===
   {
     name: 'create_artifact',
-    description: '做一个会在她那边**直接跑起来**的 HTML/SVG 小东西（页面、图表、动画、小工具），前端当场渲染预览。'
+    description: '往「作品合集」里放一件东西。HTML/SVG 会在她那边**直接跑起来**（页面、图表、动画、小工具），前端当场渲染预览；md 就是一份她能翻能下的文档。'
       + '**别把 HTML 当代码块贴在回话里** —— 贴出来她只能看源码，用这个她能直接玩。'
-      + '要存成文件给她下载那是 create_file，两回事。',
+      + '你用 send_file 发给她的 .md/.html/.svg 已经会自动进合集了，那种不用再存一遍；'
+      + '这个工具是给「一上来就是要做一件作品」用的。',
     input_schema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'artifact 标题，用作文件名（不含扩展名）' },
         content: { type: 'string', description: 'HTML/CSS/JS/SVG 内容' },
-        language: { type: 'string', description: '语言类型：html、svg 等，默认 html', default: 'html' }
+        language: { type: 'string', description: '类型：html / svg / md，默认 html', default: 'html' }
       },
       required: ['title', 'content']
     }
@@ -8159,10 +8160,15 @@ async function executeTool(name, input, routes) {
       db.prepare('INSERT INTO uploads (id, filename, path, size) VALUES (?, ?, ?, ?)')
         .run(sfId, sfName, sfDest, st.size);
 
+      // .md/.html/.svg 顺手也进作品合集（见 registerArtifactFromFile 上面那段注释）。
+      // 失败返回 null，不影响文件本身已经发出去了。
+      const sfArtId = registerArtifactFromFile(sfDest, sfName);
+
       return {
         ok: true, id: sfId, filename: sfName, size: st.size,
         caption: input.caption || '',
         file_card: { id: sfId, filename: sfName, size: st.size },
+        ...(sfArtId ? { artifact_id: sfArtId } : {}),
         message: (input.caption || '') || ('发了：' + sfName)
       };
     }
@@ -8171,7 +8177,8 @@ async function executeTool(name, input, routes) {
       const artContent = input.content || '';
       const artLang = input.language || 'html';
       if (!artTitle || !artContent) return { error: 'title 和 content 不能为空' };
-      const ext = artLang === 'svg' ? '.svg' : '.html';
+      // 09-07：放开 md —— 前端 _ART_TYPES 本来就认，只有这儿把它挡在门外。
+      const ext = artLang === 'svg' ? '.svg' : (artLang === 'md' ? '.md' : '.html');
       const filename = artTitle.replace(/[<>:"/\\|?*]/g, '_') + ext;
       // 2026-08-21：以前这里往 projects 里建一个名叫 Artifacts 的假项目、把正文写成
       // project_files。拆表之后作品有自己的 artifacts 表了，那条路要拆干净——
@@ -12308,6 +12315,40 @@ app.get('/api/bilibili/stream', async (req, res) => {
 // 这个是她放作品的地方，界面上一个在顶栏一个在抽屉，别混。
 
 // 列表不带 content：作品可能很大，列表页用不上，点开再单取
+// 2026-09-07：作品合集一直是**空的**（artifacts 表 0 行、全库 0 条 [ARTIFACT:] 标记）。
+//   病根不是漏了哪一次，是往里写的唯一入口只有 create_artifact，而他给她写东西
+//   一直走 create_file + send_file 那条路 —— 一次都没调过 create_artifact。
+//   （工具说明里还特意划了界：「要存成文件给她下载那是 create_file，两回事」，
+//     所以他没做错，是这两条路本来就不通。）
+//   前端 `_ART_TYPES` 早就认 html/svg/md/pdf 四种了，卡的是产出这一端。
+//
+//   → 现在 send_file 发出去的 .md/.html/.svg 自动登记一份进 artifacts。
+//   ⚠️ 只在「真的发给她」那一步登记（send_file），**不登记 create_file** ——
+//      他草稿改三版只发一次，合集里不该躺着三份。
+//   ⚠️ 登记失败绝不能影响发文件本身，所以整个包在 try 里，只写日志。
+//   去重跟 POST /api/artifacts 用同一条规矩：title+content 完全相同就只更新 updated_at。
+const ARTIFACT_EXT_LANG = { '.md': 'md', '.html': 'html', '.htm': 'html', '.svg': 'svg' };
+function registerArtifactFromFile(diskPath, displayName) {
+  try {
+    const lang = ARTIFACT_EXT_LANG[path.extname(displayName || '').toLowerCase()];
+    if (!lang) return null;
+    if (fs.statSync(diskPath).size > 2 * 1024 * 1024) return null;  // 正文要进库，别塞巨物
+    const content = fs.readFileSync(diskPath, 'utf-8');
+    if (!content.trim()) return null;
+    // send_file 拿到的是磁盘名，而 create_file 写盘时加了 `cf_<id>_` 前缀 —— 标题里别带上
+    const title = String(displayName).replace(/^(cf|sf)_[a-z0-9]+_/i, '');
+    const dup = db.prepare('SELECT id FROM artifacts WHERE title = ? AND content = ?').get(title, content);
+    if (dup) {
+      db.prepare("UPDATE artifacts SET updated_at = strftime('%s','now') WHERE id = ?").run(dup.id);
+      return dup.id;
+    }
+    const artId = crypto.randomUUID();
+    db.prepare('INSERT INTO artifacts (id, title, language, content) VALUES (?,?,?,?)')
+      .run(artId, title, lang, content);
+    return artId;
+  } catch (e) { console.error('[artifact-register]', e.message); return null; }
+}
+
 app.get('/api/artifacts', auth, (req, res) => {
   const rows = db.prepare(
     'SELECT id, title, language, conv_id, msg_id, length(content) AS size, created_at, updated_at FROM artifacts ORDER BY created_at DESC'
