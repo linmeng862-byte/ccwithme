@@ -3671,14 +3671,28 @@ function _stripUrlsFromRaw(s){if(!s)return s;s=_stripInlineTags(s);s=s.replace(/
 //     只能靠「2.5 秒还没触发 load」来判断，然后老老实实给一颗「在新标签打开」。
 //     别想着用后端代理绕开：那等于给自己开了个 SSRF 的口子，服务器上还跑着她的引擎。
 function _closeWebSheet(){ var m=document.getElementById('webViewMask'); if(m)m.remove() }
+// ⚠️ 2026-09-07：Capacitor 的插件代理**对任意方法名都返回一个函数** ——
+//    `B.open` 存在 ≠ 原生真的编进了 @capacitor/browser。没编进去时叫下去
+//    **不报错、Promise 也永不 resolve**，而老代码这时已经 return true + preventDefault
+//    把这一点吃掉了 → 她点链接完全没反应、他做的 html 也下不了。
+//    所以能力检测必须套超时：叫下去 1.2 秒不回就当它没有，落回 iframe 弹层。
+//    同一个坑 09-02 在 toy.html 踩过（withTimeout），那次没连带修这两处。
+function _capBrowserOpen(url){
+  var B=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.Browser;
+  if(!B||!B.open)return Promise.reject(new Error('no Browser plugin'));
+  return Promise.race([
+    Promise.resolve(B.open({url:url,presentationStyle:'popover'})),
+    new Promise(function(_,rej){setTimeout(function(){rej(new Error('Browser 插件没回'))},1200)})
+  ]);
+}
 function openInAppBrowser(url){
   if(!/^https?:\/\//i.test(url))return false;
-  // 装成 App 的时候：系统内置浏览器，最好的那条路
-  try{
-    var B=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.Browser;
-    if(B&&B.open){ B.open({url:url,presentationStyle:'popover'}); return true }
-  }catch(e){}
-  // 网页版：iframe 弹层 + 挡掉时的兜底
+  // 装成 App：系统内置浏览器，最好的那条路。回不来就落回 iframe 弹层。
+  _capBrowserOpen(url).catch(function(){ _openWebSheet(url) });
+  return true;
+}
+// 网页版（以及 app 里插件缺席时）：iframe 弹层 + 被挡掉时的兜底
+function _openWebSheet(url){
   _closeWebSheet();
   var mask=document.createElement('div');
   mask.id='webViewMask';
@@ -7849,13 +7863,11 @@ $('stickerFileInput').onchange = async function() {
   } catch (ex) { toast('上传失败: ' + ex.message); }
 };
 
-	// WKWebView: <a download> 不生效，拦截文件卡片下载链接
-	document.addEventListener('click',function(e){
-	  var el=e.target.closest('.file-card');if(!el)return;
-	  e.preventDefault();var fid=el.dataset.fileId,fn=el.dataset.fileName||'file';
-	  if(!fid)return;
-	  api('/api/files/'+fid+'/download').then(function(r){if(!r.ok)throw Error();return r.blob()}).then(function(blob){downloadBlob(blob,fn)}).catch(function(){toast('下载失败')});
-	});
+	// 09-07 删掉了这里一个全局 .file-card 点击拦截器：它打的是
+	// `/api/files/:id/download` —— **后端没有这条路由**（只有 /api/files/:id
+	// 和 /api/files/:id/info），必然 404 → 每次点文件卡片都弹「下载失败」。
+	// 而且它不分环境无条件拦截，跟卡片自己的 onclick=_downloadFile 重复触发。
+	// 文件下载的唯一入口是 _downloadFile（两条渲染路径都挂它），别在这儿再开一条。
 
 	// ── 答题弹窗 ──
 	var _currentQuizCmd=null;
