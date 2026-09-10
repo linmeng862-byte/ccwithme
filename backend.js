@@ -7940,14 +7940,40 @@ async function executeTool(name, input, routes) {
       const search = input.q || '';
       try {
         let sticker;
-        if (search) {
-          sticker = db.prepare("SELECT * FROM stickers WHERE (category = ? OR tags LIKE ?) ORDER BY RANDOM() LIMIT 1").get(cat, '%' + search + '%');
-        } else {
-          sticker = db.prepare('SELECT * FROM stickers WHERE category = ? ORDER BY RANDOM() LIMIT 1').get(cat);
+        // ⚠️ 库里的 category 是自动识别写进去的中文（「可爱动物」「亲密互动」），
+        //    工具 schema 里让他填的却是 happy/cry/love/…… —— 两边**永远对不上**，
+        //    所以 09-10 之前每一次 send_sticker 都掉进 fallback 随机抽整库：
+        //    既跟情绪无关，又抽得到她的表情。这里先按情绪词去 emotion_tags/名字/描述里找。
+        const EMO = {
+          happy: ['开心','高兴','快乐','得意','鼓励','认可','搞笑','可爱','萌'],
+          cry: ['难过','哭','委屈','伤心','失落','可怜'],
+          love: ['爱意','撒娇','甜蜜','温柔','宠溺','心动','依赖','黏人','治愈','抱抱'],
+          angry: ['生气','愤怒','不满','无语','嫌弃','抓狂'],
+          surprise: ['惊讶','震惊','懵','茫然','困惑','呆'],
+          shy: ['害羞','娇羞','脸红','不好意思','被撩']
+        };
+        const words = EMO[cat] || [];
+        if (words.length) {
+          const cond = words.map(() => '(emotion_tags LIKE ? OR name LIKE ? OR description LIKE ? OR category LIKE ?)').join(' OR ');
+          const args = [];
+          words.forEach(w => { const k = '%' + w + '%'; args.push(k, k, k, k); });
+          sticker = db.prepare(
+            "SELECT * FROM stickers WHERE owner = 'assistant' AND status = 'active' AND (" + cond + ") ORDER BY RANDOM() LIMIT 1"
+          ).get(...args);
         }
-        // fallback: 随便选一个
-        if (!sticker) sticker = db.prepare('SELECT * FROM stickers ORDER BY RANDOM() LIMIT 1').get();
-        if (!sticker) return { error: '表情包库是空的——先上传一些表情包吧！' };
+        // 她给了关键词就再按关键词找一轮（名字/描述/标签都翻）
+        if (!sticker && search) {
+          const k = '%' + search + '%';
+          sticker = db.prepare("SELECT * FROM stickers WHERE owner = 'assistant' AND status = 'active' AND (tags LIKE ? OR name LIKE ? OR description LIKE ? OR category LIKE ?) ORDER BY RANDOM() LIMIT 1").get(k, k, k, k);
+        }
+        if (!sticker) {
+          sticker = db.prepare("SELECT * FROM stickers WHERE owner = 'assistant' AND status = 'active' AND category = ? ORDER BY RANDOM() LIMIT 1").get(cat);
+        }
+        // fallback: 他自己那半里随便选一个。
+        // ⚠️ owner 分栏是硬的：owner='user' 是**她的**表情，他不许发。
+        //    2026-09-10 之前这三条查询都没带 owner，他随机抽整库，抽到过她的。
+        if (!sticker) sticker = db.prepare("SELECT * FROM stickers WHERE owner = 'assistant' AND status = 'active' ORDER BY RANDOM() LIMIT 1").get();
+        if (!sticker) return { error: '你自己那半表情库是空的——让她给你传几张（上传时 owner 选「他的」）。' };
         return { sticker_url: '/stickers/' + sticker.filename, category: cat, tags: sticker.tags };
       } catch(e) {
         return { error: '表情包查找失败: ' + e.message };

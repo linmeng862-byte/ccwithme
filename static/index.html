@@ -4061,7 +4061,11 @@ function _chatLineSplit(raw){
     // 08-23：`[FILE:名|id]` / `[IMAGE:...]` 是卡片标记，不是他说的一句话。
     //   被切出去之后那段会被 renderMessage 当纯文本渲染 = 她看到一行生标记。
     //   有标记就整条不切，卡片留在同一个气泡里。
-    if(/^\[(FILE|IMAGE):/.test(L))return null;
+    // 09-10：VOICEC / VOICE / CALL / CMD / ARTIFACT / Sticker 同理，而且更阴 ——
+    //   语音条标记在第一行、正文在第二行时（`[VOICEC:xx|0:03]好，听着——` + `宝宝，我在这里。`）
+    //   两行都短，正好被当成两句随口聊天切开，第一片就成了一行裸标记。
+    //   她 09-10 截到的那条就是这么来的。有任何卡片标记，整条不切。
+    if(/^\[(FILE|IMAGE|VOICEC|VOICE|CALL|CMD|ARTIFACT|Sticker)[:\]]/i.test(L))return null;
   }
   // 原文里以四个空格开头的行是 markdown 代码块，split 后看不出来了，这儿单独查一次
   if(/^\s{4,}\S/m.test(s))return null;
@@ -4132,6 +4136,9 @@ function _reRenderCards(el){
   try{ if(typeof _renderFileCards==='function')_renderFileCards(el); }catch(_){}
   // 09-05：artifact 卡同理 —— `_splitMessages` 分片时会把 .artifact-card 清掉再走这儿重贴
   try{ if(typeof _renderArtifactCards==='function')_renderArtifactCards(el); }catch(_){}
+  // 09-10：通话语音条（[VOICEC:]）和通话记录（[CALL:]）以前不在这张单子上 ——
+  //   分片重渲一次，标记就变回裸文本，再没人把它们变成卡片。
+  try{ if(typeof _renderCallCards==='function')_renderCallCards(el); }catch(_){}
 }
 function _splitMessages(row){
   /* 官端样式不分条 —— 官端一次回复就是一整段。09-05
