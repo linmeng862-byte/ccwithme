@@ -44,3 +44,7 @@ static/app-icon-*.png
 
 # 小花动画预览页（09-04，只给她自己看，别进公开仓库）
 static/_tail-sprites.html
+
+# 支付桥 —— 私人链路，别进公开仓库
+scripts/alipay-bridge.js
+static/start.bat

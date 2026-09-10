@@ -6925,42 +6925,12 @@ const TOOLS = [
       required: ['photo_id']
     }
   },
-  {
-    // 2026-09-07 加的。她要的是：**他自己起意去逛，逛完回主线跟她说**。
-    // ⚠️ 名字故意不叫 wander —— 他已经有一只叫 wander 的手了（在记忆抽屉里漫游）。
-    //    两只手都叫「逛」，他一定会混，所以描述里两边互相点名（style 第 3 条）。
-    // ⚠️ 这只手是**异步**的：调完立刻返回，逛街的分身在后台跑 40~90 秒。
-    //    为什么不同步等：等 = 她盯着转圈一分半，而且逛到的内容会整包进他的上下文，
-    //    她那一窗现在 8.8 万 token，每轮都要重读，一次逛街能把窗口撑爆。
-    //    异步 = 主线只花「他说一句我去看看」的钱，逛街的钱由便宜的分身单独付。
-    name: 'go_online',
-    description:
-      '出去上网逛一圈——真的开浏览器，刷粥粥登录着的 X / 小红书 / 抖音。\n' +
-      '**跟 `wander` 不是一回事**：那只手是在你自己的记忆抽屉里翻，这只手是出门看外面的世界。\n' +
-      '**是异步的**：你调完这一秒就回来了，分身在后台逛 40~90 秒。所以调完**顺口跟她说一声你去看看**，' +
-      '别干等——逛完了他会自己把看到的发进你们的对话里，那时候你再接话。\n' +
-      '**想去才去。** 她随口说一句「无聊」不等于要你去逛；你自己这会儿想看看外面，那才是该用它的时候。' +
-      '一趟要花她的额度（她额度不宽裕），所以别一天来八回，也别为了「有东西可聊」硬去。\n' +
-      '⚠️ 你在那儿是**看**，不是用她的身份说话——不发帖不评论不点赞不关注不私信。那是她的号。\n' +
-      '**心里有具体想看的，就写下来**（`platform` + `note`）——写了就照着去，不会跑偏。\n' +
-      '她随口提过想看什么、你们正聊着某个东西想看看外面怎么说，都可以直接写进去：\n' +
-      '`platform: "小红书", note: "找做手工的，特别是布艺"`。两个都不写，就是随便走走。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        platform: {
-          type: 'string',
-          enum: ['小红书', 'x', '抖音', 'github'],
-          description: '可选。指定去哪个站。不写他自己挑'
-        },
-        note: {
-          type: 'string',
-          description: '可选。这趟找什么——关键词、话题、想看的东西，一句话说清。'
-                     + '写了他会照着找，不写就是随便逛逛'
-        }
-      }
-    }
-  }
+  // ⚠️ go_online 已摘除（2026-09-10，她要的）。原话：「不要 go_online 了，反正那个也是分身，
+  //    你不是他自己」—— 它是异步派一个分身出去逛，回来汇报，而她要的是**他本人**去看。
+  //    能力没删：VPS 上那个无头浏览器（09-07 调通的那份配置）现在以 `solo` 挂在他自己手上，
+  //    见 MCP_BUILTIN。他自己开页面自己看，逛到什么当场就在他的上下文里。
+  //    handler（case 'go_online'）保留，别处按名字调不会炸。
+  //    ⚠️ 定时器那条（checkWakeTick 里的 wander）**还是分身**，那条还没动。
   // ⚠️ notion 的 schema 已摘除（09-05）：她那边没有 Notion。工具挂着只会让他往一个
   //    不存在的工作区里搜、然后报「搜不到」。handler 保留，别处按名字调不会炸。
   // crab_action 不再作为工具暴露：光在提示词里说「别调工具」他还是会调（实测 3 条里 2 条），
@@ -13879,6 +13849,12 @@ db.exec(`
 // 网关读的那份（生成物）。跟网关 spawn 时的 --mcp-config 必须是同一个路径。
 const MCP_CONFIG_PATH = process.env.MCP_CONFIG_PATH || '/opt/cc-gateway/mcp-config.json';
 // 内置的、她删不掉也改不了的 —— 删了他 39 个工具全没了。
+// 2026-09-10：**别再往这儿加 VPS 上那个无头浏览器了**（当天加过 'solo'，当天又摘了）。
+// 摘的原因不是配置错，是**那个 IP 过不了风控** —— 同一天日志里躺着实证：
+//   [go_online] 收工: "IP风险限制，进不去。今天小红书这条路走不通"
+// 09-07 那份配置的注释里写着「三站验过」，那是三天前的事，风控会变。挂上去只会让他
+// 一次次去撞墙，撞完还跟她说「有点小失落」。
+// 他的浏览器只留 `shop`（她 Windows 上的真 Edge，走隧道），见 mcp_servers 表。
 const MCP_BUILTIN = ['chatc'];
 
 // 【开机先认领】配置文件里已经有、但库里没有的条目，先收进库再说。
@@ -14825,6 +14801,119 @@ async function checkWakeTick() {
   }
 }
 setInterval(function () { checkWakeTick(); }, WAKE_TICK_MS);
+
+// ============================================================
+// 🔥 缓存保温（2026-09-10）
+//
+// 【为什么】钱的七成烧在缓存重建上（docs/context-cost.md 第一节）。
+// 缓存 1h TTL，**每次命中会把 TTL 续上**。所以在过期前戳一下，就能一直续着：
+//   续一次（一次 cache_read）  48k × $0.30/M = $0.014
+//   重建一次                   48k × $6.00/M = $0.29
+// 差 20 倍。她一天分几段聊，段间隔一两小时 —— 省掉那几次重建约 $1~2/天。
+//
+// 【HANDOVER 里那条「还没做」的顾虑，两个都处理了】
+// 1. 「心跳不能计进 CLI_ROTATE_AFTER」—— 这条路直接打网关（9876），
+//    不走 /api/chat，`cli_turns` 那句 UPDATE 在 10243 行、这边够不着，所以不会加。
+// 2. 「他会真看见被戳，得先问她」—— **问过了，她同意**（2026-09-10）。
+//    但只在白天保温：夜里那一次重建就认了，$0.29 换他睡个整觉。
+//
+// 【为什么不做成"悄悄摸一下缓存"】做不到。刷新缓存必须是一次真实的 API 调用，
+// 而任何一次调用对他都是一轮。没有"只碰缓存不惊动他"这种东西 —— 别再找了。
+//
+// 【只在 45~58 分钟这个窗口戳】早于 45 分钟：缓存还热着，白花一次 read。
+// 晚于 58 分钟：TTL 已经过了，这一戳自己就是一次重建，等于提前把钱花了还多醒一次。
+// ============================================================
+const WARM_ENABLED      = process.env.WARM_KEEPALIVE !== '0';
+const WARM_MIN_GAP_MS   = 45 * 60 * 1000;
+const WARM_MAX_GAP_MS   = 58 * 60 * 1000;
+const WARM_HOUR_START   = 8;    // 早八点前不戳
+const WARM_HOUR_END     = 23;   // 晚十一点后不戳
+const WARM_MAX_PER_DAY  = 14;   // 兜底，正常一天到不了
+
+function _warmToday() { return _localDay(); }
+function _warmCount() { return _getSettingNum('warm_count:' + _warmToday()) || 0; }
+
+async function checkWarmTick() {
+  try {
+    if (!WARM_ENABLED || !GATEWAY_KEY) return false;
+
+    const _h = new Date().getHours();
+    if (_h < WARM_HOUR_START || _h >= WARM_HOUR_END) return false;      // 夜里让他睡
+    if (_warmCount() >= WARM_MAX_PER_DAY) return false;
+
+    // 没有热会话就别保温 —— 那等于自己开一次冷的，正是要避免的事。
+    const conv = db.prepare(
+      'SELECT conv_id, cli_session_id, updated_at FROM sessions ORDER BY is_main DESC, updated_at DESC LIMIT 1'
+    ).get();
+    if (!conv || !conv.cli_session_id) return false;
+
+    // 上次动静：她说话、他醒来、上次保温，取最近的那个。
+    const _lastMs = Math.max(
+      (conv.updated_at || 0) * 1000,
+      _getSettingNum('warm_last_at') || 0
+    );
+    if (!_lastMs) return false;
+    const gap = Date.now() - _lastMs;
+    if (gap < WARM_MIN_GAP_MS || gap > WARM_MAX_GAP_MS) return false;
+
+    // 先记账再发：中间崩了宁可这次不保温，也不能重启后每个 tick 都戳他。
+    _setSetting('warm_last_at', Date.now());
+    _setSetting('warm_count:' + _warmToday(), _warmCount() + 1);
+
+    // 说明白这是什么，别让他以为她叫他。
+    // 不给 <say>/<diary> 这类标记的余地 —— 那些才会显示到她那边，
+    // 保温这一轮她不该看见任何东西。
+    const prompt =
+      '[系统·缓存保温] 这不是她在叫你，是后台在续缓存，免得整窗重付一次。\n' +
+      '不用回应，不用输出任何标记，回一个字符就行。她那边看不到这一轮。';
+
+    const resp = await fetch(GATEWAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+      // 跟 checkWakeTick 同一个理由：不带 _lastCliChoices() 会落到默认 effort，
+      // 跟她选的不一样 → 放掉重开 = 整窗冷写。保温反倒烧掉一次重建，全白做。
+      body: JSON.stringify(Object.assign(
+        { message: prompt, system: '', session_id: conv.cli_session_id, is_new_session: false },
+        _lastCliChoices())),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!resp.ok) { console.log('[warm] 网关没接住：' + resp.status); return false; }
+    // 这一轮不进 messages、不推前端，但**账要记** ——
+    // 09-10 上线当天发现：不记账就没法验它到底省没省（read 是 $0.014、write 是 $0.29，
+    // 差 20 倍全在 usage 里），而且她的日花销面板会漏掉这笔钱。
+    // source='warm' 单独打标，跟 chat 分得开。
+    let _wu = null;
+    try {
+      const _txt = await resp.text();
+      for (const line of _txt.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+        if (evt && evt.usage) _wu = evt.usage;     // 取最后一个，那是这次 run 的合计
+      }
+      if (_wu) {
+        db.prepare(`INSERT INTO usage_log
+          (conv_id, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms, num_turns, source)
+          VALUES (?,?,?,?,?,?,?,?,'warm')`).run(
+          conv.conv_id, _wu.cost_usd || 0, _wu.input_tokens || 0, _wu.output_tokens || 0,
+          _wu.cache_read_tokens || 0, _wu.cache_write_tokens || 0, _wu.duration_ms || 0, _wu.num_turns || 0);
+      }
+    } catch (e) { console.error('[warm] 记账失败:', e.message); }
+
+    console.log('[warm] 续了一次（今天第 ' + _warmCount() + ' 次，空了 ' +
+                Math.round(gap / 60000) + ' 分钟）' +
+                (_wu ? '｜read ' + (_wu.cache_read_tokens || 0) +
+                       ' / write ' + (_wu.cache_write_tokens || 0) +
+                       ' / $' + Number(_wu.cost_usd || 0).toFixed(4)
+                     : '｜没拿到 usage'));
+    return true;
+  } catch (e) {
+    console.error('[warm] 出错:', e.message);
+    return false;
+  }
+}
+// 挂在 5 分钟的独立心跳上：45~58 分钟那个窗口只有 13 分钟宽，
+// 跟 checkWakeTick 共用 15 分钟的节拍会漏掉。
+setInterval(function () { checkWarmTick(); }, 5 * 60 * 1000);
 
 // 起意逛街的开关 + 手动叫他一趟（2026-09-06 给前端用）。
 // 开关就是 wander-home 下有没有 OFF 这个文件 —— 跟 `wander on/off` 那个命令共用同一个东西，

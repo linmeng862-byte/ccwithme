@@ -5,6 +5,85 @@
 > **最新的写在最上面。**
 
 
+## 🍎 2026-09-10 · 她 Mac 上重编了 fun 变体，把流程钉死（编包前必读）
+
+**结论先说：判断一个包会连哪台，只看 `capacitor.config.json` 里 `server.url` 那一行。**
+别去 grep `static/index.html` 数域名 —— 我这次就是从那儿入手，绕了一大圈：
+那份 `index.html` 里 `.fun` 出现两次其实是**注释里的文字**，不是域名；
+而另一个 clone 里两个域名都是 0 次。数出来的东西全是噪声。
+
+### 她 Mac 上有两个 clone，只有一个是活的
+
+| 目录 | 状态 |
+|---|---|
+| `~/ccwithme` | **活工程**，两个 app 都从这儿编 |
+| `~/Desktop/ccwith-clean` | 旧快照，单个 squash commit，**两个 extension target 一个都没有**。别用 |
+
+分辨法：`grep -o "BUNDLE_IDENTIFIER = [^;]*" ios/App/App.xcodeproj/project.pbxproj | sort -u`
+—— 活的那个会列出三个（主 app + `LiveActivityWidget` + `BroadcastUpload`）。
+
+### 编包前第一步：先 `ls`，别 `cat`
+
+```
+ls -a ~/ccwithme | grep app-variant
+```
+
+**`.app-variant` 长期是被 mv 走的状态**（叫 `.app-variant.fun`）。
+这不是意外是常态 —— 编完主 app 就得 mv 走，下次编 fun 才发现没了。
+直接 `cat .app-variant` 会报 "No such file"，很容易误判成"这台从来没配过变体"。
+
+### 两条路，区别只有两处
+
+编 **fun 变体**（`.fun` 那台）：
+```
+cd ~/ccwithme
+mv .app-variant.fun .app-variant      # 放回来
+bash scripts/set-server-url.sh        # 自己从 .app-variant 的 api= 读
+npx cap sync ios
+bash scripts/ios-prep.sh              # 变体名也从 .app-variant 读
+```
+
+编 **主 app**（`.online` 那台）：
+```
+mv .app-variant .app-variant.fun      # 收起来，否则永远编成 fun
+APP_API_HOST=<你那台的域名> bash scripts/set-server-url.sh
+npx cap sync ios
+bash scripts/ios-prep.sh              # 没有 .app-variant → 走还原分支
+```
+
+`ios-prep.sh` 结尾那三行体检是安全网，**两行都对才去 Xcode 编**：
+```
+   后端：<应该是你要的那台>
+   bundle：com.zzclaude.eclat[.fun]
+```
+
+### 会不会污染对方 —— 查清楚了
+
+- **`ios/App/App/public/` 整个目录不进 git**（`git ls-files` 数出来是 0）。
+  域名替换、塞 `toy.html`、换图标进 public 的部分，对方**完全看不见**。
+- **真正会污染的是 `sub_bid` 改的那 9 个进 git 的文件**：
+  `project.pbxproj` / `App.entitlements` / `AppGroupDataStore.swift` /
+  `ScreenTimeManager.swift` / `BroadcastUpload` 和 `ScreenTimeMonitor` 那几份 /
+  `Info.plist` / `AppIcon-512@2x.png`。
+- **规矩一条：编完别 push。** 要推之前先 `git checkout -- ios/App`
+  （`public/` 不进 git，这条不会动编好的东西）。
+
+判断痕迹在不在：`git diff ios/App | grep -o "eclat[.a-z]*" | sort -u`
+出 `eclat.` 是 extension 的正常 id（后面接大写字母，`[a-z]` 匹配不到），
+出 `eclat.fun` 才是残留。
+
+### Xcode 那一步
+
+`open ios/App/App.xcworkspace` —— **必须是 `.xcworkspace`**，
+开 `.xcodeproj` 编译会找不到 Pods。
+签名要**逐个 target 选 Team**，两个 extension 各有自己的 bundle id，
+只选 App 那个的话编到 extension 才报错。
+
+免费开发者账号 **7 天到期**，所以她隔几天就得重编一次 ——
+她说"要重装 app"多半是这个，不是出故障了。
+`ScreenTimeMonitor` 默认不建（Family Controls 签不下来），别去手动加。
+
+
 ## 📌 未竟 · 出生体重为什么会翻倍（09-10 挂起，下次接着查）
 
 **这是目前唯一还没解释的成本大头，而且它比任何刻意裁剪都值钱。**
