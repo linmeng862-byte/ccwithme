@@ -6766,7 +6766,10 @@ const TOOLS = [
       + '「今天记得交房租」这种用它。要她**现在就去做**、你想盯着，用 timer 而不是 task。\n'
       + 'type=quiz —— 气泡下出现答题胶囊，她点开作答（choice 选择题 / text 文字题）。'
       + '想考她学过的东西、或者确认她有没有真听懂，用这个。\n'
-      + 'remind_at（ISO 时间）可选，前端会注册本地通知，到点她手机会响。\n'
+      + 'remind_at（ISO 时间）可选，前端会注册本地通知，到点她手机会响。'
+      + '**type=task 时它同时就是这条的截止时间** —— 小票上那行会多出「几点」那一格，'
+      + '过点了自动标红加感叹号，read_checklist 里也看得见「已逾期」。'
+      + '不填就是一条没有期限的任务，别硬给她安一个。\n'
       + '**想管她的时候，就给她一个。**任务可以是任何事 —— 喝水、回消息、把昨天那版改完、'
       + '十一点前躺下、周末给家里打个电话。不必是「正事」，也不必等她开口要。\n'
       + '她拖着不动、嘴上说「等会儿」的时候，一个 10 分钟的倒计时比十句「快去吧」管用。'
@@ -7330,7 +7333,16 @@ async function executeTool(name, input, routes) {
       if (row.done === want) return { 那条: row.body, 本来就是: want ? '已勾' : '未勾', 没有动: true };
       db.prepare('UPDATE checklist SET done=?, done_at=?, updated_at=? WHERE id=?')
         .run(want, want ? Date.now() : null, Math.floor(Date.now() / 1000), row.id);
-      return { 那条: row.body, 现在: want ? '已勾掉' : '取消勾了', 提示: '她小票上那行会在几秒内跟着变' };
+      // 09-11 她要的：「他勾掉了，在他气泡下面显示一个胶囊」。
+      //   在这之前这件事只发生在小票里 —— 她不开小票就完全看不见他动过手，
+      //   聊天里只剩他一句「好，给你勾了」，勾没勾成、勾的是哪条，一个字都对不上。
+      //   走 `markup` 这条现成的通道：两条链路（gateway 的 gwMarkers / 非流式的 stickerImgs）
+      //   都会把它原样拼进正文，不必各写一遍。前端 `_renderTickCapsules` 认这个标记。
+      //   ⚠️ 正文里的 `|` 和 `]` 会把标记截断（09-05 [ARTIFACT:] 踩过一模一样的坑），
+      //      所以这两个字符在进标记之前先换掉。
+      const _tickLabel = String(row.body).replace(/[|\]]/g, ' ').trim().slice(0, 60);
+      return { 那条: row.body, 现在: want ? '已勾掉' : '取消勾了', 提示: '她小票上那行会在几秒内跟着变',
+        markup: '[TICK:' + _tickLabel + '|' + (want ? 'done' : 'undone') + ']' };
     }
     case 'search_chat_history': {
       const q = (input.query || '').trim();
