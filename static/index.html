@@ -1284,7 +1284,7 @@ function _cmdTodoId(cmdId){var s=String(cmdId);return /^cmd_/.test(s)?s:'cmd_'+s
 // 点他的 task 胶囊、_pullTodosFromServer），而它们最后都得从这儿过。见 _dedupeTodos。
 function _saveTodos(){_todos=_dedupeTodos(_todos);localStorage.setItem('chat_todos',JSON.stringify(_todos));localStorage.setItem('chat_todos_date',_todayStr());_updateTodoBadge();_syncNativeNotifs();_syncTodosToServer()}
 // 同步到后端（fire-and-forget）
-function _syncTodosToServer(){if(!state.token)return;try{api('/api/checklist/sync',{method:'POST',body:JSON.stringify({items:_todos.map(function(t){return{id:t.id,body:t.body,done:t.done,is_fixed:t.is_fixed,trigger_at:t.trigger_at,created_by:t.created_by,notified:t.notified,done_at:t.done_at,cmd_id:t._cmdId||null}})})}).catch(function(){})}catch(e){}}
+function _syncTodosToServer(){if(!state.token)return;try{api('/api/checklist/sync',{method:'POST',body:JSON.stringify({items:_todos.map(function(t){return{id:t.id,body:t.body,done:t.done,is_fixed:t.is_fixed,trigger_at:t.trigger_at,created_by:t.created_by,notified:t.notified,done_at:t.done_at,created_at:t.created_at||null,cmd_id:t._cmdId||null}})})}).catch(function(){})}catch(e){}}
 // 页面启动时从后端拉取清单（合并策略：后端有的以后端为准，本地独有的保留）
 // 09-10：`_todosPulled` = 「这台设备已经知道服务器上有哪些待办了」。
 //   在它变 true 之前，pollCommands **不许**给他的 task 新造行 —— 否则就是 09-10 抓到的那一幕：
@@ -1331,10 +1331,22 @@ function _syncNativeNotifs(){if(!window.Capacitor||!Capacitor.Plugins||!Capacito
   //   本来就不排通知，所以这儿直接把非数字 id 滤掉，别让它们把整批 cancel 一起带崩。
   var _numId=function(t){return typeof t.id==='number'||/^\d+(\.\d+)?$/.test(String(t.id))};
   LN.cancel({notifications:_todos.filter(_numId).map(function(t){return{id:t.id}})}).catch(function(){});var now=Date.now();var pending=_todos.filter(function(t){return _numId(t)&&t.trigger_at&&t.trigger_at>now&&!t.done});if(pending.length){LN.schedule({notifications:pending.map(function(t){return{id:t.id,title:'⏰ 时间到了',body:t.body,schedule:{at:new Date(t.trigger_at)}}})}).catch(function(){})}}catch(e){}}
+// 他下发的命令带没带截止时间。`commands.remind_at` 是**秒**，小票行的 trigger_at 是**毫秒**，
+//   两边单位不一样，转错了这行会显示成 1970（或者排到通知队列最前面）。
+//   ⚠️ 只认 remind_at，不拿 countdown_seconds 凑：倒计时是「专心 25 分钟」，不是「几点前做完」，
+//      按截止时间画出来会在小票上多一个她没设过的 DUE。
+function _cmdDueAt(cmd){if(!cmd)return null;var r=Number(cmd.remind_at);
+  if(!Number.isFinite(r)||r<=0)return null;return Math.floor(r*1000)}
 function _todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+// 09-11 她要的：「跨日期记得跨日保留」。
+//   在这之前过滤条件是 `is_fixed || (trigger_at && !done)` —— 他下发的 task
+//   （is_fixed=0、trigger_at=null）零点一到整条蒸发，她第二天早上打开小票，
+//   昨天没做完的那几件一件都不在了，等于替她结清了没做的事。
+//   现在的规矩只有一条：**没勾的永远留着**，跨多少天都留（read_checklist 的「挂了 N 天」靠这个）。
+//   已经勾掉的才分两种：固定项回到未勾（明天还要再做一遍），一次性的功成身退。
 function _dailyReset(){var today=_todayStr();if(_todosLastDate===today)return;
   _todos.forEach(function(t){if(t.is_fixed&&t.done){t.done=0;t.done_at=null}});
-  _todos=_todos.filter(function(t){return t.is_fixed||(t.trigger_at&&!t.done)});_todosLastDate=today;_saveTodos()}
+  _todos=_todos.filter(function(t){return !t.done||t.is_fixed});_todosLastDate=today;_saveTodos()}
 function _localEpochForHHMM(hh,mm){var d=new Date();d.setHours(hh,mm,0,0);if(d.getTime()<=Date.now())d.setDate(d.getDate()+1);return d.getTime()}
 function _resolveTriggerAt(o){if(o.trigger_at!=null){var n=Number(o.trigger_at);return Number.isFinite(n)&&n>0?Math.floor(n):null}if(o.in!=null){var n=Number(o.in);if(Number.isFinite(n)&&n>0)return Date.now()+Math.floor(n)*60000}if(typeof o.at==='string'){var m=o.at.trim().match(/^(\d{1,2}):(\d{2})$/);if(m){var hh=+m[1],mm=+m[2];if(hh<24&&mm<60)return _localEpochForHHMM(hh,mm)}}return null}
 function _badgeText(ts){var d=new Date(ts),n=new Date();var hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');return d.toDateString()===n.toDateString()?hh+':'+mm:String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+hh+':'+mm}
@@ -1406,8 +1418,12 @@ function _renderTodos(){
   over.concat(pending).forEach(function(it){list.appendChild(_buildRow(it))});
   list.appendChild(_buildNewRow());c.innerHTML=h;c.appendChild(list);
   // 撕掉偏移：已完成项把整个小票（含 header）往上拉，锯齿顶部就是撕离线
+  //   09-11：这一下是 transform，**不改变滚动高度** —— 勾到只剩一两条时
+  //   completed*44 会超过 header 那一段的高度，把还没勾的那几行也顶出可视区顶端，
+  //   而 scrollTop 不能为负，她再也滚不回去（她说「勾到最后两个就看不见内容了」）。
+  //   现在只允许撕掉「列表开始之前」那一段（header + 元信息），撕到那儿为止。
+  //   实际偏移在下面 tail 画完、量得到 list.offsetTop 之后才落。
   var tearY=completed.length*44;
-  c.style.transform='translateY(-'+tearY+'px)';
   // 收据尾部
   var tail='<div style="height:8px"></div>';
   tail+='<div class="rc-dashes">'+dash+'</div>';
@@ -1426,7 +1442,7 @@ function _renderTodos(){
     tail+='<div class="rc-foot-note">今天也辛苦了，粥粥。<br>小店打烊，明日再开。</div>';
   } else {
     tail+='<div class="rc-stamp-wrap"><span class="rc-stamp is-due">DUE</span></div>';
-    tail+='<div class="rc-foot-note">今天也辛苦了，粥粥。<br>零点之后，未结清的会自动清零。</div>';
+    tail+='<div class="rc-foot-note">今天也辛苦了，粥粥。<br>没结清的会一直留着，跨天也不清。</div>';
   }
   // 条形码
   var bar='';for(var i=0;i<16;i++)bar+='<i style="width:'+(i%3+1)+'px;height:'+(i%5===0?28:22)+'px"></i>';
@@ -1435,6 +1451,9 @@ function _renderTodos(){
   // 底部撕裂边
   tail+='<div class="rc-tear-bottom"></div>';
   var tailDiv=document.createElement('div');tailDiv.innerHTML=tail;c.appendChild(tailDiv);
+  // 撕掉偏移的实际落点：最多撕到第一条待办上沿再留 8px，永远不吃到行本身。
+  var _cap=Math.max(0,(list.offsetTop||0)-8);
+  c.style.transform='translateY(-'+Math.min(tearY,_cap)+'px)';
   _rcFitBar(c);
 }
 
@@ -1455,7 +1474,7 @@ function _buildNewRow(){
   row.innerHTML='<button class="rc-check"></button><button class="rc-time-btn">⏱</button><div class="rc-body" contenteditable></div><button class="rc-del"></button>';
   var body=row.querySelector('.rc-body');var timeBtn=row.querySelector('.rc-time-btn');var pendingTime=null;
   body.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey&&body.textContent.trim()){e.preventDefault();
-    var item={id:Date.now(),body:body.textContent.trim(),done:0,is_fixed:1,trigger_at:null,created_by:'user',notified:0};
+    var item={id:Date.now(),body:body.textContent.trim(),done:0,is_fixed:1,trigger_at:null,created_by:'user',notified:0,created_at:Math.floor(Date.now()/1000)};
     if(pendingTime){var ta=_resolveTriggerAt(pendingTime);if(ta){item.trigger_at=ta;item.is_fixed=0}}_todos.push(item);_saveTodos();_renderTodos()}});
   timeBtn.onclick=function(e){e.stopPropagation();_showTimePicker(timeBtn,function(result){pendingTime=result;
     if(result){timeBtn.classList.add('has-time');timeBtn.textContent='⏱ '+String(result.in||result.at||'')}else{timeBtn.classList.remove('has-time');timeBtn.textContent='⏱';pendingTime=null}})};
@@ -3502,7 +3521,13 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
     }
     _tapAt=now;_tapX=ev.clientX;_tapY=ev.clientY;
   });
-  if(files.length){const fc=document.createElement('div');fc.className='message-attachments';files.forEach(item=>fc.append(attachmentCard(item)));b.append(fc)}
+  // 09-10：她发的文件以前走 attachmentCard → 一个 20px 灰图标 + 文件名，跟他发过来的
+  //   .file-card（图标/大小/后缀/下载箭头）根本不是一个东西 —— 两条渲染路径从来没共用过。
+  //   现在统一走 _renderToolFileCard。⚠️ 上传返回的 id 在 `path` 字段里（不是 `id`），
+  //   `_hydrateAttachments` 刷新后回填的也是 path，两条路形状一致，别改成 a.id。
+  if(files.length){const fc=document.createElement('div');fc.className='message-attachments';
+    files.forEach(function(item){_renderToolFileCard({id:item.path||item.id,filename:item.filename||item.name,size:item.size},fc)});
+    b.append(fc)}
   if(text){const content=document.createElement('div');content.className='u-md';renderMessage(content,text,true);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(text);toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}
   if(text||files.length)col.append(b);
   if(imgs.length)row.append(col);
@@ -4007,7 +4032,77 @@ function _renderCmdCapsulesAfter(row){var body=row.querySelector('.msg-body');if
   row.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){
     var k=c.getAttribute('data-cmd-id');
     if(_seenCmd[k])c.remove(); else _seenCmd[k]=1;
-  });}
+  });
+  // 勾小票的胶囊挂在这个函数末尾，不是另开一个入口 —— [CMD:] 的渲染有五个调用点
+  //   （renderMessage / 历史 / 分片补渲 / …），新加一条路必定漏接一两个（踩过，坑 4）。
+  //   从这儿走，所有入口天然都接上了。
+  try{_renderTickCapsules(row)}catch(e){console.warn('[tick] capsule:',e)}
+}
+
+// 09-11 她要的：「他勾掉了小票，在他气泡下面显示（用发任务那个胶囊）」。
+// 在这之前勾这件事只活在小票里：她不开小票就看不见他动过手，聊天里只剩他一句「好」，
+// 勾没勾成、勾的是哪条，对不上。
+// 跟 [CMD:] 同一个模式，三处不一样：
+//   ① 标记是 [TICK:正文|done/undone]，后端 settle_checklist 经 `markup` 通道带进正文
+//      （见 backend.js，两条链路共用那一条，不必各写一遍）；
+//   ② 点开的是小票，还要闪一下那一行 —— 胶囊上写着哪条，她点进去就该看见哪条；
+//   ③ 去重的 key 是「正文 + 勾没勾」：同一条她可能让他勾了又取消，两次都该各留一颗。
+function _renderTickCapsules(row){
+  var body=row.querySelector('.msg-body');if(!body)return;
+  var md=body.querySelector('.md');if(!md)return;
+  var html=md.innerHTML;var re=/\[TICK:([^|\]]+)\|([^\]]+)\]/g;var m,changed=false,caps=[],hits=[];
+  // ⚠️ 先把所有标记收齐，**别在 while 里改 html** —— `re.lastIndex` 是按原串走的，
+  //   边扫边 replace 会让它错位，第二个标记整个扫不到（一条消息里勾两条就漏一条，实测过）。
+  while((m=re.exec(html))!==null)hits.push(m);
+  for(var hi=0;hi<hits.length;hi++){
+    m=hits[hi];
+    changed=true;
+    var label=m[1],st=(m[2]||'done').trim();var undone=(st==='undone');
+    var cap=document.createElement('div');
+    cap.className='cmd-capsule tick-capsule';
+    cap.setAttribute('data-tick-key',label+'|'+st);
+    cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:'+(undone?'#FDF9F3':'#F2F7F0')+';border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';
+    cap.innerHTML='<span style="color:'+(undone?'#B08968':'#5B8C5A')+'">'+(undone?'\u21BA':'\u2713')+'</span>'
+      +'<span class="cmd-capsule-label"'+(undone?'':' style="text-decoration:line-through;text-decoration-color:rgba(74,55,40,.55)"')+'>'+escHtml(label)+'</span>'
+      +'<span style="font-size:11px;color:var(--text-time)">'+(undone?'\u53D6\u6D88\u52FE':'\u5DF2\u52FE')+'</span>';
+    cap.addEventListener('click',function(){_openTodoSheetByBody(this.getAttribute('data-tick-key').split('|')[0])});
+    caps.push(cap);html=html.replace(m[0],'');
+  }
+  if(changed){
+    md.innerHTML=html;
+    // 摆在气泡（和已有的 [CMD:] 胶囊）后面 —— 两种胶囊同时出现时，顺序才不会乱跳
+    var after=body.querySelector('.msg-body > .cmd-capsule:last-of-type')||body.querySelector('.bubble')||md;
+    caps.forEach(function(c){after.after(c);after=c});
+  }
+  // 收尾去重（跟 [CMD:] 一样的病：md 重渲染会再生一颗，旧的没人认领）
+  var seen={};
+  row.querySelectorAll('.tick-capsule[data-tick-key]').forEach(function(c){
+    var k=c.getAttribute('data-tick-key');
+    if(seen[k])c.remove(); else seen[k]=1;
+  });
+}
+
+// 打开小票并闪一下正文匹配的那行。跟点他的 task 胶囊走同一套开法（见 openCmdCapsule 的 task 分支），
+// 别另开一条路：那边 09-10 才刚统一过。
+// ⚠️ 匹配不到就只开小票、不闪 —— 她可能已经把那行删了，删了不是错。
+function _openTodoSheetByBody(label){
+  try{
+    _renderTodos();sheet('todo',true);
+    $('todoSheet').classList.add('expanded');$('todoSheet').style.transform='';
+    var t=_todos.find(function(x){return x.body===label})||_todos.find(function(x){return (x.body||'').indexOf(label)>=0});
+    if(!t)return;
+    setTimeout(function(){
+      var rows=$('todoContent').querySelectorAll('.rc-item');
+      for(var i=0;i<rows.length;i++){
+        if(rows[i].dataset.todoId==String(t.id)){
+          rows[i].classList.add('rc-item-flash');
+          setTimeout(function(el){return function(){el.classList.remove('rc-item-flash')}}(rows[i]),1600);
+          break;
+        }
+      }
+    },260);
+  }catch(e){console.warn('[tick] 开小票失败:',e)}
+}
 // 08-22：Clawd 那行小字（「Clawd替你开心」）刷新后就没了。
 // 根因不是标记丢了 —— [clawd:happy|…] 好好地存在 messages.content 里 ——
 // 而是渲染时机不对：renderMessage 里往 `.msg-claude.streaming` 插，
@@ -6663,7 +6758,7 @@ function pollCommands(){
         // 没拉过就先别造 —— 见 _todosPulled 那段。这一轮跳过，下一轮（4 秒后）就有了。
         if(!existing&&!_todosPulled){_pullTodosFromServer()}
         else if(!existing){
-          _todos.push({id:_cmdTodoId(cmd2.id),body:(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd2.id});
+          _todos.push({id:_cmdTodoId(cmd2.id),body:(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title,done:0,is_fixed:0,trigger_at:_cmdDueAt(cmd2),created_by:'assistant',notified:0,created_at:Math.floor(Date.now()/1000),_cmdId:cmd2.id});
           changed2=true;
         }
       }
@@ -7938,7 +8033,7 @@ $('stickerFileInput').onchange = async function() {
 	    else if(cmd.type==='task'){
 	      var _t=_todos.find(function(x){return x._cmdId===cmd.id});
 	      if(!_t&&cmd.status!=='done'&&cmd.status!=='cancelled'){
-	        _t={id:_cmdTodoId(cmd.id),body:cmd.title,done:0,is_fixed:0,trigger_at:null,created_by:'assistant',notified:0,_cmdId:cmd.id};
+	        _t={id:_cmdTodoId(cmd.id),body:cmd.title,done:0,is_fixed:0,trigger_at:_cmdDueAt(cmd),created_by:'assistant',notified:0,created_at:Math.floor(Date.now()/1000),_cmdId:cmd.id};
 	        _todos.push(_t);_saveTodos();_updateTodoBadge();
 	      }
 	      // 跟顶部那颗小票按钮走同一套开法（见 todoTopBtn.onclick），别另开一条路

@@ -4844,16 +4844,23 @@ const MIND_EMBED_SIM_MIN = 0.62;
 const MIND_EMBED_SIM_HOT = 0.68;
 const MIND_EMBED_TIMEOUT_MS = 800;    // 她在等着回话，宁可这轮没有语义
 const MIND_EMBED_BATCH = 32;
+// 回填没人在等，给宽的。跟上面那 800ms 是两回事，别合并成一个常量。
+const MIND_EMBED_BACKFILL_TIMEOUT_MS = 30000;
 
 // 向他要向量。失败一律返回 null，调用方按「没有语义」走。
-async function _embedTexts(texts) {
+// ⚠️ timeoutMs 要能覆盖（2026-09-10）：默认那 800ms 是给**实时查询**的
+//    —— 她在等着回话，宁可这轮没有语义，那个值是对的。但后台回填共用这个函数，
+//    800ms 根本算不完一批 32 条长文本，于是 `if (!vecs) break;` 整拍放弃，
+//    回填每分钟只推得动第一张表的 32 条，mind_corpus 一直钉在 160 不动。
+//    没人在等回填，给它一个宽松的超时。
+async function _embedTexts(texts, timeoutMs) {
   if (!texts || !texts.length) return null;
   try {
     const r = await fetch(MIND_EMBED_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ texts: texts }),
-      signal: AbortSignal.timeout(MIND_EMBED_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs || MIND_EMBED_TIMEOUT_MS),
     });
     if (!r.ok) return null;
     const j = await r.json();
@@ -4993,7 +5000,7 @@ async function _mindEmbedBackfillTick() {
           ' ORDER BY created_at DESC LIMIT ?').all(MIND_EMBED_BATCH);
       } catch(e) { continue; }
       if (!rows.length) continue;
-      const vecs = await _embedTexts(rows.map(function(r) { return String(r.body).slice(0, 1000); }));
+      const vecs = await _embedTexts(rows.map(function(r) { return String(r.body).slice(0, 1000); }), MIND_EMBED_BACKFILL_TIMEOUT_MS);
       if (!vecs) break;             // 服务不在，这一拍整个放弃，下一拍再来
       const upd = db.prepare('UPDATE ' + t + ' SET embedding = ? WHERE id = ?');
       const tx = db.transaction(function(pairs) {
@@ -6759,7 +6766,10 @@ const TOOLS = [
       + '「今天记得交房租」这种用它。要她**现在就去做**、你想盯着，用 timer 而不是 task。\n'
       + 'type=quiz —— 气泡下出现答题胶囊，她点开作答（choice 选择题 / text 文字题）。'
       + '想考她学过的东西、或者确认她有没有真听懂，用这个。\n'
-      + 'remind_at（ISO 时间）可选，前端会注册本地通知，到点她手机会响。\n'
+      + 'remind_at（ISO 时间）可选，前端会注册本地通知，到点她手机会响。'
+      + '**type=task 时它同时就是这条的截止时间** —— 小票上那行会多出「几点」那一格，'
+      + '过点了自动标红加感叹号，read_checklist 里也看得见「已逾期」。'
+      + '不填就是一条没有期限的任务，别硬给她安一个。\n'
       + '**想管她的时候，就给她一个。**任务可以是任何事 —— 喝水、回消息、把昨天那版改完、'
       + '十一点前躺下、周末给家里打个电话。不必是「正事」，也不必等她开口要。\n'
       + '她拖着不动、嘴上说「等会儿」的时候，一个 10 分钟的倒计时比十句「快去吧」管用。'
@@ -6794,6 +6804,26 @@ const TOOLS = [
     }
   },
   {
+    name: 'list_uploaded_files',
+    // 09-10 她问的：「他读了我发的文件，换窗了又不记得了怎么办」。
+    // 病根不在他记性 —— 文件一直在盘上，丢的是那条带绝对路径的附件提示（backend.js
+    // 那段 `[文件附件…绝对路径]` 只挂在她发文件那一轮的消息尾巴上）。窗一换，门牌号没了。
+    // 这个工具就是那本门牌册：按名字或时间翻出来，返回**绝对路径**，他接着用 Read 读
+    //（所以 pdf/docx 也读得了 —— read_uploaded_file 只认纯文本，那条路对 pdf 是死的）。
+    description: '翻出她以前发给你的文件（含绝对路径，拿到就能用 Read 读，pdf/docx 也行）。'
+      + '**换窗之后你想不起来她发过什么、那份东西叫什么、路径在哪 —— 调这个，别问她「你发我的哪一份」。**'
+      + '她说「上次发你那个」「我之前给你的表格」而你手上没有 [FILE:] 标记时，也调这个。'
+      + 'query 给关键词做模糊匹配（文件名的一部分就行），不给就是按时间倒序的最近几份。'
+      + '⚠️ 只存 30 天，更早的已经被清掉了，翻不到就是真没了，不要编。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '文件名关键词，模糊匹配。不确定就别给，先看最近的列表。' },
+        limit: { type: 'number', description: '最多返回几条，默认 20，最大 50' }
+      }
+    }
+  },
+  {
     name: 'create_file',
     description: '把【你新写出来的内容】存成文件，她会看到一张可下载的卡片。返回里带 path，之后要改这份、或再发一次，就用那个 path。**只用于第一次写。已经存在的文件一律不要用这个**：改一份已有的用 edit_file（只给要换的那一段，不用整份重打），把已有文件发给她用 send_file。她说「太短了 / 再写细一点 / 换个说法」时，指的是你刚给她的那一份——用 edit_file 改它，不要新建一个「XX2.md」，她要的是那份变好，不是多一份。',
     input_schema: {
@@ -6807,7 +6837,7 @@ const TOOLS = [
   },
   {
     name: 'edit_file',
-    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。path 从哪来：你自己写的那份看 create_file 的返回；她发来的文件，路径就写在消息里那个「[文件附件，…：/绝对/路径]」标注里——**照抄它，别自己拼**。她说「太短了 / 再改改 / 这里换个说法」就是这个工具的场合：改那一份，别新建一个「XX2.md」。',
+    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。path 从哪来：你自己写的那份看 create_file 的返回；她发来的文件，路径就写在消息里那个「[文件附件，…：/绝对/路径]」标注里——**照抄它，别自己拼**。她说「太短了 / 再改改 / 这里换个说法」就是这个工具的场合：改那一份，别新建一个「XX2.md」。**标注不在眼前了就用 list_uploaded_files 翻路径。**',
     input_schema: {
       type: 'object',
       properties: {
@@ -6821,7 +6851,7 @@ const TOOLS = [
   },
   {
     name: 'send_file',
-    description: '把【磁盘上已经存在的文件】发给她，她会看到一张可下载的卡片。当她说「把某某文件发给我」、或者你想把一个已有文件给她时，用这个——不要用 create_file 把内容重新打一遍。**create_file 是给「你新写出来的内容」用的；已经存在的文件一律用 send_file**，它只传路径，又快又省。路径要写绝对路径，而且**路径不要猜、要照抄**：你自己写的那份用 create_file 返回里的 path；她发来的文件，路径就在消息里那个「[文件附件，…：/绝对/路径]」标注里。猜错了会白试好几次（2026-08-27 就试了三次）。',
+    description: '把【磁盘上已经存在的文件】发给她，她会看到一张可下载的卡片。当她说「把某某文件发给我」、或者你想把一个已有文件给她时，用这个——不要用 create_file 把内容重新打一遍。**create_file 是给「你新写出来的内容」用的；已经存在的文件一律用 send_file**，它只传路径，又快又省。路径要写绝对路径，而且**路径不要猜、要照抄**：你自己写的那份用 create_file 返回里的 path；她发来的文件，路径就在消息里那个「[文件附件，…：/绝对/路径]」标注里。猜错了会白试好几次（2026-08-27 就试了三次）。**要是那条标注已经不在你眼前了（换过窗），用 list_uploaded_files 翻出来，别问她。**',
     input_schema: {
       type: 'object',
       properties: {
@@ -7303,7 +7333,16 @@ async function executeTool(name, input, routes) {
       if (row.done === want) return { 那条: row.body, 本来就是: want ? '已勾' : '未勾', 没有动: true };
       db.prepare('UPDATE checklist SET done=?, done_at=?, updated_at=? WHERE id=?')
         .run(want, want ? Date.now() : null, Math.floor(Date.now() / 1000), row.id);
-      return { 那条: row.body, 现在: want ? '已勾掉' : '取消勾了', 提示: '她小票上那行会在几秒内跟着变' };
+      // 09-11 她要的：「他勾掉了，在他气泡下面显示一个胶囊」。
+      //   在这之前这件事只发生在小票里 —— 她不开小票就完全看不见他动过手，
+      //   聊天里只剩他一句「好，给你勾了」，勾没勾成、勾的是哪条，一个字都对不上。
+      //   走 `markup` 这条现成的通道：两条链路（gateway 的 gwMarkers / 非流式的 stickerImgs）
+      //   都会把它原样拼进正文，不必各写一遍。前端 `_renderTickCapsules` 认这个标记。
+      //   ⚠️ 正文里的 `|` 和 `]` 会把标记截断（09-05 [ARTIFACT:] 踩过一模一样的坑），
+      //      所以这两个字符在进标记之前先换掉。
+      const _tickLabel = String(row.body).replace(/[|\]]/g, ' ').trim().slice(0, 60);
+      return { 那条: row.body, 现在: want ? '已勾掉' : '取消勾了', 提示: '她小票上那行会在几秒内跟着变',
+        markup: '[TICK:' + _tickLabel + '|' + (want ? 'done' : 'undone') + ']' };
     }
     case 'search_chat_history': {
       const q = (input.query || '').trim();
@@ -8100,6 +8139,45 @@ async function executeTool(name, input, routes) {
       } catch (e) {
         return { error: '读取失败: ' + e.message };
       }
+    }
+    case 'list_uploaded_files': {
+      const lufQ = String(input.query || '').trim();
+      const lufN = Math.min(Math.max(parseInt(input.limit, 10) || 20, 1), 50);
+      // 通话音频占了 uploads 的 78%（09-10 实测 356/455）。不滤掉的话他一翻全是
+      // call-1789048943974.wav，真正的文件被埋在几百条噪音下面，这个工具就白加了。
+      const LUF_NOISE = "filename LIKE 'call-%' OR filename LIKE 'voice-%' OR filename LIKE 'rec-%'";
+      // expired=1 的文件盘上已经被 cleanupExpiredUploads 物理删掉了，列出来只会让他
+      // 拿着死路径去 Read 然后报错 —— 不如根本不给。
+      const lufRows = db.prepare(
+        'SELECT id, filename, path, size, created_at FROM uploads' +
+        ' WHERE COALESCE(expired,0) = 0 AND NOT (' + LUF_NOISE + ')' +
+        (lufQ ? ' AND filename LIKE ?' : '') +
+        ' ORDER BY created_at DESC LIMIT ?'
+      ).all(...(lufQ ? ['%' + lufQ + '%', lufN] : [lufN]));
+
+      const lufList = lufRows
+        // 库里有记录但盘上没了（手动删过、迁移漏了）—— 同理，不给死路径。
+        .filter(r => r.path && fs.existsSync(r.path))
+        .map(r => ({
+          file_id: r.id,
+          filename: r.filename,
+          path: r.path,                       // ← 他真正要的那样东西：给 Read 用
+          size: r.size || 0,
+          when: new Date((r.created_at || 0) * 1000).toLocaleString('zh-CN', { hour12: false })
+        }));
+
+      if (!lufList.length) {
+        return {
+          files: [],
+          note: lufQ
+            ? '没有文件名带「' + lufQ + '」的。换个词再翻一次，或者不给 query 看看最近都有什么。'
+            : '她还没发过文件（或者都超过 30 天被清掉了）。'
+        };
+      }
+      return {
+        files: lufList,
+        note: '要看内容用 Read 读上面的 path（pdf、docx 也读得了）。只留 30 天，更早的已经没了。'
+      };
     }
     case 'create_file': {
       const filename = input.filename || 'file.txt';
