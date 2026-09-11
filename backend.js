@@ -10022,13 +10022,34 @@ function recentRecap(convId) {
   } catch (e) { /* 跳过 */ }
 
   // 三、刚才在说什么 —— 原文，只是接话头，所以放最后、也最先被砍。
+  // ⚠️ 2026-09-10：这里以前只 SELECT role, content，**把 attachments 那列漏了**。
+  //    后果：她发文件那条消息正文往往是空的（图/文件直接甩过来，一个字不打），
+  //    换窗一重建，上下文里就只剩一行光秃秃的「她：」——文件名和路径全没了。
+  //    实况：09-10 20:56 她发论文，20:56 他还读得好好的，20:57 换窗，
+  //    20:58 他就说「文件好像没有一起附过来，我这边没拿到路径」。
+  //    不是他忘了，是那一窗里真的一个字都没有。
+  //    路径的写法照抄 handleGatewayChat 里那句，**两处要一模一样** ——
+  //    他认的就是「[文件附件，…：/绝对/路径]」这个形状，工具描述里也是这么教的。
   const rows = db.prepare(
-    'SELECT role, content FROM messages WHERE conv_id = ? ORDER BY id DESC LIMIT 16'
+    'SELECT role, content, attachments FROM messages WHERE conv_id = ? ORDER BY id DESC LIMIT 16'
   ).all(convId).reverse();
   if (rows.length) {
-    parts.push('[刚落下的话]\n' + rows.map(r =>
-      (r.role === 'user' ? '她' : '我') + '：' + String(r.content || '').replace(/\s+/g, ' ').slice(0, 300)
-    ).join('\n'));
+    parts.push('[刚落下的话]\n' + rows.map(r => {
+      let line = (r.role === 'user' ? '她' : '我') + '：' +
+        String(r.content || '').replace(/\s+/g, ' ').slice(0, 300);
+      // 附件补一行。文件已经不在了（清理过/记录坏了）就跳过，别给他一个死路径去 Read。
+      let atts = [];
+      try { atts = JSON.parse(r.attachments || '[]'); } catch (_) { atts = []; }
+      for (const att of (Array.isArray(atts) ? atts : [])) {
+        const up = db.prepare('SELECT filename, path FROM uploads WHERE id = ?').get(String(att && att.path || att));
+        if (!up || !up.path) continue;
+        try { if (!fs.existsSync(up.path)) continue; } catch (_) { continue; }
+        line += /\.(png|jpe?g|gif|webp|svg)$/i.test(up.filename || '')
+          ? '\n[图片附件，用 Read 工具查看：' + up.path + ']'
+          : '\n[文件附件，要看内容用 Read，要改用 edit_file：' + up.path + ']';
+      }
+      return line;
+    }).join('\n'));
   }
 
   if (!parts.length) return '';
@@ -10067,6 +10088,29 @@ function _pickEffort(e) {
 function _rememberCliChoice(k, v) {
   try { if (v && _getSetting('cli_choice_' + k) !== v) _setSetting('cli_choice_' + k, v); } catch (_) {}
   return v;
+}
+
+// ⚠️ 2026-09-11：往网关传 model/effort 时，**「她没选」和「她选了默认那个」必须分得开**。
+//
+// 病根：网关 server.js:473 有一道好修法 —— 「没传就沿用活着的那个进程的设置」，
+// 专门用来避免无谓地放掉常驻进程。但这道修法一直没生效过，因为**我们从来没「没传」过**：
+// 这边 _pickEffort(undefined) 回 'medium'，前端 index.html 那句也是 `||'medium'`，
+// 两层默认值叠在一起，网关每次都收到一个言之凿凿的 'medium'。
+//
+// 后果：她在 app 里选了 low（存进 settings，后台任务照着传 low），
+// 网页那头没选过 → 发 medium → 网关看见「她改主意了」→ 放掉进程重开 → **整窗冷写**；
+// 她下一句回 low，**再冷写一次**。日志里 `换模型/effort/搜索：low → medium`
+// 和反向那条**成对出现** 6 次，每次约 $0.3。
+//
+// 所以：认得出的值才传，认不出就退回 settings 里记着的那份；连那份都没有就
+// **一个字都不传**，把决定权交回给网关那道「沿用活进程」。
+// JSON.stringify 会直接丢掉值为 undefined 的键，正好就是「没传」。
+//
+// ⚠️ 别在这里补默认值 —— 补了就等于把网关那道修法再顶掉一次（09-06 那条注释同理）。
+function _stickyChoice(k, raw, whitelist) {
+  const v = String(raw || '');
+  if (whitelist.indexOf(v) !== -1) return _rememberCliChoice(k, v);
+  return _getSetting('cli_choice_' + k) || undefined;
 }
 // 后台任务往主 session 发消息时带上这三个，避免前缀变动引发整窗冷写。
 function _lastCliChoices() {
@@ -10235,8 +10279,10 @@ async function handleGatewayChat(req, res, ctx) {
         // 08-26：她在界面上选的模型 / effort 以前根本没往下传 —— 网关那头写死
         //   sonnet-4-6 + low，所以选单一直是装饰。这里传下去，网关再校一遍白名单。
         //   ⚠️ 缓存按模型分开存，换模型 = 整块冷前缀重写，前端选单上标了价。
-        model: _rememberCliChoice('model', _pickModel(req.body && req.body.model)),
-        effort: _rememberCliChoice('effort', _pickEffort(req.body && req.body.effort)),
+        //   ⚠️ 09-11 改用 _stickyChoice：她没显式选过就**不传**，让网关沿用活着的
+        //      进程，别为了一个默认值把常驻进程放掉重开（见 _stickyChoice 处注释）。
+        model: _stickyChoice('model', req.body && req.body.model, CLI_MODELS),
+        effort: _stickyChoice('effort', req.body && req.body.effort, CLI_EFFORTS),
         // 08-29：搜索开关跟模型走同一条路。它决定网关给 CLI 的 --allowedTools，
         //   跟模型一样是 spawn 时定死的，所以改了也要重开常驻进程。
         web_search: _webSearchOn(),
@@ -12688,7 +12734,12 @@ app.get('/api/models', (req, res) => {
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', desc: '日常。最省，默认就它', thinking: 'adaptive', primary: true, cold: 0.26 },
       { id: 'claude-opus-4-6', label: 'Opus 4.6', desc: '要他想深一点的时候', thinking: 'adaptive', primary: false, cold: 0.43 },
       { id: 'claude-fable-5', label: 'Fable 5', desc: '最聪明也最贵，思考常开', thinking: 'adaptive', primary: false, cold: 0.86, noExtended: true },
-    ]
+    ],
+    // 09-11：服务端记着的那份（`_rememberCliChoice`）。给前端当「这台设备还没选过」时的显示值。
+    // 为什么必须给：effort 只存在各设备自己的 localStorage 里，她在 app 里选了 low，
+    // 网页那头**什么都不知道**，就会照着自己的默认显示 Medium —— 显示是 medium、
+    // 实际发的是 low，两边对不上她会以为选单坏了。后台任务也读这一份，三处这才是同一个数。
+    current: { model: _getSetting('cli_choice_model') || null, effort: _getSetting('cli_choice_effort') || null },
   });
 });
 

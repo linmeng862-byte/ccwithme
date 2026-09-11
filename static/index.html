@@ -3270,8 +3270,16 @@ async function greeting(){try{const ctrl=new AbortController();const t=setTimeou
 async function resetEmpty(){streamInner.innerHTML=`<div class="empty" id="empty">${logo('mark-35')}<div class="empty-line"></div></div>`;$('empty').querySelector('.empty-line').textContent=await greeting();input.placeholder='Chat with Claude'}
 async function dismissEmpty(){input.placeholder='Reply to Claude';const el=$('empty');if(!el)return;el.classList.add('leaving');await new Promise(r=>setTimeout(r,300));el.remove()}
 
-async function loadModels(){try{const r=await fetch('/api/models');state.models=(await r.json()).models}catch{state.models=[{id:'claude-sonnet-4-6',label:'Sonnet 4.6',desc:'Everyday tasks',thinking:'adaptive',primary:true}]}
-  if(!state.models.some(x=>x.id===state.model))state.model=state.models[0].id;renderModelSheet();updateModelHeader()}
+// ⚠️ 09-11：effort 只存在**这台设备自己的** localStorage 里。她在 app 里选了 low，
+//    网页这头一无所知，就会照自己的默认显示 Medium，而实际发出去的是服务端记着的 low。
+//    所以这台设备没选过时，用服务端那份 `current` 填一次，别让显示跟实际打架。
+//    只填「没选过」的，她在这台真选过就以她这台的为准。
+async function loadModels(){let _cur={};try{const r=await fetch('/api/models');const j=await r.json();state.models=j.models;_cur=j.current||{}}catch{state.models=[{id:'claude-sonnet-4-6',label:'Sonnet 4.6',desc:'Everyday tasks',thinking:'adaptive',primary:true}]}
+  if(!state.models.some(x=>x.id===state.model))state.model=state.models[0].id;
+  // ⚠️ 要等 state.model 修正完再填，否则会把值写到一个已经下架的模型名下。
+  if(_cur.effort&&!(state.settings[state.model]||{}).effort){
+    state.settings[state.model]={...(state.settings[state.model]||{}),effort:_cur.effort};saveSettings()}
+  renderModelSheet();updateModelHeader()}
 function modelSettingText(model=currentModel(),s=modelSetting(model)){if(!model||model.thinking==='none')return'';return(s.effort||'medium').replace(/^./,c=>c.toUpperCase())}
 function updateModelHeader(){const m=currentModel(),setting=modelSettingText(m);$('topbarModelText').textContent=m?.label||state.model;$('topbarModelSetting').textContent=setting;if($('modelCapsuleText'))$('modelCapsuleText').textContent=`${m?.label||state.model}${setting?' '+setting:''}`}
 let _modelPage='main';
@@ -5068,7 +5076,10 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
     state.abortController=new AbortController();
     const _sentAt=new Date().toISOString();   // 断线重捞时拿它挡住上一轮的旧回复
     const _mt=(($('thinkText')||{}).value||'').trim(),_ms=!!(($('thinkShare')||{}).checked);
-    const chatBody=JSON.stringify({rewrite_of:(_rewriteCmd?_rewriteCmd.id:null),my_thinking:_mt||null,share_thinking:_ms,message:text,conversation_id:state.convId,model:state.model,effort:(state.settings[state.model]||{}).effort||'medium',extended:(state.settings[state.model]||{}).extended!==false,attachments:attachments.map(item=>item.path||item),project_id:state.projectId||null,reading_book_id:state.readingBookId||null});
+    // ⚠️ effort 那句**别补 `||'medium'`**（2026-09-11 就是把它去掉的）：没选过就该不传，
+    //    补了默认值会跟她在 app 里选的 low 打架，每来回一次就放掉常驻进程 = 一次整窗冷写。
+    //    理由全文在 backend.js 的 _stickyChoice 处。
+    const chatBody=JSON.stringify({rewrite_of:(_rewriteCmd?_rewriteCmd.id:null),my_thinking:_mt||null,share_thinking:_ms,message:text,conversation_id:state.convId,model:state.model,effort:(state.settings[state.model]||{}).effort||undefined,extended:(state.settings[state.model]||{}).extended!==false,attachments:attachments.map(item=>item.path||item),project_id:state.projectId||null,reading_book_id:state.readingBookId||null});
     // 草稿跟着这条一起走掉：它是「这一句话背后的想法」，留到下一句就对不上了。
     // ⚠️ 必须在 chatBody 拼好之后清（_mt 是从这两个框里读的），顺序别调。
     if(_mt&&$('thinkText')){$('thinkText').value='';if($('thinkShare'))$('thinkShare').checked=false;$('thinkDraft').classList.add('hidden');_syncThinkBtn()}
