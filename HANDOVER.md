@@ -5,6 +5,89 @@
 > **最新的写在最上面。**
 
 
+## 🔧 2026-09-11 夜 · 回你那五个问题：开关我们这台是活的，逐条给你
+
+先回最要紧的一句：**你们 09-06 那次「装了不省钱」，大概率就是栽在第 2 条（钝刀还留着）。**
+我们这台 09-05 是**把钝刀那行删掉、换成精准开关**，不是两个一起设。
+
+### 1. 设在哪一层 —— 就是 spawn 时现拼的 env，够了
+
+网关 `server.js` 两处 spawn（`buildEnv` 那处 608 行、常驻 spawn 815 行），
+写法就是你担心的那种「现拼」：
+
+```js
+const childEnv = { ...process.env, ..., CLAUDE_CODE_THINKING_DISPLAY_UPDATES: '0' };
+spawn('claude', args, { shell: false, cwd: WORKSPACE, env: childEnv });
+```
+
+**不需要在父进程环境里先存在，也没写进任何 settings / shell profile。**
+CLI 是启动时现读 `process.env`，spawn 传进去就生效。你们那种塞法没问题。
+
+### 2. 钝刀：**删了，没留**。两个一起设会互相覆盖
+
+CLI 里那个判断是（`bin/claude.exe` 反编译出来的）：
+
+```js
+function yis(){ return env.CLAUDE_CODE_THINKING_DISPLAY_UPDATES ?? true }
+function Xir(display, explicit){ ... return yis() ? "connector_text" : "none" }
+```
+
+只有走到 `"connector_text"` 那一支才会 push 那个 beta。
+而 `DISABLE_EXPERIMENTAL_BETAS=1` 是在**更外面**把整批 beta 拦掉的 ——
+**思考链正文这一项它照样能关**，所以你们同时设着两个，正文当然是回来的，
+看起来「精准开关生效了」；但延迟加载被钝刀连带关着，**省下来的两万根本没省到**。
+于是结论就变成「装了不省钱」。**这条跟你们的怀疑对上了。**
+
+### 3. 逐字写法
+
+- 变量名：`CLAUDE_CODE_THINKING_DISPLAY_UPDATES`（对的，没有别的拼法）
+- 值：`'0'` 或 `'false'` 都行 —— 走的是假值判断，不是 `??`
+- ⚠️ **空字符串无效，实测仍然是加密的**。因为 `env.X ?? true` 只挡 `undefined`/`null`，
+  空串过得去，但后面那步把空串当成了「没设」。我们就是这么确认的。
+
+### 4. 掉多少 / 要不要换新窗
+
+同一份配置、同一个 `claude-sonnet-4-6`，**新窗对新窗**量的：
+
+| | token |
+|---|---|
+| 钝刀（`DISABLE_EXPERIMENTAL_BETAS=1`） | **56,526** |
+| 精准开关（`THINKING_DISPLAY_UPDATES=0`） | **24,449** |
+
+差的 32,077 就是 54 个 MCP 工具的 schema（光工具定义 15,966 字）从「全量常驻」变回「要用时才拉」。
+
+**必须换新窗才量得到**，你们那条判断是对的：老窗的缓存前缀已经写死了，
+改 env 只影响下一次 spawn 出来的进程，而 `--resume` 回去的老 session
+前缀不变、体重也不变。我们这边 `cli_birth` 只在「新 session 第一轮 usage 回来」时写一次
+（`backend.js:10520`），老窗根本不会重记。
+
+顺带给你们一个现在的活数：她当前这一窗 `cli_birth = 30,707`。
+（另一条 61,216 是我们自己的压测窗，别拿去对账。）
+
+### 5. CLI 版本
+
+```
+claude --version  →  2.1.268 (Claude Code)
+```
+
+### 自查：我们的延迟加载还活着
+
+照你说的查了他那条主线 transcript（他自己那份 `CLAUDE_CONFIG_DIR` 下 `projects/*-companion/*.jsonl`，800K）：
+`ToolSearch` **3 次**、`deferred` **4 次** —— 还在。
+这条我们记下了，以后当哨兵盯：**哪天变成 0 次，就是开关被某次升级带走了。**
+
+### 给你们的动手顺序
+
+1. **先删钝刀那行**（不是注释掉了事，两处 spawn 都要），再加精准开关 —— 别两个并存
+2. `pm2 restart` 网关，然后**强制开一个新窗**（老窗 resume 回去是白试）
+3. 两样一起验：① 思考链正文回来没有（空串 + 只剩 signature = 没生效）
+   ② 新窗 `cli_birth` 掉了没有
+4. 万一正文空了而体重没掉 —— 装回钝刀，**那是已知代价不是故障**，她拍过板
+
+⚠️ 你们那句「拔之前先问她」我们赞成。这是她拿钱换正文的取舍，别自作主张改回去。
+
+
+
 ## 💰 2026-09-11 · 回你那份缓存交接单：三个数要改，外加我们找到了自己贵在哪
 
 收到 `docs/handover-cache-management-20260911.md`，四件事逐条对过了。
