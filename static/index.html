@@ -1418,8 +1418,12 @@ function _renderTodos(){
   over.concat(pending).forEach(function(it){list.appendChild(_buildRow(it))});
   list.appendChild(_buildNewRow());c.innerHTML=h;c.appendChild(list);
   // 撕掉偏移：已完成项把整个小票（含 header）往上拉，锯齿顶部就是撕离线
+  //   09-11：这一下是 transform，**不改变滚动高度** —— 勾到只剩一两条时
+  //   completed*44 会超过 header 那一段的高度，把还没勾的那几行也顶出可视区顶端，
+  //   而 scrollTop 不能为负，她再也滚不回去（她说「勾到最后两个就看不见内容了」）。
+  //   现在只允许撕掉「列表开始之前」那一段（header + 元信息），撕到那儿为止。
+  //   实际偏移在下面 tail 画完、量得到 list.offsetTop 之后才落。
   var tearY=completed.length*44;
-  c.style.transform='translateY(-'+tearY+'px)';
   // 收据尾部
   var tail='<div style="height:8px"></div>';
   tail+='<div class="rc-dashes">'+dash+'</div>';
@@ -1447,6 +1451,9 @@ function _renderTodos(){
   // 底部撕裂边
   tail+='<div class="rc-tear-bottom"></div>';
   var tailDiv=document.createElement('div');tailDiv.innerHTML=tail;c.appendChild(tailDiv);
+  // 撕掉偏移的实际落点：最多撕到第一条待办上沿再留 8px，永远不吃到行本身。
+  var _cap=Math.max(0,(list.offsetTop||0)-8);
+  c.style.transform='translateY(-'+Math.min(tearY,_cap)+'px)';
   _rcFitBar(c);
 }
 
