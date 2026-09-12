@@ -2026,3 +2026,8 @@ html.ui-plain{
   --font-sans:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Helvetica Neue',system-ui,sans-serif;
   --font-serif:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Helvetica Neue',system-ui,sans-serif;
 }
+
+/* 09-12 官端：他的回复左移 1px（7→6）、字号 15→16；她的字号跟他一致。气泡模式不动（仍是上面 15px 那条）。 */
+html.ui-plain .msg-claude .bubble{padding-left:6px!important}
+html.ui-plain .msg-claude .bubble,html.ui-plain .msg-claude .md,
+html.ui-plain .msg-user .bubble,html.ui-plain .msg-user .md{font-size:16px!important}
