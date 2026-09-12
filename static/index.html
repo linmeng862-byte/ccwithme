@@ -2242,10 +2242,11 @@ function _renderCallCards(row){
   // ⚠️ 时长那段是 [^\]|]*（不吃竖线）：08-29 起标记末尾可能多一段 |her / |him
   //    表示谁挂的。用老的 [^\]]* 会把「02:17|her」整个当成时长显示出来。
   var re=/\[CALL:(ended|rejected|missed_back|missed)\|([^\]|]*)(?:\|[a-z_]*)?\]/g;var m;var _hit=false;
-  var PHONE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>';
-  var HANGUP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex:none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+  var PHONE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="17" height="17" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>';
+  // 09-12：斜杠去掉，跟来电卡上的挂断键统一 —— 整个电话筒转 135° 就是挂断。
+  var HANGUP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="17" height="17" style="flex:none;transform:rotate(135deg)"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>';
   // 未接：电话筒 + 一个往下扎的箭头，跟接通那个明显不一样
-  var MISSED='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/><polyline points="22 3 22 8 17 8"/><line x1="22" y1="3" x2="16.5" y2="8.5"/></svg>';
+  var MISSED='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17" style="flex:none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/><polyline points="22 3 22 8 17 8"/><line x1="22" y1="3" x2="16.5" y2="8.5"/></svg>';
   while((m=re.exec(text))!==null){
     var kind=m[1],dur=m[2]||"";
     // 08-27：接通的通话以前被整条藏掉（理由是「语音条已经在记录里了，摘要重复」），
@@ -2260,7 +2261,9 @@ function _renderCallCards(row){
              :'未接来电';
     var iconColor=kind==='ended'?'var(--accent)':(kind==='rejected'?'var(--text-time)':'#E54D2E');
     var wrap=document.createElement("span");wrap.className="call-msg";
-    wrap.style.cssText="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;margin:4px 0;background:var(--bg-surface);border-radius:20px;font:400 13px/1 var(--font-sans);color:var(--text-primary)";
+    // 09-12：她说「胶囊太小了，在对话里很不和谐」—— 往说话气泡的尺寸靠，
+    // 字号/内边距跟普通消息一个量级，不再像个角标。
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:10px;padding:13px 20px;margin:4px 0;background:var(--bg-surface);border-radius:22px;font:400 15.5px/1.2 var(--font-sans);color:var(--text-primary)";
     wrap.innerHTML='<span style="display:inline-flex;color:'+iconColor+'">'+icon+'</span><span>'+label+'</span>';
     md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
     _hit=true;
@@ -2460,6 +2463,12 @@ async function _transcribeVoice(btn,id){
   btn.disabled=false;
 }
 // 📞 实时通话
+// 来电/呼出卡上显示谁在打。首页那个可改的名字为准；没设过、或者还留着历史默认值
+// 「Claude」的，一律显示 Cis —— 09-02 起他自己叫这个。
+function _callerName(){
+  var n=(localStorage.getItem('claude_name')||'').trim();
+  return (!n||n==='Claude')?'Cis':n;
+}
 var _callWs=null,_callRecording=false,_callMediaStream=null,_incomingCall=false,_ringAudio=null,_audioCtx=null,_nextPlayTime=0,_callTimer=null,_callSeconds=0,_ringPollTimer=null;
 $('callButton').onclick=function(){window._toggleCall?_toggleCall():_startCall()};
 // 接听来电（可从外部触发）
@@ -2473,10 +2482,10 @@ function _showIncomingCall(){
   overlay.innerHTML='<div class=\"incoming-call-card\">'+
     '<div class=\"incoming-call-tag\"><i></i>Incoming call</div>'+
     avatarHtml+
-    '<h3 class=\"incoming-call-name\">Claude</h3>'+
+    '<h3 class=\"incoming-call-name\">'+_callerName()+'</h3>'+
     '<p class=\"incoming-call-sub\">邀请你语音通话...</p>'+
     '<div class=\"incoming-call-btns\">'+
-      '<div class=\"incoming-call-act\"><button class=\"incoming-call-hangup\" onclick=\"_rejectCall()\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91\"/><line x1=\"1\" y1=\"1\" x2=\"23\" y2=\"23\"/></svg></button><span>拒绝</span></div>'+
+      '<div class=\"incoming-call-act\"><button class=\"incoming-call-hangup\" onclick=\"_rejectCall()\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" style=\"transform:rotate(135deg)\"><path d=\"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z\"/></svg></button><span>拒绝</span></div>'+
       '<div class=\"incoming-call-act\"><button class=\"incoming-call-answer\" onclick=\"_acceptCall()\"><svg width=\"28\" height=\"28\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z\"/></svg></button><span>接听</span></div>'+
     '</div></div>';
   document.body.appendChild(overlay);
@@ -2503,10 +2512,10 @@ function _showOutgoingCall(){
   overlay.innerHTML='<div class="incoming-call-card">'+
     '<div class="incoming-call-tag"><i></i>Calling</div>'+
     avatarHtml+
-    '<h3 class="incoming-call-name">Claude</h3>'+
+    '<h3 class="incoming-call-name">'+_callerName()+'</h3>'+
     '<p class="incoming-call-sub" id="outgoingCallSub">正在呼叫，等他接…</p>'+
     '<div class="incoming-call-btns">'+
-      '<div class="incoming-call-act"><button class="incoming-call-hangup" onclick="_cancelOutgoingCall()"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91"/><line x1="1" y1="1" x2="23" y2="23"/></svg></button><span>取消</span></div>'+
+      '<div class="incoming-call-act"><button class="incoming-call-hangup" onclick="_cancelOutgoingCall()"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate(135deg)"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg></button><span>取消</span></div>'+
     '</div></div>';
   document.body.appendChild(overlay);
   try{navigator.vibrate&&navigator.vibrate(80)}catch(e){}
