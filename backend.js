@@ -2426,10 +2426,11 @@ async function synthVoiceTags(text, res) {
   if (!text || text.indexOf('<voice>') === -1) return text;
   const _origText = text;
   const _prov = ttsProvider();
-  const apiKey = _sget(_prov === 'elevenlabs' ? 'elevenlabs_api_key' : 'minimax_api_key');
-  const voiceId = _sget(_prov === 'elevenlabs' ? 'elevenlabs_voice_id' : 'minimax_voice_id');
+  const _elOk = !!(_sget('elevenlabs_api_key') && _sget('elevenlabs_voice_id'));
+  const _mmOk = !!(_sget('minimax_api_key') && _sget('minimax_voice_id'));
   // 没配好就把标签剥了当普通文字发 —— 宁可少个语音条，也不能让她收到一堆尖括号。
-  if (!apiKey || !voiceId) return text.replace(/<\/?voice>/g, '');
+  // 选了 ElevenLabs 但它没配好时，只要 MiniMax 还在就照样有声音（下面会兜）。
+  if (!_mmOk && !(_prov === 'elevenlabs' && _elOk)) return text.replace(/<\/?voice>/g, '');
 
   const re = /<voice>([\s\S]*?)<\/voice>/g;
   const jobs = [];
@@ -2439,7 +2440,9 @@ async function synthVoiceTags(text, res) {
   for (const j of jobs) {
     if (!j.said) { text = text.replace(j.tag, ''); continue; }
     // ElevenLabs 分支：拿到的直接就是 mp3 二进制，没有 JSON 外壳。
-    if (_prov === 'elevenlabs') {
+    // ⚠️ 这里**不 return、不吞异常到底** —— 合成失败就往下掉进 MiniMax 那段重合成一次。
+    //    她要的是「有声音」，不是「哪家的声音」。
+    if (_prov === 'elevenlabs' && _elOk) {
       try {
         const t0 = Date.now();
         const buf = await elevenSynth(j.said);
@@ -2455,20 +2458,21 @@ async function synthVoiceTags(text, res) {
           .run(id, 'voice-' + id + '.mp3', destPath, buf.length, j.said);
         text = text.replace(j.tag, '[VOICE:' + id + '|' + dur + ']');
         console.log('[tts] 他发了一条 ' + dur + ' 的语音（ElevenLabs）');
+        continue;
       } catch (e) {
-        console.warn('[tts] ElevenLabs 语音条合成失败: ' + e.message);
-        text = text.replace(j.tag, j.said);
+        console.warn('[tts] ElevenLabs 语音条合成失败，' + (_mmOk ? '回落 MiniMax 再试: ' : '且 MiniMax 没配，只能发文字: ') + e.message);
+        if (!_mmOk) { text = text.replace(j.tag, j.said); continue; }
+        // 没 continue —— 故意掉进下面的 MiniMax 分支。
       }
-      continue;
     }
     try {
       const t0 = Date.now();
       const resp = await fetch(minimaxUrl(), {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': 'Bearer ' + _sget('minimax_api_key'), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'speech-2.8-hd', text: j.said, stream: false,
-          voice_setting: { voice_id: voiceId, speed: 1.0 },
+          voice_setting: { voice_id: _sget('minimax_voice_id'), speed: 1.0 },
           audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 }
         }),
         signal: AbortSignal.timeout(30000)
@@ -2753,11 +2757,16 @@ app.post('/api/tts', auth, async (req, res) => {
     if (!text) return res.status(400).json({ error: 'text required' });
     const _ttsT0 = Date.now();
     if (ttsProvider() === 'elevenlabs') {
-      const buf = await elevenSynth(text);
-      logVoiceUsage('tts', text.length, Date.now() - _ttsT0);
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Content-Length', buf.length);
-      return res.send(buf);
+      try {
+        const buf = await elevenSynth(text);
+        logVoiceUsage('tts', text.length, Date.now() - _ttsT0);
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Length', buf.length);
+        return res.send(buf);
+      } catch (e) {
+        // 一个字节都还没发出去，所以这里能干干净净地改走 MiniMax。
+        console.warn('[tts] ElevenLabs 失败，回落 MiniMax: ' + e.message);
+      }
     }
     const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
     const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
@@ -2814,9 +2823,9 @@ app.post('/api/tts', auth, async (req, res) => {
 // MiniMax 流式 TTS——边生成边播放，零等待
 app.post('/api/tts/stream', auth, async (req, res) => {
   const _prov = ttsProvider();
-  const apiKey = _sget(_prov === 'elevenlabs' ? 'elevenlabs_api_key' : 'minimax_api_key');
-  const voiceId = _sget(_prov === 'elevenlabs' ? 'elevenlabs_voice_id' : 'minimax_voice_id');
-  if (!apiKey || !voiceId) { res.status(400).json({ error: '请先配置 ' + (_prov === 'elevenlabs' ? 'ElevenLabs' : 'MiniMax') + ' API Key 和 Voice ID' }); return; }
+  const _elOk = !!(_sget('elevenlabs_api_key') && _sget('elevenlabs_voice_id'));
+  const _mmOk = !!(_sget('minimax_api_key') && _sget('minimax_voice_id'));
+  if (!_mmOk && !(_prov === 'elevenlabs' && _elOk)) { res.status(400).json({ error: '请先配置 MiniMax 或 ElevenLabs 的 API Key 和 Voice ID' }); return; }
   const { text } = req.body;
   if (!text) { res.status(400).json({ error: 'text required' }); return; }
 
@@ -2836,11 +2845,17 @@ app.post('/api/tts/stream', auth, async (req, res) => {
   // ElevenLabs 流式：拿到的是**裸 PCM 二进制流**，不是 SSE、没有 JSON 分片。
   // 所以这儿自己把二进制切成 hex 往外发，前端那套 {type:'audio', data:hex} 一个字都不用改
   // —— 也就没有 MiniMax 那个「最后再补一条整段汇总包」的坑，不需要 isFinal 判断。
-  if (_prov === 'elevenlabs') {
+  //
+  // 兜底的分界线是**「第一片音频有没有发出去」**：
+  //   发出去之前挂 → 悄悄改走 MiniMax，她那头只是慢半拍，听不出来换了家。
+  //   发出去之后挂 → 不能再兜了，前端已经在播 ElevenLabs 的 PCM，
+  //                  这时候接上 MiniMax 的分片只会变成一句话两个声音。
+  let _elSentAudio = false;
+  if (_prov === 'elevenlabs' && _elOk) {
     try {
-      const elResp = await fetch(elevenUrl(voiceId, { stream: true, format: 'pcm_24000' }), {
+      const elResp = await fetch(elevenUrl(_sget('elevenlabs_voice_id'), { stream: true, format: 'pcm_24000' }), {
         method: 'POST',
-        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+        headers: { 'xi-api-key': _sget('elevenlabs_api_key'), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text,
           model_id: _sget('elevenlabs_model_id') || 'eleven_multilingual_v2',
@@ -2853,9 +2868,13 @@ app.post('/api/tts/stream', auth, async (req, res) => {
         // ⚠️ 这里一定要把 ElevenLabs 的原话带出去：pcm_24000 是付费档才给的格式，
         //    额度不够时它回的是 401，光看状态码会以为是 key 错了，能查很久。
         const body = (await elResp.text()).slice(0, 400);
-        res.write('data: ' + JSON.stringify({ type: 'error', message: 'ElevenLabs ' + elResp.status + '：' + body }) + '\n\n');
-        res.end();
-        return;
+        console.warn('[tts] ElevenLabs 流式 ' + elResp.status + '：' + body);
+        if (!_mmOk) {
+          res.write('data: ' + JSON.stringify({ type: 'error', message: 'ElevenLabs ' + elResp.status + '：' + body }) + '\n\n');
+          res.end();
+          return;
+        }
+        throw new Error('回落 MiniMax');  // 掉到下面的 catch，再掉出去走 MiniMax
       }
       // 流式同样拿不到用量字段，按送进去的字符数记账。
       logVoiceUsage('tts', text.length, 0);
@@ -2872,29 +2891,35 @@ app.post('/api/tts/stream', auth, async (req, res) => {
         if (odd) { chunk = Buffer.concat([odd, chunk]); odd = null; }
         if (chunk.length % 2) { odd = chunk.subarray(chunk.length - 1); chunk = chunk.subarray(0, chunk.length - 1); }
         if (chunk.length) {
+          _elSentAudio = true;
           res.write('data: ' + JSON.stringify({ type: 'audio', data: chunk.toString('hex') }) + '\n\n');
           res.flush?.();
         }
       }
       res.write('data: ' + JSON.stringify({ type: 'done' }) + '\n\n');
       res.end();
+      return;
     } catch (e) {
-      if (!aborted) {
+      if (aborted) return;                       // 她挂了电话，不是出错
+      if (_mmOk && !_elSentAudio) {
+        console.warn('[tts] ElevenLabs 流式失败，回落 MiniMax: ' + e.message);
+        // 不 return —— 往下掉进 MiniMax 那段重开一路流。meta 还没发，接得上。
+      } else {
         try { res.write('data: ' + JSON.stringify({ type: 'error', message: e.message }) + '\n\n'); res.end(); } catch (_) {}
+        return;
       }
     }
-    return;
   }
 
   try {
     const mmResp = await fetch(minimaxUrl(), {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + _sget('minimax_api_key'), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'speech-2.8-hd',
         text: text,
         stream: true,
-        voice_setting: { voice_id: voiceId, speed: 1.0 },
+        voice_setting: { voice_id: _sget('minimax_voice_id'), speed: 1.0 },
         audio_setting: { sample_rate: 24000, format: 'pcm', channel: 1 }
       }),
       signal: AbortSignal.timeout(60000)
