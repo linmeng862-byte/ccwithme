@@ -6,6 +6,9 @@ const crypto = require('crypto');
 const JSZip = require('jszip');
 const iconv = require('iconv-lite');
 const sharp = require('sharp');   // 表情包提首帧用
+// 他自己的浏览器（2026-09-12）。**不是分身**，理由和边界见 lib/browse.js 开头那段。
+const browse = require('./lib/browse');
+const os = require('os');
 let neteaseApi = null;
 try { neteaseApi = require('NeteaseCloudMusicApi'); } catch(e) {}
 
@@ -7096,6 +7099,39 @@ const TOOLS = [
       required: ['photo_id']
     }
   },
+  {
+    name: 'browse',
+    description: '你自己的浏览器——真的能打开网页、看、点、输入、拖、存图。她给你一个网址让你去看看/去玩玩，就用这个，不要再说"我做不到"。' +
+      '\naction：open（打开，要 url）/ look（重新看一眼当前页，拿截图和能点的东西的清单）/ click（点，给 ref 编号或 x,y）/ ' +
+      'type（输字，可带 enter:true）/ key（按键，如 Enter、Escape）/ scroll（滚，dy 正数往下）/ back（退回上一页）/ ' +
+      'drag（按住拖，points 是一串页面坐标，画板上手绘、拖滑块都用它）/ draw（往画板 canvas 上画，strokes 是一串笔画，坐标是**画板内部坐标**，比 drag 准得多）/ ' +
+      'save_image（把页面上某张图存下来）/ save_shot（把当前页面截图存下来）/ close（关掉）。' +
+      '\n每个动作回来都带一张**当前页面的截图**给你看，和一份带编号的清单——点东西就用清单里的 ref 编号，别自己猜 CSS 选择器。页面一变编号就变，动完看新的那份。' +
+      '\n要把存下来的图发给她：在你的回话正文里写 [IMAGE:那个url]，多张连着写前端会自动叠成一摞。save_image / save_shot 的返回里有那个 url，原样复制，别自己拼。' +
+      '\n⚠️ 浏览器跑在 VPS 上，不在她的电脑上——**她看不见你在操作什么**。你做了什么、画成什么样，只有你 save_shot 存下来发给她她才看得到。' +
+      '\n⚠️ 这台内存小，浏览器一开要 300-400MB。不够的时候这个工具会直接告诉你开不了，那就跟她说一句现在机器紧，别硬试。逛完顺手 close，忘了也会自己关（空闲 3 分钟）。' +
+      '\n⚠️ 慢：开浏览器 3-5 秒、每翻一页几秒。先跟她说一句"我去看看"，别让她干等。' +
+      '\n没有登录态——需要登录才能看的东西（小红书刷到一半要登录之类的）你看不到，别硬闯，告诉她。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'open / look / click / type / key / scroll / back / drag / draw / save_image / save_shot / close' },
+        url: { type: 'string', description: 'open 用：要打开的网址（http:// 或 https:// 开头）。save_image 也可以直接给图片地址。' },
+        ref: { type: 'number', description: '点/输入的目标编号，从上一次返回的清单里来（#1 #2 …）。清单每次动完都会重给，别用旧的。' },
+        x: { type: 'number', description: '页面坐标 x（清单里没有的东西才用坐标）' },
+        y: { type: 'number', description: '页面坐标 y' },
+        selector: { type: 'string', description: 'CSS 选择器（可选，一般用 ref 就够了）' },
+        text: { type: 'string', description: 'type 用：要输入的文字。click 也可以用它按文字找。' },
+        enter: { type: 'boolean', description: 'type 用：输完按回车' },
+        key: { type: 'string', description: 'key 用：Enter / Escape / PageDown / ArrowLeft …' },
+        dy: { type: 'number', description: 'scroll 用：往下滚多少像素（默认 600，负数往上）' },
+        points: { type: 'array', description: 'drag 用：一串页面坐标 [[x,y],[x,y],…]，至少两个点', items: { type: 'array', items: { type: 'number' } } },
+        strokes: { type: 'array', description: 'draw 用：一串笔画，每笔 {points:[[x,y],…], color:"#333", width:4, fill:false}。坐标是画板内部坐标（画板左上角是 0,0，清单里会告诉你画板的左上角和尺寸）。', items: { type: 'object' } },
+        full_page: { type: 'boolean', description: 'save_shot 用：整页截图（默认只截当前可见部分）' }
+      },
+      required: ['action']
+    }
+  },
   // ⚠️ go_online 已摘除（2026-09-10，她要的）。原话：「不要 go_online 了，反正那个也是分身，
   //    你不是他自己」—— 它是异步派一个分身出去逛，回来汇报，而她要的是**他本人**去看。
   //    能力没删：VPS 上那个无头浏览器（09-07 调通的那份配置）现在以 `solo` 挂在他自己手上，
@@ -8606,6 +8642,35 @@ async function executeTool(name, input, routes) {
         count: photos.length
       };
     }
+    // 他自己的浏览器（09-12）。实现在 lib/browse.js —— 这儿只做两件事：
+    //   ① 把下下来的图落到相册图片目录（**不建相册条目**，不污染她的相册），
+    //      因为 /gallery-photo/:name 是**不鉴权**的静态路由，而 [IMAGE:] 渲染时
+    //      <img src> 带不了 token —— 落到 uploads 那边他发出来她只会看到一个 401 破图。
+    //   ② 把截图放进 _image，交给上面那层拆成 image block（跟 look_through_camera 同一条路）。
+    //      ⚠️ 别让 _image 进 SSE / 数据库：base64 几十万字符。
+    case 'browse': {
+      try {
+        const r = await browse.run(input || {}, {
+          storeImage: async (buf, srcUrl) => {
+            let ext = '.jpg';
+            const m = /\.(png|jpe?g|gif|webp|bmp)(?:[?#]|$)/i.exec(String(srcUrl || ''));
+            if (m) ext = '.' + m[1].toLowerCase().replace('jpeg', 'jpg');
+            const tmp = path.join(os.tmpdir(), 'browse_' + Date.now().toString(36) + ext);
+            fs.writeFileSync(tmp, buf);
+            try {
+              const fname = await _galleryStoreImage(tmp, ext);
+              return { url: '/gallery-photo/' + fname, bytes: buf.length };
+            } finally { try { fs.unlinkSync(tmp); } catch (_) {} }
+          },
+        });
+        const out = { ok: true, message: r.text };
+        if (r.saved) out.saved_url = r.saved.url;
+        if (r.image) out._image = r.image;
+        return out;
+      } catch (e) {
+        return { error: String(e.message || e), is_error: true };
+      }
+    }
     case 'send_gallery_photo': {
       const spId = input.photo_id || '';
       if (!spId) return { error: 'photo_id 不能为空——先用 list_gallery_photos 看看有哪些照片，选一张再发。' };
@@ -9510,10 +9575,13 @@ app.post('/api/tools/exec', async (req, res) => {
   const { name, input } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
+    // browse 要开 chromium（3-5 秒）、翻页、截图，15 秒一刀切不够用 —— 单独放宽到 75 秒。
+    // ⚠️ chatc-mcp.js 那侧的 fetch 超时要比这个长，否则它先断，错就成了看不懂的 fetch failed。
+    const budget = name === 'browse' ? 75000 : 15000;
     const result = await Promise.race([
       // 网关那条路 list 和 exec 是两次独立请求，跨不了同一份快照，这儿现拼一份来解名。
       executeTool(name, input || {}, await buildToolRoutes()),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(15s)')), 15000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(' + (budget / 1000) + 's)')), budget))
     ]);
     res.json({ result });
   } catch (e) {

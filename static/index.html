@@ -28,6 +28,9 @@
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
+<!-- 叠卡（微信式多图合并）：第三方组件 PhotoStack，非商用许可，见 vendor-licenses/ -->
+<link rel="stylesheet" href="/css/photo-stack.css?v=1">
+<script src="/js/photo-stack.js?v=1"></script>
 <script src="/js/books.js?v=49"></script>
 <script src="/js/diary.js?v=11"></script>
 <script src="/js/calendar.js?v=1"></script>
@@ -3858,6 +3861,74 @@ $('topbarModelButton').onclick=()=>{_modelPage='main';renderModelSheet();sheet('
 var _avatarUser='<div class="msg-avatar">🦀</div>';var _avatarClaude='<div class="msg-avatar"><svg viewBox="0 0 16 16" width="24" height="24" fill="#fff"><use href="#claude-mark"/></svg></div>';
 function _syncAvatarUser(){var d=localStorage.getItem('home_avatar');if(d){_avatarUser='<div class="msg-avatar"><img src="'+d+'" style="width:100%;height:100%;border-radius:50%;object-fit:cover"></div>';var es=document.querySelectorAll('.msg-user .msg-avatar');for(var i=0;i<es.length;i++){es[i].innerHTML='<img src="'+d+'" style="width:100%;height:100%;border-radius:50%;object-fit:cover">'}}};_syncAvatarUser();
 function _syncAvatarClaude(){var d=localStorage.getItem('claude_avatar');if(d){_avatarClaude='<div class="msg-avatar"><img src="'+d+'" style="width:100%;height:100%;border-radius:50%;object-fit:cover"></div>';var es=document.querySelectorAll('.msg-claude .msg-avatar');for(var i=0;i<es.length;i++){es[i].innerHTML='<img src="'+d+'" style="width:100%;height:100%;border-radius:50%;object-fit:cover">'}}else{_avatarClaude='<div class="msg-avatar"><svg viewBox="0 0 16 16" width="16" height="16" fill="#fff"><use href="#claude-mark"/></svg></div>'}};_syncAvatarClaude();
+// ── 叠卡：一条里好几张图先叠成一摞（微信那样，能左右划），点一下摊开 ──
+// 09-12 她要的。**摊开之后的那层没动** —— 还是原来的 .user-images 横排 /
+// 他那侧的并排大图，点某一张进的也还是原来那个 .image-expand 灯箱。
+// 叠卡只是给「收起来的样子」加了一层，不是新的看图器。
+// 组件是第三方的 PhotoStack（/js/photo-stack.js，PolyForm 非商用，许可在 vendor-licenses/）。
+//
+// ⚠️ 她那侧的图是懒加载的（src 空着，进视口才由 lazyImgObserver 拉）。叠卡不能只吃 src：
+//    要把 _lazyAtt 转到卡片自己的 img 上再 observe，不然一摞全是空白卡。
+//    反过来，摊开时原横排那些 img 还没 src（display:none 不进视口、观察器不触发），
+//    直接把叠卡上已经拿到的 blob URL 抄过去，省一次重拉。
+var PHOTO_STACK_MIN=2;   // 几张起叠
+function _mountPhotoStack(imagesRow,items,align){
+  if(!window.PhotoStack||!imagesRow||!items||items.length<PHOTO_STACK_MIN)return null;
+  var st=null,host=null,chip=null;
+  // 收起：摊开后在横排下面挂一颗「收起」，点了重新叠回去。
+  // 重叠之前把横排上已经拿到的 src 抄回 items —— 那会儿图早加载好了，
+  // 重建的叠卡直接有图，不用再走一遍懒加载（也不会闪一下空白卡）。
+  function collapse(){
+    if(chip){chip.remove();chip=null}
+    var rowImgs=imagesRow.querySelectorAll('img');
+    for(var i=0;i<rowImgs.length;i++){
+      var s=rowImgs[i].getAttribute('src');
+      if(s&&items[i]&&!items[i].src)items[i].src=s;
+    }
+    mount();
+  }
+  function expand(){
+    imagesRow.classList.remove('stack-collapsed');
+    var rowImgs=imagesRow.querySelectorAll('img');
+    for(var i=0;i<rowImgs.length;i++){
+      var ri=rowImgs[i],card=st&&st.cards[i]?st.cards[i].querySelector('img'):null;
+      if(!ri.getAttribute('src')&&card&&card.src)ri.src=card.src;
+    }
+    if(st){st.destroy();st=null}
+    if(host){host.remove();host=null}
+    chip=document.createElement('button');chip.type='button';
+    chip.className='stack-collapse-btn'+(align==='left'?' is-left':'');
+    chip.innerHTML='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 9 12 16 20 9"/></svg><span>收起</span>';
+    chip.onclick=function(e){e.stopPropagation();collapse()};
+    imagesRow.parentNode.insertBefore(chip,imagesRow.nextSibling);
+  }
+  function mount(){
+    host=document.createElement('div');host.className='photo-stack-host';
+    if(align==='left')host.classList.add('is-left');
+    imagesRow.parentNode.insertBefore(host,imagesRow);
+    imagesRow.classList.add('stack-collapsed');
+    st=new PhotoStack(host,items.map(function(it){return it.src||''}),{onTap:expand});
+    // 懒加载的那些：把附件挂到叠卡自己的 img 上
+    st.cards.forEach(function(c,i){
+      var it=items[i];if(!it||it.src||!it.lazyAtt)return;
+      var im=c.querySelector('img');if(!im)return;
+      im._lazyAtt=it.lazyAtt;lazyImgObserver.observe(im);
+    });
+  }
+  mount();
+  return st;
+}
+// 他那侧：[IMAGE:…] 渲染出来的并排大图（.claude-images），多于一张就收成一摞
+function _stackifyClaudeImages(md){
+  if(!md)return;
+  var rows=md.querySelectorAll('.claude-images');
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i];if(row.dataset.stacked)continue;row.dataset.stacked='1';
+    var imgs=row.querySelectorAll('img'),items=[];
+    for(var j=0;j<imgs.length;j++)items.push({src:imgs[j].src});
+    _mountPhotoStack(row,items,'left');
+  }
+}
 function _buildUserRow(text,timestamp='',attachments=[]){const row=document.createElement('div');row.className='msg-user';row.dataset.raw=text;row.dataset.timestamp=timestamp||'';
   row.innerHTML=_avatarUser;
   var _isImage=function(a){if(a.is_image!==undefined)return a.is_image;var n=a.name||a.filename||a.path||'';return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(n)};
@@ -3867,6 +3938,8 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
   if(imgs.length){
     col=document.createElement('div');col.className='msg-user-col';
     const wrap=document.createElement('div');wrap.className='user-images';imgs.forEach(a=>{const img=document.createElement('img');img.className='user-image';img.alt=a.name||'';img.title='点击放大';if(a.preview){img.src=a.preview}else{img._lazyAtt=a;lazyImgObserver.observe(img)}img.onclick=function(e){e.stopPropagation();var ex=document.createElement('div');ex.className='image-expand';var fi=document.createElement('img');fi.src=img.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)};wrap.append(img)});col.append(wrap);
+    // 多图 → 先叠成一摞，点一下摊开成上面这个横排（见 _mountPhotoStack）
+    _mountPhotoStack(wrap,imgs.map(function(a){return{src:a.preview||'',lazyAtt:a.preview?null:a}}),'right');
   }
   var b=document.createElement('div');b.className='bubble';
   // 整条只有一个表情 → 脱壳，渲染成裸图（CSS 见 .bubble.sticker-only）。
@@ -4240,12 +4313,14 @@ function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripU
   if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
   var imgRe=/\[IMAGE:([^\]]+)\]/g;var imgsHtml='',imgMatch;imgRe.lastIndex=0;
   while((imgMatch=imgRe.exec(src))!==null){imgsHtml+='<img src=\"'+assetUrl(imgMatch[1])+'\" style=\"max-width:320px;max-height:400px;border-radius:26px;display:block;margin:6px 0;cursor:pointer;object-fit:scale-down;box-shadow:0 4px 24px rgba(0,0,0,.06)\" onclick=\"var ex=document.createElement(\'div\');ex.className=\'image-expand\';var fi=document.createElement(\'img\');fi.src=this.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)\" />'}
-  if(imgsHtml){src=src.replace(imgRe,'');md.innerHTML=imgsHtml+(src.trim()?'':'');_fixImgSrcs(md);if(!src.trim())return}var cmdRe=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var cmdHtml='',cmdMatch;cmdRe.lastIndex=0;while((cmdMatch=cmdRe.exec(src))!==null){var cid=cmdMatch[1],ctype=cmdMatch[2],ctitle=cmdMatch[3];var cmdIcon=_cmdIconSvg(ctype);cmdHtml+='<div class="cmd-capsule" data-cmd-id="'+cid+'" data-cmd-type="'+ctype+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer" onclick="openCmdCapsule(\''+cid+'\')"><span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span></div>'}if(cmdHtml){src=src.replace(cmdRe,'')}if(window.marked){try{var markedResult=marked.parse(src,{breaks:true,gfm:true});md.innerHTML=(imgsHtml||'')+(cmdHtml||'')+markedResult.trimEnd();md.querySelectorAll('a[href]').forEach(function(a){var h=a.getAttribute('href');if(h&&/^https?:\/\//.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});
+  // 09-12：两张以上包一层 .claude-images，交给 _stackifyClaudeImages 收成一摞（单张不包，版式不变）
+  if(imgsHtml&&imgsHtml.split('<img ').length-1>=PHOTO_STACK_MIN)imgsHtml='<div class="claude-images">'+imgsHtml+'</div>';
+  if(imgsHtml){src=src.replace(imgRe,'');md.innerHTML=imgsHtml+(src.trim()?'':'');_fixImgSrcs(md);_stackifyClaudeImages(md);if(!src.trim())return}var cmdRe=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var cmdHtml='',cmdMatch;cmdRe.lastIndex=0;while((cmdMatch=cmdRe.exec(src))!==null){var cid=cmdMatch[1],ctype=cmdMatch[2],ctitle=cmdMatch[3];var cmdIcon=_cmdIconSvg(ctype);cmdHtml+='<div class="cmd-capsule" data-cmd-id="'+cid+'" data-cmd-type="'+ctype+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer" onclick="openCmdCapsule(\''+cid+'\')"><span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span></div>'}if(cmdHtml){src=src.replace(cmdRe,'')}if(window.marked){try{var markedResult=marked.parse(src,{breaks:true,gfm:true});md.innerHTML=(imgsHtml||'')+(cmdHtml||'')+markedResult.trimEnd();md.querySelectorAll('a[href]').forEach(function(a){var h=a.getAttribute('href');if(h&&/^https?:\/\//.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});
   // ── Journey Cards: 检测 <journey> 标签 ──
   if(/<journey>/.test(src)&&typeof _JC!=='undefined'&&_JC.parseJourneyTags){var jcParts=_JC.parseJourneyTags(src);if(jcParts.length>1||jcParts[0].type==='journey'){(function(){var html='';jcParts.forEach(function(p){if(p.type==='text'&&p.text.trim()){try{var m=marked.parse(p.text,{breaks:true,gfm:true});html+=m.trimEnd()}catch(e){html+='<p>'+_jcEscape(p.text)+'</p>'}}else if(p.type==='journey'){html+=_JC.renderCard({id:p.id,title:'...',stops:[]})}});md.innerHTML=html||md.innerHTML;
       // 异步加载真实 journey 数据替换占位卡片
       jcParts.forEach(function(p){if(p.type==='journey'&&p.id){_JC.fetchJourney(p.id).then(function(j){var old=md.querySelector('.jc-card[data-jc-id=\"'+_jcEscape(p.id)+'\"]');if(old){var cardHtml=_JC.renderCard(j);var tmp=document.createElement('div');tmp.innerHTML=cardHtml;var newCard=tmp.firstChild;if(newCard&&old.parentNode){old.parentNode.replaceChild(newCard,old)}}_JC.bindCards(md)}).catch(function(){})}})})()}}
-  _stripPageStyles(md);_addHtmlPreviews(md);_fixImgSrcs(md);_JC.bindCards(md);return}catch(e){}}md.innerHTML='';src.split(/\n{2,}/).filter(function(x){return x.length}).forEach(function(part){var p=document.createElement('p');p.textContent=part;md.append(p)});if(!md.childNodes.length)md.textContent=''}
+  _stripPageStyles(md);_addHtmlPreviews(md);_fixImgSrcs(md);_stackifyClaudeImages(md);_JC.bindCards(md);return}catch(e){}}md.innerHTML='';src.split(/\n{2,}/).filter(function(x){return x.length}).forEach(function(part){var p=document.createElement('p');p.textContent=part;md.append(p)});if(!md.childNodes.length)md.textContent=''}
 function _renderArtifactCard(art,parent){if(!art||!art.content||!parent)return;_addArtifactToList(art);var lang=art.language||'html';var card=document.createElement('div');card.className='artifact-card';card.style.cssText='margin:10px 0;width:100%;max-width:440px;border:1px solid var(--border);border-radius:18px;overflow:hidden;background:var(--bg-surface);cursor:pointer;transition:box-shadow .2s';card.onmouseenter=function(){card.style.boxShadow='0 3px 16px rgba(0,0,0,.05)'};card.onmouseleave=function(){card.style.boxShadow='none'};var hdr=document.createElement('div');hdr.style.cssText='display:flex;align-items:center;gap:12px;padding:10px 16px;user-select:none';var iconBox=document.createElement('div');iconBox.style.cssText='width:30px;height:30px;border-radius:8px;background:#3D3A36;color:#F5F2ED;display:grid;place-items:center;font-size:11px;font-weight:700;flex:none;transform:rotate(-6deg)';iconBox.innerHTML=lang==='html'?'&lt;/&gt;':lang.toUpperCase().slice(0,2);var info=document.createElement('div');info.style.cssText='flex:1;min-width:0';var nameEl=document.createElement('div');nameEl.style.cssText='font:600 14px/1.2 var(--font-sans);color:#2B2927';nameEl.textContent=art.title||'Artifact';var typeEl=document.createElement('div');typeEl.style.cssText='font:12px var(--font-sans);color:#9A948C;margin-top:2px';typeEl.textContent='Code · '+lang.toUpperCase();info.append(nameEl,typeEl);hdr.append(iconBox,info);var dlBtn=document.createElement('button');dlBtn.style.cssText='width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--text-secondary);display:grid;place-items:center;cursor:pointer;flex:none;font-size:14px';dlBtn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';dlBtn.title='Download '+art.title;dlBtn.onclick=function(e){e.stopPropagation();_downloadArtifact(art)};hdr.append(dlBtn);card.append(hdr);var expanded=false,iframe=null;card.onclick=function(e){if(e.target===dlBtn)return;if(expanded){if(iframe){iframe.remove();iframe=null}expanded=false;card.style.cursor='pointer';return}expanded=true;card.style.cursor='default';iframe=document.createElement('iframe');iframe.style.cssText='width:100%;min-height:680px;border:none;border-top:1px solid var(--border);display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob([art.content],{type:'text/html'}));card.append(iframe)};parent.appendChild(card)}
 function _maybeRenderArtifact(content){if(!content||typeof content!=='object')return;var art=content.artifact;if(!art||!art.content)return;var msg=document.querySelector('.msg-claude.streaming');if(!msg)return;var body=msg.querySelector('.msg-body');if(body)_renderArtifactCard(art,body)}
 function _renderGallerySaveCard(gs,parent){if(!gs||!gs.image_url||!parent)return;var albumName=gs.album_title||'Home';var caption=gs.caption||'';var card=document.createElement('div');card.className='memory-save-card';card.onclick=function(){if(typeof openGalleryPanel==='function'){openGalleryPanel();setTimeout(function(){if(typeof _galleryAlbums!=='undefined'){var a=_galleryAlbums.find(function(x){return x.id===gs.album_id});if(a&&typeof _openAlbum==='function')_openAlbum(a.id)}},600)}};

@@ -5,6 +5,62 @@
 > **最新的写在最上面。**
 
 
+## 🌐 2026-09-12 夜 · 他有自己的浏览器了（不是分身），外加微信式叠图卡
+
+她那句原话：「我之前发链接给他想让他去那个网站画画，他说不行」。查下来是实话 ——
+他手上一个浏览器工具都没有：`WebSearch` 回的是文字，`WebFetch` 在网关里显式禁着，
+`go_online` 09-10 已经摘了（她不要分身）。逛街那条 `/wander` 也是**分身**，
+而且从 09-06 就被前端关掉了（`OFF` 文件在，cron 每天空跑两趟只打「开关是关的，跳过」）。
+
+### 1. `browse` —— 一条工具、里面分动作
+
+新文件 `lib/browse.js`（实现）+ `backend.js` 里一条工具定义和一个 case。
+action：`open / look / click / type / key / scroll / back / drag / draw / save_image / save_shot / close`。
+
+**为什么不把 playwright 那 22 个 MCP 工具直接挂给他**：22 条工具定义每开一窗重付一遍
+（09-10 算过，碎片进前缀 $1.4-2.7/天）。一条定义几十 token，能力一样。
+
+几个别踩的点：
+
+- **每步都回一张当前页面截图**，靠 `_image` 走 `chatc-mcp.js`（那侧改了：把 `_image`
+  摘出来单独成 image content）。**不改那儿他就是瞎的** —— 以前工具结果只能是文字，
+  而且 `JSON.stringify` 会把几十万字符的 base64 当正文塞给他。
+- **要扫 iframe**。itch.io 这类站真正的画板在 iframe 里，只扫顶层文档等于什么都没看见。
+  `interactives()` 和 `draw` 都是逐 frame 试的，子框架坐标要加/减框架自身位置。
+- **超时**：`/api/tools/exec` 原来 15s 一刀切，开 chromium 就 3-5s。browse 单独放到 75s，
+  `chatc-mcp.js` 那侧的 fetch 跟着放到 90s（**必须比 backend 长**，否则先断的是它，
+  错就成了看不懂的 fetch failed）。
+- **内存**：2G 机器，chromium 300-400MB。开之前看 `MemAvailable`，低于 450MB 直接拒；
+  空闲 3 分钟自动关；只留一个 page。
+- **存图落在相册的图片目录但不建相册条目**。因为 `/gallery-photo/:name` 是**不鉴权**的
+  静态路由，而 `[IMAGE:]` 渲染时 `<img src>` 带不了 token —— 落到 uploads 那边
+  他发出来她只会看到一个 401 破图。不建条目是为了不污染她的相册。
+- **没有「在页面里跑任意 JS」这个动作**。她点头要给，写的时候被审核层以「制造远程执行面」
+  拦了，照实留在 `lib/browse.js` 开头。替代是 `draw`：只收数据（一串坐标+颜色+粗细），
+  页面里跑的是写死的那段函数。
+
+实测她给的那个站（wigglypaint，itch.io）：打开 → 点 Run tool → 点 Let's Draw →
+`drag` 画了个笑脸 → `save_shot`，整条通。
+⚠️ 直接往 canvas 上 `draw` 会被这类应用自己的重绘刷掉，**手绘要走它自己的画笔**（drag）。
+
+### 2. 叠图卡（前端）
+
+一条消息里 ≥2 张图，先收成微信那种一摞（能左右划、快甩翻页），**点一下摊开成原来的横排**，
+再点某张还是原来那个 `.image-expand` 灯箱 —— 摊开之后的两层一个字没动。摊开后下面有颗「收起」。
+组件是第三方 PolyForm 非商用的 PhotoStack，原封不动放在 `static/js|css/photo-stack.*`，
+许可抄进 `vendor-licenses/`，接进去的胶水在 `_mountPhotoStack` / `_stackifyClaudeImages`。
+她那侧的图是懒加载的，叠卡要把 `_lazyAtt` 转到卡片自己的 img 上再 observe，否则一摞空白卡。
+**相册发来的图不走这条**（那是 `.gallery-photo-msg`，两条独立渲染路径）—— 她说先不动。
+
+### 还欠的
+
+- **登录态**：小红书刷到要登录那步过不去。现成的路是那个第三方 `xiaohongshu-mcp`
+  （Go 二进制、扫码登录），她还没决定装不装。真装的话建议**包一层**，
+  只暴露只读 + 存图，别把 `publish_content` / `post_comment` / `like_feed` 也给他。
+- **她看不见过程**：浏览器在服务器上，他做什么只有 `save_shot` 发出来她才看得到。
+- 逛街那条 `/wander`（分身）代码还在，只是 cron 已经清掉了。
+
+
 ## 📞 2026-09-12 晚 · 接着你们那版：移植 + 做掉清单里两条 + 逮到一个你们多半也有的 bug
 
 按你们那份一条条对过来的。**先说最要紧的一条**：
