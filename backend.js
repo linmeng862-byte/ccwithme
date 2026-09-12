@@ -10686,12 +10686,21 @@ async function handleGatewayChat(req, res, ctx) {
         let evt;
         try { evt = JSON.parse(line.slice(5)); } catch { continue; }
         if (evt.thinking) {
+          // 09-13：查「通话首字 8~11 秒」。首字那个探针只认 text delta，
+          // 他在想的那几秒是看不见的。这里补一刀：第一段思考什么时候到、到出字前想了多少字。
+          if (ctx.voiceT0 && !ctx._firstThinkAt) {
+            ctx._firstThinkAt = Date.now();
+            console.log('[延迟·后端] 网关第一段思考 +' + (ctx._firstThinkAt - ctx.voiceT0) + 'ms');
+          }
           gwThinking += evt.thinking;
           res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
         } else if (evt.delta) {
           if (ctx.voiceT0 && !ctx._firstDeltaAt) {
             ctx._firstDeltaAt = Date.now();
-            console.log('[延迟·后端] 网关第一个字 +' + (ctx._firstDeltaAt - ctx.voiceT0) + 'ms');
+            console.log('[延迟·后端] 网关第一个字 +' + (ctx._firstDeltaAt - ctx.voiceT0) + 'ms' +
+              (ctx._firstThinkAt
+                ? '（想了 ' + (ctx._firstDeltaAt - ctx._firstThinkAt) + 'ms、' + gwThinking.length + ' 字）'
+                : '（这轮没思考）'));
           }
           assistantText += evt.delta;
           res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n');
@@ -13676,9 +13685,13 @@ wss.on('connection', (ws, req) => {
   // 先把 activeTurn 切过去（旧那轮后面的 delta 就不推了），等旧那轮跑完再接新的。
   // ⚠️ 不能两轮并发：会抢同一个 CLI 会话。旧那轮照样跑完、整段存库（09-05 的断线兜底不动）。
   let activeTurn;
+  // 网关里**真正在跑**的那一轮。跟 activeTurn 不是一回事：
+  // activeTurn 是「该不该把 delta 推给她」的哑音闸，她一排队就切到新轮；
+  // 真要叫停的是旧那轮，所以打断必须认这个。09-13：混用导致排过队之后打断永久失效。
+  let runningTurn;
   let pending = null;   // 忙着时她又说的话，攒成一句，最新的 turn 为准
   function runTurn(text, turn) {
-    busy = true; activeTurn = turn;
+    busy = true; activeTurn = turn; runningTurn = turn;
     (async () => {
       try {
         if (!convId) convId = _mainConvId();
@@ -13715,9 +13728,14 @@ wss.on('connection', (ws, req) => {
       }
       // 她打断了正在念的那一轮：只在它**真的还在跑**时叫停，别误伤已经排上的新一轮
       if (msg.type === 'interrupt') {
-        if (busy && activeTurn === msg.turn) {
+        if (busy && runningTurn === msg.turn) {
           console.log('[call] #' + connId + ' 她打断了 turn ' + msg.turn + '，叫停');
           interruptGatewayTurn(convId || _mainConvId());
+        } else {
+          // 09-13：没成立的原因要留痕 —— 实测两天里「叫停」一次都没打印过，
+          // 真相是她能听见声音时模型多半已经写完（busy=false），掐的只是 TTS。
+          console.log('[call] #' + connId + ' 打断没东西可叫停（busy=' + busy +
+            ' 在跑 turn=' + runningTurn + ' 她说的 turn=' + msg.turn + '）');
         }
         return;
       }
