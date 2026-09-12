@@ -167,9 +167,17 @@ db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('minimax_voice_i
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_provider','minimax')").run();
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_api_key','')").run();
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_voice_id','')").run();
-// 模型不写死：中文最稳的是 eleven_multilingual_v2；嫌打电话卡就在设置里换成
-// eleven_flash_v2_5（延迟最低、音色表现力弱一点）。
-db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_model_id','eleven_multilingual_v2')").run();
+// 模型不写死。默认 eleven_v3 —— 表现力最强的那个，语音条要的就是这个。
+// ⚠️ v3 跑不了低延迟流式，所以打电话那条路根本不走 ElevenLabs（见 /api/tts/stream）。
+// 觉得 v3 太飘就在设置里换成 eleven_multilingual_v2（更稳、更平）。
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_model_id','eleven_v3')").run();
+// 上一版默认值是 multilingual_v2，把还留在旧默认值上的抬到 v3。
+// ⚠️ 必须只跑一次 —— 不加这个标记的话，她哪天真想换回 multilingual_v2，
+//    下次重启就被这行悄悄改回 v3，而且看不出是谁干的。
+if (!db.prepare("SELECT value FROM settings WHERE key='_mig_eleven_v3'").get()) {
+  db.prepare("UPDATE settings SET value='eleven_v3' WHERE key='elevenlabs_model_id' AND value='eleven_multilingual_v2'").run();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('_mig_eleven_v3','1')").run();
+}
 
 // 语音消息识别出的文字存这里，同一段语音不重复花钱识别
 try { db.prepare('ALTER TABLE uploads ADD COLUMN transcript TEXT').run(); } catch (e) {}
@@ -2822,10 +2830,13 @@ app.post('/api/tts', auth, async (req, res) => {
 
 // MiniMax 流式 TTS——边生成边播放，零等待
 app.post('/api/tts/stream', auth, async (req, res) => {
-  const _prov = ttsProvider();
-  const _elOk = !!(_sget('elevenlabs_api_key') && _sget('elevenlabs_voice_id'));
-  const _mmOk = !!(_sget('minimax_api_key') && _sget('minimax_voice_id'));
-  if (!_mmOk && !(_prov === 'elevenlabs' && _elOk)) { res.status(400).json({ error: '请先配置 MiniMax 或 ElevenLabs 的 API Key 和 Voice ID' }); return; }
+  // ⚠️ 打电话这条**永远走 MiniMax，不看 tts_provider**（2026-09-13 定的）。
+  // ElevenLabs 那边最好听的 eleven_v3 根本跑不了低延迟流式，硬接上就是通话卡顿；
+  // 而能跑流式的 pcm 格式又要付费档。所以这条路干脆不给它开口子 ——
+  // 语音条用 ElevenLabs 的表现力，通话用 MiniMax 的实时性，各拿各的长处。
+  const apiKey = _sget('minimax_api_key');
+  const voiceId = _sget('minimax_voice_id');
+  if (!apiKey || !voiceId) { res.status(400).json({ error: '请先配置 MiniMax API Key 和 Voice ID（通话只走 MiniMax）' }); return; }
   const { text } = req.body;
   if (!text) { res.status(400).json({ error: 'text required' }); return; }
 
@@ -2842,74 +2853,6 @@ app.post('/api/tts/stream', auth, async (req, res) => {
   //    要等的是「客户端把连接断了」，那是 res 上的事件。
   res.on('close', () => { aborted = true; });
 
-  // ElevenLabs 流式：拿到的是**裸 PCM 二进制流**，不是 SSE、没有 JSON 分片。
-  // 所以这儿自己把二进制切成 hex 往外发，前端那套 {type:'audio', data:hex} 一个字都不用改
-  // —— 也就没有 MiniMax 那个「最后再补一条整段汇总包」的坑，不需要 isFinal 判断。
-  //
-  // 兜底的分界线是**「第一片音频有没有发出去」**：
-  //   发出去之前挂 → 悄悄改走 MiniMax，她那头只是慢半拍，听不出来换了家。
-  //   发出去之后挂 → 不能再兜了，前端已经在播 ElevenLabs 的 PCM，
-  //                  这时候接上 MiniMax 的分片只会变成一句话两个声音。
-  let _elSentAudio = false;
-  if (_prov === 'elevenlabs' && _elOk) {
-    try {
-      const elResp = await fetch(elevenUrl(_sget('elevenlabs_voice_id'), { stream: true, format: 'pcm_24000' }), {
-        method: 'POST',
-        headers: { 'xi-api-key': _sget('elevenlabs_api_key'), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          model_id: _sget('elevenlabs_model_id') || 'eleven_multilingual_v2',
-          // 打电话要的是「快点出声」，不是音质 —— 让它尽早吐第一片。
-          optimize_streaming_latency: 3,
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!elResp.ok) {
-        // ⚠️ 这里一定要把 ElevenLabs 的原话带出去：pcm_24000 是付费档才给的格式，
-        //    额度不够时它回的是 401，光看状态码会以为是 key 错了，能查很久。
-        const body = (await elResp.text()).slice(0, 400);
-        console.warn('[tts] ElevenLabs 流式 ' + elResp.status + '：' + body);
-        if (!_mmOk) {
-          res.write('data: ' + JSON.stringify({ type: 'error', message: 'ElevenLabs ' + elResp.status + '：' + body }) + '\n\n');
-          res.end();
-          return;
-        }
-        throw new Error('回落 MiniMax');  // 掉到下面的 catch，再掉出去走 MiniMax
-      }
-      // 流式同样拿不到用量字段，按送进去的字符数记账。
-      logVoiceUsage('tts', text.length, 0);
-      res.write('data: ' + JSON.stringify({ type: 'meta', sampleRate: 24000 }) + '\n\n');
-
-      const reader = elResp.body.getReader();
-      // PCM 是 16 位小端，一个采样两个字节。分片边界可能把一个采样劈成两半，
-      // 落单的那个字节必须留到下一片拼上 —— 不然前端按 Int16 解出来整段都是错位的噪音。
-      let odd = null;
-      while (!aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        let chunk = Buffer.from(value);
-        if (odd) { chunk = Buffer.concat([odd, chunk]); odd = null; }
-        if (chunk.length % 2) { odd = chunk.subarray(chunk.length - 1); chunk = chunk.subarray(0, chunk.length - 1); }
-        if (chunk.length) {
-          _elSentAudio = true;
-          res.write('data: ' + JSON.stringify({ type: 'audio', data: chunk.toString('hex') }) + '\n\n');
-          res.flush?.();
-        }
-      }
-      res.write('data: ' + JSON.stringify({ type: 'done' }) + '\n\n');
-      res.end();
-      return;
-    } catch (e) {
-      if (aborted) return;                       // 她挂了电话，不是出错
-      if (_mmOk && !_elSentAudio) {
-        console.warn('[tts] ElevenLabs 流式失败，回落 MiniMax: ' + e.message);
-        // 不 return —— 往下掉进 MiniMax 那段重开一路流。meta 还没发，接得上。
-      } else {
-        try { res.write('data: ' + JSON.stringify({ type: 'error', message: e.message }) + '\n\n'); res.end(); } catch (_) {}
-        return;
-      }
-    }
-  }
 
   try {
     const mmResp = await fetch(minimaxUrl(), {
