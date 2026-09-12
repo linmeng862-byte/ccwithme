@@ -1570,6 +1570,32 @@ function _scrollToQuoted(who,text){
   try{toast('那条还没加载出来')}catch(e){}
 }
 
+// ❝ 双击他的气泡 = 引用这句。
+// 09-12 她报的「我点了引号没反应」—— 那个引号按钮在 `.message-actions` 那排里，
+// 而那排在窄屏（她的 app）整排 `display:none`，手机上根本没有这个入口。
+// 所以手势才是主入口：跟她自己气泡上那套双击一模一样的判法 ——
+// ⚠️ 不能只绑 dblclick，那是鼠标事件，iOS Safari 把触摸双击当缩放手势吃掉了
+//    （2026-08-22 在她气泡上踩过一次，别重踩）。自己数两次 pointerup。
+function _bindQuoteDblTap(bubbleEl,who,getText){
+  if(!bubbleEl)return;
+  function fire(){
+    var t=_stripQuote(getText()||'');
+    if(!t)return;
+    showQuoteBar(who,t);
+    try{toast('引用了'+(who==='him'?'他':'你')+'这句，在输入框上面')}catch(e){}
+  }
+  bubbleEl.addEventListener('dblclick',function(ev){ev.preventDefault();fire()});
+  var _at=0,_x=0,_y=0;
+  bubbleEl.addEventListener('pointerup',function(ev){
+    if(ev.pointerType==='mouse')return;              // 鼠标交给原生 dblclick
+    var now=Date.now();
+    if(now-_at<350&&Math.abs(ev.clientX-_x)<20&&Math.abs(ev.clientY-_y)<20){
+      _at=0;ev.preventDefault();fire();return;
+    }
+    _at=now;_x=ev.clientX;_y=ev.clientY;
+  });
+}
+
 // 引用卡：挂在气泡**里面的最顶上**。不挂气泡外面 —— 她的气泡是右对齐有底色的，
 // 挂外面会歪出来；挂里面两边的视觉规则一致。幂等，流式期间每个 delta 都会调。
 function _renderQuoteCard(row,raw){
@@ -3652,6 +3678,8 @@ function _buildClaudeRow(text,userText='',thinking='',timestamp='',userAttachmen
   actions(body,text,userText,userAttachments);row.append(body);
   // ❝ 他引用她的那条：同一张卡，只是方向反过来（见 _renderQuoteCard）。
   try{_renderQuoteCard(row,text)}catch(e){}
+  // ❝ 双击他的气泡 = 引用这句（手机上唯一的入口，见 _bindQuoteDblTap）
+  try{_bindQuoteDblTap(b,'him',function(){return row.dataset.raw||text})}catch(e){}
   return row}
 function _fmtTokens(n){if(n>=1000000)return (n/1000000).toFixed(1)+'M';if(n>=1000)return (n/1000).toFixed(1)+'k';return String(n)}
 // 真实订阅额度（5 小时窗口）。跟 cost_usd 不是一回事——那个是按 API 价估的钱，
@@ -4964,6 +4992,8 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
   var body=document.createElement('div');body.className='msg-body';
   var summary=document.createElement('button');summary.className='thinking-summary';
   var b=document.createElement('div');b.className='bubble';var md=document.createElement('div');md.className='md';b.append(md);
+  // ❝ 刚回完的那条她最可能双击 —— 流式这条路也要绑（历史那条在 _buildClaudeRow 里）
+  try{_bindQuoteDblTap(b,'him',function(){return row.dataset.raw||raw||''})}catch(e){}
   var trailLogo=document.createElement('div');trailLogo.className='claude-trail-logo';window.__lastTrailLogo=trailLogo;
   setClaudeLogoMode(trailLogo,'entrance',function(){return setClaudeLogoMode(trailLogo,'tickle')});
   body.append(summary,b,trailLogo);row.append(body);
