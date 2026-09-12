@@ -1846,3 +1846,12 @@ html.ui-plain[data-theme="dark"] #micButton{background:#1A1A1C;color:#F5F4EF;bor
    他那侧 .md 一直写着 white-space:normal，只有她这侧漏了。 */
 .msg-user .bubble .u-md{white-space:normal}
 .msg-user .bubble .u-md pre,.msg-user .bubble .u-md code{white-space:pre-wrap}
+
+/* 09-12 语音条/表情的方块底（她截图里那个）：
+   1080 那条脱壳写了 background:none，但后面 .msg-claude .bubble{background:var(--bubble-him)}
+   特异度相同、位置更靠后，把它盖回来了；同一天给气泡加的 box-shadow 也没被清。
+   底色回来 + border-radius 归零 + 投影 = 直角方块。这里用 !important 一次性收干净。 */
+.msg-user .bubble.voice-only,.msg-claude .bubble.voice-only,
+.msg-user .bubble.sticker-only,.msg-claude .bubble.sticker-only{
+  background:none!important;box-shadow:none!important;border:none!important;
+}
