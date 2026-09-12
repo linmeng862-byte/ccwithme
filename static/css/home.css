@@ -114,7 +114,7 @@ html[data-theme="dark"]{
 html{background:var(--bg-primary);overscroll-behavior:none;-webkit-overscroll-behavior:none}html::-webkit-scrollbar{display:none}
 body{position:relative;height:100dvh;background:var(--bg-primary);color:var(--text-primary);font:var(--text-base)/var(--leading) var(--font-sans);overflow:hidden;overscroll-behavior:none;-webkit-font-smoothing:antialiased;-webkit-overflow-scrolling:touch}
 button{font:inherit;border:0;background:none;color:inherit;cursor:pointer}textarea,input{font:inherit;color:inherit}
-.hidden{display:none!important}.brand-mark{display:block;color:var(--accent);fill:currentColor}.mark-48{width:48px;height:48px}.mark-35{width:35px;height:35px}.mark-36{width:36px;height:36px}.mark-24{width:24px;height:24px}.mark-20{width:20px;height:20px}.mark-16{width:16px;height:16px}
+.hidden{display:none!important}.brand-mark{display:block;color:#DA7756;fill:currentColor}  /* 09-12 钉死 Claude 橙，别再跟 --accent 走（换配色时 logo 被染紫过） */.mark-48{width:48px;height:48px}.mark-35{width:35px;height:35px}.mark-36{width:36px;height:36px}.mark-24{width:24px;height:24px}.mark-20{width:20px;height:20px}.mark-16{width:16px;height:16px}
 .icon-button{width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.35);border-radius:var(--radius-full);background:rgba(242,239,237,.25);backdrop-filter:blur(20px) saturate(1.1);-webkit-backdrop-filter:blur(20px) saturate(1.1);box-shadow:0 2px 8px rgba(0,0,0,.03)}
 .icon-button svg,.composer-icon svg{width:18px;height:18px}.action-button svg{width:18px;height:18px;stroke-width:1.75}
 .capsule-group{display:flex;align-items:center;height:40px;border:1px solid rgba(255,255,255,.35);border-radius:var(--radius-full);background:rgba(242,239,237,.25);backdrop-filter:blur(20px) saturate(1.1);-webkit-backdrop-filter:blur(20px) saturate(1.1);box-shadow:0 2px 8px rgba(0,0,0,.03);overflow:hidden}
@@ -1121,7 +1121,7 @@ html[data-theme="dark"] .inside-letter-head{color:#C89664}
    要点：字跟着无衬线走、四角圆得匀、气泡宽度跟着内容走，
    而且气泡的边界绝不越过头像 —— max-width 用 calc 把头像和间距都减掉，
    写百分比是不行的，百分比不知道旁边站着个 60px 的头像。 */
-:root{--bubble-her:#F4E9E6;--bubble-him:#F2F0EB}
+:root{--bubble-her:#F4E9E6;--bubble-him:#EDEBE5}  /* 09-12 她要他的灰再深一丢丢，原 #F2F0EB */
 html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
 @media(prefers-color-scheme:dark){html:not([data-theme="light"]){--bubble-her:#302825;--bubble-him:#26241F}}
 
@@ -1133,7 +1133,7 @@ html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
   line-height:1.62;
   padding:12px 18px;
   border-radius:14px;   /* 09-12 她要更方圆一点，20 → 14 */
-  box-shadow:0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.045);  /* 09-12 极淡投影，让气泡浮起来一点 */
+  box-shadow:none;  /* 09-12 换玫瑰灰后她说投影去掉试试；原来是 0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.045) */
   max-width:calc(100% - 78px);
   width:fit-content;          /* 短句就短，别撑满 */
 }
@@ -1271,9 +1271,13 @@ body{margin:0!important}
 .msg-user .bubble>div>*:last-child{margin-bottom:0}
 
 /* 她要淡粉色 —— #F4E9E6 偏灰米了，往粉里挪一点，保持很淡 */
-:root{--bubble-her:#F8EAEC}
-html[data-theme="dark"]{--bubble-her:#332A2C}
-@media(prefers-color-scheme:dark){html:not([data-theme="light"]){--bubble-her:#332A2C}}
+/* 09-12 她说「不够高级」：#F8EAEC 偏甜。降饱和、带一点灰，像藕粉 / 干玫瑰 */
+/* 09-12 她说两个气泡都快跟背景（暖米 #faf9f5）融为一体。只调深浅会在「暗」和「融」之间来回，
+   改成靠轮廓分开：他的纯白，她的粉清一点但不加深，两个都加一圈发丝细边。只动浅色，深色不动。 */
+/* 白底 + 细边她说突兀，撤了；他回到原来的 #F2F0EB，只调她的粉 */
+:root{--bubble-her:#F6E4E6}  /* 09-12 她从对比页挑的「玫瑰奶」（烟粉 #EFE4E3 也试过） */
+html[data-theme="dark"]{--bubble-her:#3A3033}
+@media(prefers-color-scheme:dark){html:not([data-theme="light"]){--bubble-her:#3A3033}}
 
 /* 语音条按参考图跟气泡长成一套：同圆角、同 padding、同底色，短一点。
    ⚠️ 语音条的样式是 index.html 里写死的内联 style（要靠 outerHTML 序列化活下来），
@@ -1881,3 +1885,50 @@ html.ui-plain[data-theme="dark"] #micButton{background:#1A1A1C;color:#F5F4EF;bor
 .msg-user .bubble.sticker-only,.msg-claude .bubble.sticker-only{
   background:none!important;box-shadow:none!important;border:none!important;
 }
+
+/* ============ 09-12 答题面板 / 番茄钟卡 / 指令胶囊：黑白 iOS ============
+   她说「不要橙色，换成黑白简约 iOS 的」。原来是 --accent 橙 + 米色 #FDF9F3 + 棕字 #4A3728，
+   胶囊和结果框的颜色是 JS 里写死的内联样式，所以这里要 !important 才压得住。 */
+.cmd-capsule{
+  background:var(--bg-surface)!important;color:var(--text-primary)!important;
+  border:.5px solid var(--border-strong)!important;border-radius:999px!important;
+}
+.cmd-capsule:hover{background:var(--bg-sunken)!important;box-shadow:none!important}
+#quizResult{background:var(--bg-sunken)!important;color:var(--text-primary);border-radius:12px}
+.quiz-option-btn{border-radius:12px!important;border:.5px solid var(--border-strong)!important}
+.quiz-option-btn:hover{background:var(--bg-sunken)!important;border-color:var(--text-primary)!important}
+#quizSend{background:var(--text-primary)!important;color:var(--bg-primary)!important}
+#quizTextarea:focus{border-color:var(--text-primary);box-shadow:none}
+
+/* ============ 09-12 整套配色「雾紫粉」（试过玫瑰灰、冷白 iOS，最后回到这套）============
+   她从 /preview/palettes.html 五套里挑的。先试了雾紫粉，上线后不如预览好看，换成玫瑰灰：
+   背景和他的灰都掺一点粉，她的粉不孤单；强调色深墨。
+   --claude-accent-orange 故意不覆盖 —— 那是 Claude 自己的橙，logo 要留着（雾紫粉那版把它染紫了）。
+   只动浅色，深色和官端模式（ui-plain，有自己的冷灰）都不动。
+   写成两段是因为「跟随系统」时 html 上没有 data-theme，只能靠媒体查询分浅深。 */
+@media (prefers-color-scheme:light){
+  html:not([data-theme="dark"]):not(.ui-plain){
+    --bg-primary:#F8F6F7;--bg-surface:#ECE9EB;--claude-main-surface:#F8F6F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#F8F6F7;
+    --bubble-him:#ECE9EB;--bubble-her:#EEDFE5;--bubble-user:#EEDFE5;
+    --accent:#6E5A66;--accent-hover:#5C4A55;--accent-fg:#FFF;
+    --text-primary:#2C2629;--border:rgba(44,38,41,.08);--border-strong:rgba(44,38,41,.16);
+  }
+}
+html[data-theme="light"]:not(.ui-plain){
+  --bg-primary:#F8F6F7;--bg-surface:#ECE9EB;--claude-main-surface:#F8F6F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#F8F6F7;
+  --bubble-him:#ECE9EB;--bubble-her:#EEDFE5;--bubble-user:#EEDFE5;
+  --accent:#6E5A66;--accent-hover:#5C4A55;--accent-fg:#FFF;
+  --text-primary:#2C2629;--border:rgba(44,38,41,.08);--border-strong:rgba(44,38,41,.16);
+}
+
+/* ============ 09-12 气泡照 /preview/palettes.html 那版来 ============
+   她说「你做的 html 那个更好看」。背景色号两边一样，差在气泡本身：
+   预览是系统字 16/1.55、内边距 10×15、带投影；这里原来是 Anthropic Sans 15/1.45、7×13、刚去掉投影。
+   上面 1222 那层带 !important，所以这里也得带。min-height:40 那条（跟头像齐平）保留。 */
+.msg-user .bubble,.msg-claude .bubble{
+  /* 字体她要留 Anthropic Sans；字号/内边距试过预览页的 16/10×15，她嫌大，退回 08-22 的 15/7×13 */
+  font-size:15px!important;line-height:1.45!important;
+  padding:7px 13px!important;border-radius:14px!important;
+  box-shadow:0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.045)!important;
+}
+.msg-claude .md{font-size:15px!important;line-height:1.45!important}

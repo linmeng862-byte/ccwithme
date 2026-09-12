@@ -48,3 +48,6 @@ static/_tail-sprites.html
 # 支付桥 —— 私人链路，别进公开仓库
 scripts/alipay-bridge.js
 static/start.bat
+
+# 做给她看的预览页（配色对比、设计稿），不进仓库
+static/preview/
