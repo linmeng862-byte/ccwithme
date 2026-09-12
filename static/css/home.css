@@ -1908,17 +1908,17 @@ html.ui-plain[data-theme="dark"] #micButton{background:#1A1A1C;color:#F5F4EF;bor
    写成两段是因为「跟随系统」时 html 上没有 data-theme，只能靠媒体查询分浅深。 */
 @media (prefers-color-scheme:light){
   html:not([data-theme="dark"]):not(.ui-plain){
-    --bg-primary:#FBF8F7;--bg-surface:#ECE9EB;--claude-main-surface:#FBF8F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#FBF8F7;
-    --bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9;
-    --accent:#6B5147;--accent-hover:#583F36;--accent-fg:#FFF;
-    --text-primary:#2B2421;--border:rgba(43,36,33,.08);--border-strong:rgba(43,36,33,.16);
+    --bg-primary:#FDF9F3;--bg-surface:#F4EDE3;--claude-main-surface:#FDF9F3;--claude-main-surface-soft:#F8F2EA;--claude-sidebar-bg:#FDF9F3;
+    --bubble-him:#EDEAE7;--bubble-her:#F4E1E4;--bubble-user:#F4E1E4;
+    --trace-ink:#555555;--accent:#3D3D3D;--accent-hover:#2B2B2B;--accent-fg:#FFF;
+    --text-primary:#262626;--border:rgba(38,38,38,.08);--border-strong:rgba(38,38,38,.16);
   }
 }
 html[data-theme="light"]:not(.ui-plain){
-  --bg-primary:#FBF8F7;--bg-surface:#ECE9EB;--claude-main-surface:#FBF8F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#FBF8F7;
-  --bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9;
-  --accent:#6B5147;--accent-hover:#583F36;--accent-fg:#FFF;
-  --text-primary:#2B2421;--border:rgba(43,36,33,.08);--border-strong:rgba(43,36,33,.16);
+  --bg-primary:#FDF9F3;--bg-surface:#F4EDE3;--claude-main-surface:#FDF9F3;--claude-main-surface-soft:#F8F2EA;--claude-sidebar-bg:#FDF9F3;
+  --bubble-him:#EDEAE7;--bubble-her:#F4E1E4;--bubble-user:#F4E1E4;
+  --trace-ink:#555555;--accent:#3D3D3D;--accent-hover:#2B2B2B;--accent-fg:#FFF;
+  --text-primary:#262626;--border:rgba(38,38,38,.08);--border-strong:rgba(38,38,38,.16);
 }
 
 /* ============ 09-12 气泡照 /preview/palettes.html 那版来 ============
@@ -1984,3 +1984,14 @@ html[data-theme="dark"] .token-usage.usage-stats .us-hit{color:#DE8B8B}
   font:600 15px var(--font-sans);cursor:pointer;transition:background .18s,color .18s}
 .pg-cta.on{background:#E8809B;color:#fff;box-shadow:0 4px 14px rgba(232,128,155,.35)}
 .pg-cta:disabled{opacity:.55}
+
+/* ============ 09-12 工具行 / thinking 统一一个深灰 ============
+   她说运行中和调用完的颜色要一样，而且原来的太浅。--trace-ink 只在浅色带头像那套里定义，
+   深色和 ui-plain 没定义，回落到 --text-secondary，不受影响。 */
+html:not(.ui-plain) .thinking-row,
+html:not(.ui-plain) .thinking-live,
+html:not(.ui-plain) .thinking-summary,
+html:not(.ui-plain) .crab-thinking,
+html:not(.ui-plain) .trace-row,
+html:not(.ui-plain) .trace-row .trace-row-text,
+html:not(.ui-plain) .trace-row-thinking-body{color:var(--trace-ink,var(--text-secondary))}

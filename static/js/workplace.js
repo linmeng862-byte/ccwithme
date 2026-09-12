@@ -429,7 +429,7 @@
     // 她的气泡（右，跟主聊天一个调子）
     function bubbleHer(text) {
       var wrap = h('div', 'display:flex;justify-content:flex-end');
-      var b = h('div', 'max-width:78%;background:var(--accent);color:var(--accent-fg);border-radius:18px 18px 4px 18px;padding:9px 13px;font:14px/1.6 var(--font-sans);white-space:pre-wrap;word-break:break-word', text);
+      var b = h('div', 'max-width:78%;background:var(--bubble-her,var(--accent));color:var(--text-primary);border-radius:18px 18px 4px 18px;padding:9px 13px;font:14px/1.6 var(--font-sans);white-space:pre-wrap;word-break:break-word', text);
       wrap.append(b); flow.append(wrap); toBottom();
       return b;
     }
