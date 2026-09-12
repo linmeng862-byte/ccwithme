@@ -2020,3 +2020,9 @@ html[data-theme="dark"]:not(.ui-plain){--bubble-him:#2C2C2B;--bubble-her:#342F31
 .token-usage.usage-stats .us-in,.token-usage.usage-stats .us-out,.token-usage.usage-stats .us-hit{background:#EFEFED}
 html[data-theme="dark"] .token-usage.usage-stats span{background:#2A2A29}
 @media (prefers-color-scheme:dark){html:not([data-theme="light"]) .token-usage.usage-stats span{background:#2A2A29}}
+
+/* 09-12 官端（ui-plain）换 iOS 系统字：苹方 + SF。气泡模式照旧 Anthropic Sans/Serif，不动。 */
+html.ui-plain{
+  --font-sans:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Helvetica Neue',system-ui,sans-serif;
+  --font-serif:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Helvetica Neue',system-ui,sans-serif;
+}
