@@ -1119,7 +1119,7 @@ html[data-theme="dark"] .inside-letter-head{color:#C89664}
    要点：字跟着无衬线走、四角圆得匀、气泡宽度跟着内容走，
    而且气泡的边界绝不越过头像 —— max-width 用 calc 把头像和间距都减掉，
    写百分比是不行的，百分比不知道旁边站着个 60px 的头像。 */
-:root{--bubble-her:#F4E9E6;--bubble-him:#EFEDE9}
+:root{--bubble-her:#F4E9E6;--bubble-him:#F2F0EB}
 html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
 @media(prefers-color-scheme:dark){html:not([data-theme="light"]){--bubble-her:#302825;--bubble-him:#26241F}}
 
@@ -1130,7 +1130,8 @@ html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
   font-size:17px;
   line-height:1.62;
   padding:12px 18px;
-  border-radius:20px;
+  border-radius:14px;   /* 09-12 她要更方圆一点，20 → 14 */
+  box-shadow:0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.045);  /* 09-12 极淡投影，让气泡浮起来一点 */
   max-width:calc(100% - 78px);
   width:fit-content;          /* 短句就短，别撑满 */
 }
@@ -1268,7 +1269,7 @@ body{margin:0!important}
 .msg-user .bubble>div>*:last-child{margin-bottom:0}
 
 /* 她要淡粉色 —— #F4E9E6 偏灰米了，往粉里挪一点，保持很淡 */
-:root{--bubble-her:#FBEDEF}
+:root{--bubble-her:#F8EAEC}
 html[data-theme="dark"]{--bubble-her:#332A2C}
 @media(prefers-color-scheme:dark){html:not([data-theme="light"]){--bubble-her:#332A2C}}
 
@@ -1837,3 +1838,11 @@ html.ui-plain[data-theme="dark"] #micButton{background:#1A1A1C;color:#F5F4EF;bor
   html.ui-plain:not([data-theme="light"]) .model-capsule{background:#1A1A1C;color:#F5F4EF}
   html.ui-plain:not([data-theme="light"]) #micButton{background:#1A1A1C;color:#F5F4EF;border-radius:var(--radius-full)}
 }
+
+/* ============ 09-12：她那侧气泡换行后底下多一截 ============
+   .bubble 上有 white-space:pre-wrap（给纯文本 fallback 用的），
+   但 .u-md 里装的是 marked 渲染出来的 HTML —— breaks:true 已经把换行变成 <br> 了，
+   源文本里那个 \n 和 <p> 之间的 \n 于是被 pre-wrap 又渲染了一遍，每行后面白空一行。
+   他那侧 .md 一直写着 white-space:normal，只有她这侧漏了。 */
+.msg-user .bubble .u-md{white-space:normal}
+.msg-user .bubble .u-md pre,.msg-user .bubble .u-md code{white-space:pre-wrap}
