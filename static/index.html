@@ -2716,11 +2716,24 @@ function _stopSeg(){
 // ⚠️ pause 停的是录音，**墙钟没停**。时长是 Date.now()-_segStart 算的，
 //    他念了三十秒，这三十秒就全算进她那条语音条里了——标着 0:35，声音只有 3 秒。
 //    resume 的时候把暂停掉的这段补进 _segStart，墙钟差才等于真正录到的长度。
-function _pauseSeg(){if(_segRec&&_segRec.state==='recording'){_segPausedAt=Date.now();try{_segRec.pause()}catch(e){}}}
-function _resumeSeg(){if(_segRec&&_segRec.state==='paused'){
-  if(_segPausedAt){_segStart+=Date.now()-_segPausedAt;_segPausedAt=0}
+// ⚠️⚠️ 09-12 又踩一次（她：「只说了 3-5 秒，标 15 秒」）：
+//    这两个函数原来是**看 MediaRecorder.state 来记账**的 ——
+//      pause 只在 state==='recording' 时记 _segPausedAt；
+//      resume 只在 state==='paused' 时把这笔补回 _segStart。
+//    iOS 的 WKWebView 里 pause() 可能不生效也不报错（state 停在 recording），
+//    于是「记账」和「补账」双双跳过，他念的十几秒原样算进她那条语音条。
+//    改成**按我们自己的意图记账**：我们调了 pause 就记，调了 resume 就补，
+//    成不成是 MediaRecorder 的事，账不能跟着它错。
+function _pauseSeg(){
+  if(!_segRec||_segPausedAt)return;
+  _segPausedAt=Date.now();
+  try{_segRec.pause()}catch(e){}
+}
+function _resumeSeg(){
+  if(!_segRec||!_segPausedAt)return;
+  _segStart+=Date.now()-_segPausedAt;_segPausedAt=0;
   try{_segRec.resume()}catch(e){}
-}}
+}
 
 // 整段念完了 —— 攒下来的 PCM 就是他这条回复的完整原声，编成 wav 挂上去。
 // ⚠️ 一条回复会拆成好几句念，必须整段念完才挂一次：一句一挂的话聊天记录里
@@ -3045,6 +3058,7 @@ function _bargeIn(){
   _bargedIn=true;
   // 让后端把他还在写的这一轮真停下（不只是不念），她的新话就不用等他写完
   if(_callWs&&_callWs.readyState===1){try{_callWs.send(JSON.stringify({type:'interrupt',turn:_callTurn}))}catch(e){}}
+  _dropPrefetch();            // 囤着的下一句也别要了，顺手把那条 SSE 关掉（MiniMax 照字计费）
   _ttsQueue.length=0;
   _rawBuf='';                 // 还没凑成句的残句一起丢掉，别等收口时又冒出来
   _stopTTSPlayback();
@@ -3369,6 +3383,9 @@ function _bufHeld(b){
 
 // 句末：中文标点、英文句末（后面得跟空白，"3.5" 里的点不算）
 var _SENT_RE=/[。！？…；!?;]+["'”’」』)）\]]*|[.]+["'”’)\]]*(?=\s)/g;
+// 只给「这一轮的第一句」用的软断点：逗号、顿号、冒号、破折号
+var _COMMA_RE=/[，,、：:—]+["'”’)）\]]*/g;
+var _FIRST_COMMA_MIN=8;   // 攒够 8 个字才认逗号，太短的半句听着像卡壳
 
 function _feedCallDelta(t){
   if(!t)return;
@@ -3378,6 +3395,17 @@ function _feedCallDelta(t){
   // 找最后一个句末位置——一次可能攒了好几句，一起送走
   var last=-1,m;_SENT_RE.lastIndex=0;
   while((m=_SENT_RE.exec(clean))!==null)last=m.index+m[0].length;
+  // 09-12：**这一轮的第一句也在逗号处切**。他第一句要是长（「我在想啊，其实……」），
+  //   等句号意味着首字→成句能拖到 2s，她那头听到的就是干等。只有第一句这么切：
+  //   后面的句子攒长一点念着才不顿（floor=12 那行是同一个意思）。
+  //   ⚠️ 只在攒够 _FIRST_COMMA_MIN 个字之后才认逗号，不然「嗯，」这种就单独成一句了。
+  if(last<0&&!_spokenNorm){
+    _COMMA_RE.lastIndex=0;
+    while((m=_COMMA_RE.exec(clean))!==null){
+      var end=m.index+m[0].length;
+      if(_norm(clean.slice(0,end)).length>=_FIRST_COMMA_MIN){last=end;break}
+    }
+  }
   if(last<0)return;
   var head=clean.slice(0,last),tail=clean.slice(last);
   // 第一句门槛放低（要快），后面的攒长一点，免得念得一顿一顿
@@ -3414,6 +3442,67 @@ function _flushCallDelta(finalText){
   if(rest.trim())_enqueueTTS(rest.trim());
 }
 
+// 09-12：**下一句提前合成**。以前是一句念完才去敲 MiniMax，句间那条缝就是
+//   「首包等待」（正常 ~1s，偶尔卡到 7s+）。现在当前这句一开播，就把队列里
+//   下一句的 SSE 先开上，音频块只囤着不排期 —— 轮到它时直接喂，缝没了。
+//   ⚠️ 只囤不播是故意的：要是提前排进 AudioContext，打断时就有好几秒已排期的
+//      音频要收，_stopTTSPlayback 的语义得跟着改。囤着的话打断只要 cancel 一下。
+//   ⚠️ 只提前一句。再多就是替一个可能被打断的轮次白付 MiniMax 的钱。
+function _openTTSStream(text){
+  var h={chunks:[],sampleRate:24000,done:false,err:null,cancelled:false,_wake:null,reader:null};
+  h._notify=function(){ if(h._wake){var w=h._wake;h._wake=null;w()} };
+  h.cancel=function(){ if(h.cancelled)return; h.cancelled=true;
+    try{ if(h.reader)h.reader.cancel() }catch(e){}
+    h._notify();
+  };
+  // 有新块 / 读完了 / 出错了 / 被取消了，就醒
+  h.wait=function(){ return new Promise(function(rs){
+    if(h.chunks.length||h.done||h.err||h.cancelled)return rs();
+    h._wake=rs;
+  }) };
+  (async function(){
+    var hd={'Content-Type':'application/json'};
+    if(state.token)hd.Authorization='Bearer '+state.token;
+    var r=await fetch('/api/tts/stream',{method:'POST',headers:hd,body:JSON.stringify({text:text})});
+    if(!r.ok)throw new Error('stream endpoint returned '+r.status);
+    var reader=h.reader=r.body.getReader();
+    var decoder=new TextDecoder(),buf='';
+    while(true){
+      var c=await reader.read();
+      if(c.done)break;
+      if(h.cancelled){try{reader.cancel()}catch(e){}break}
+      buf+=decoder.decode(c.value,{stream:true});
+      var lines=buf.split('\n');buf=lines.pop()||'';
+      for(var i=0;i<lines.length;i++){
+        var line=lines[i];
+        if(line.indexOf('data: ')!==0)continue;
+        var obj=null;
+        try{ obj=JSON.parse(line.slice(6)) }catch(e){ continue }
+        if(!obj)continue;
+        if(obj.type==='meta')h.sampleRate=obj.sampleRate||24000;
+        else if(obj.type==='audio')h.chunks.push(obj.data);
+        else if(obj.type==='error')throw new Error(obj.message);
+      }
+      h._notify();
+    }
+  })().then(function(){ h.done=true;h._notify() },
+            function(e){ h.err=e;h.done=true;h._notify() });
+  return h;
+}
+// 队头那句还没起合成就起上。_enqueueTTS 和 _pumpTTS 两头都调 ——
+// 他写得快的时候队列是满的（pump 那头管），慢的时候是一句一句飘进来的（enqueue 这头管）。
+function _ensurePrefetch(){
+  if(!_ttsPumping)return;              // 没在念就没有「下一句」，别白花钱
+  var nx=_ttsQueue[0];
+  if(!nx||nx._pre||nx.turn!==_callTurn||_bargedIn)return;
+  nx._pre=_openTTSStream(nx.text);
+  console.log('[tts] 提前合成下一句:',JSON.stringify(nx.text.slice(0,30)));
+}
+// 把囤着的（和还没囤完的）一起丢掉。打断和挂断都要调。
+function _dropPrefetch(){
+  for(var i=0;i<_ttsQueue.length;i++){ if(_ttsQueue[i]._pre){try{_ttsQueue[i]._pre.cancel()}catch(e){}} }
+}
+
 // 每句进队列，串行播。麦克风是整队一起关、念完整队再开——
 // 一句一开关的话，两句之间的缝里会把他自己的尾音听成她说话。
 function _enqueueTTS(text){
@@ -3425,6 +3514,7 @@ function _enqueueTTS(text){
   if(_vm.turn===_callTurn&&!_vm.tts)_vm.tts=Date.now();   // 分段延迟：第一句交给 TTS
   _ttsQueue.push({text:text,turn:_callTurn});
   if(!_ttsPumping)_pumpTTS();
+  else _ensurePrefetch();   // 他正念着，这句就是「下一句」，先去合成
 }
 async function _pumpTTS(){
   if(_ttsPumping)return;
@@ -3441,7 +3531,9 @@ async function _pumpTTS(){
       // 每句都重新标「他在说话」：打断会把它置 false，同一个循环接着念新一轮时得标回来，
       // 不然他念着的时候听写在采用他的声音、她的语音条也在录
       _callSpeaking=true;_pauseSeg();
-      try{ await _playStreamTTS(next.text,next.turn) }catch(e){ console.warn('[tts] 这句没念成:',e.message) }
+      // 这句开播的同时，把新队头那句的合成起上（只提前一句）
+      _ensurePrefetch();
+      try{ await _playStreamTTS(next.text,next.turn,next._pre) }catch(e){ console.warn('[tts] 这句没念成:',e.message) }
     }
   }finally{
     _ttsPumping=false;_callSpeaking=false;_ttsEndAt=Date.now();
@@ -3454,7 +3546,7 @@ async function _pumpTTS(){
   }
 }
 // 挂断时把没念完的丢掉
-function _resetTTSStream(){_rawBuf='';_spokenNorm='';_ttsQueue.length=0}
+function _resetTTSStream(){_rawBuf='';_spokenNorm='';_dropPrefetch();_ttsQueue.length=0}
 async function _speakWithMicPaused(text){
   _callSpeaking=true;
   if(_callRecording){try{_callRecording.abort?_callRecording.abort():_callRecording.stop()}catch(e){}}
@@ -3467,44 +3559,31 @@ async function _speakWithMicPaused(text){
   }
 }
 // turn 只有通话队列会传；平时点播语音不传（undefined），不受轮次管
-async function _playStreamTTS(text,turn){
+// pre 是 _openTTSStream 提前囤好的那条流（通话队列才有）；没有就现开一条。
+async function _playStreamTTS(text,turn,pre){
   function _gone(){return _bargedIn||(turn!==undefined&&turn!==_callTurn)}
+  // 这个接口在 auth 中间件后面，不带 token 就是 401 —— 然后 catch 会把它
+  // 悄悄降级到 speechSynthesis，很多设备上那个是哑的，表现就是"接通了但没声音"。
+  // （鉴权在 _openTTSStream 里，跟以前一样。）
+  var h=pre||_openTTSStream(text);
   try{
-    // 这个接口在 auth 中间件后面，不带 token 就是 401 —— 然后 catch 会把它
-    // 悄悄降级到 speechSynthesis，很多设备上那个是哑的，表现就是"接通了但没声音"。
-    var _h={'Content-Type':'application/json'};
-    if(state.token)_h.Authorization='Bearer '+state.token;
-    var r=await fetch('/api/tts/stream',{method:'POST',headers:_h,body:JSON.stringify({text:text})});
-    if(!r.ok){throw new Error('stream endpoint returned '+r.status)}
-    var reader=r.body.getReader();
-    var decoder=new TextDecoder();
-    var buf='',sampleRate=24000;
     // ⚠️ 记住有没有真的出过声：MiniMax 播到一半才抛错时，前面放出去的声音收不回来，
     //    这时再走 speechSynthesis 兜底 = 同一句话念两遍（她实际听到过）
     _ttsPlayedAny=false;
     while(true){
-      var chunk=await reader.read();
-      if(chunk.done)break;
-      // 她插话了 —— 别再往下读了。不 cancel 的话这条 SSE 会一直挂着，
-      // MiniMax 那边的字也照样计费。
-      if(_gone()){try{reader.cancel()}catch(e){}break}
-      buf+=decoder.decode(chunk.value,{stream:true});
-      var lines=buf.split('\n');buf=lines.pop()||'';
-      for(var i=0;i<lines.length;i++){
-        var line=lines[i];
-        if(!line.startsWith('data: '))continue;
-        try{var obj=JSON.parse(line.slice(6));
-          if(obj.type==='meta'){sampleRate=obj.sampleRate||24000}
-          else if(obj.type==='audio'){
-            // ⚠️ 先立旗再解码。_feedPCMChunk 要是抛了（AudioContext 被浏览器掐、
-            //    hex 有脏字符），前面已经放出去的声音收不回来，可标志还是 false，
-            //    catch 里就会走兜底把整句再念一遍 —— 她听到的「说两遍」。
-            _ttsPlayedAny=true;
-            if(!_gone())_feedPCMChunk(obj.data,sampleRate);
-          }
-          else if(obj.type==='error'){throw new Error(obj.message)}
-        }catch(e){if(e.message!==''&&!e.message.startsWith('Unexpected'))throw e}
+      if(_gone()){h.cancel();break}
+      if(h.chunks.length){
+        var hex=h.chunks.shift();
+        // ⚠️ 先立旗再解码。_feedPCMChunk 要是抛了（AudioContext 被浏览器掐、
+        //    hex 有脏字符），前面已经放出去的声音收不回来，可标志还是 false，
+        //    catch 里就会走兜底把整句再念一遍 —— 她听到的「说两遍」。
+        _ttsPlayedAny=true;
+        if(!_gone())_feedPCMChunk(hex,h.sampleRate);
+        continue;
       }
+      if(h.err)throw h.err;
+      if(h.done)break;
+      await h.wait();   // 还没囤到新块，等一下（提前合成的话这儿基本不会等）
     }
     // 音频是排着队提前调度的，流读完 ≠ 播完。等队列真的放完再返回，
     // 否则调用方（_speakWithMicPaused）会在他还在说话时就把麦克风打开。

@@ -5,6 +5,85 @@
 > **最新的写在最上面。**
 
 
+## 📞 2026-09-12 晚 · 接着你们那版：移植 + 做掉清单里两条 + 逮到一个你们多半也有的 bug
+
+按你们那份一条条对过来的。**先说最要紧的一条**：
+
+### ⚠️ 语音条时长记错，病根在「看 state 记账」——你们大概率也有
+
+她报「只说了 3-5 秒，语音条标 15 秒」。你们第 10 条修的是打断后不醒那一路，
+这是另一路，`_pauseSeg` / `_resumeSeg` 自己的记账：
+
+```js
+// 原来
+function _pauseSeg(){ if(_segRec && _segRec.state==='recording'){ _segPausedAt=Date.now(); ... } }
+function _resumeSeg(){ if(_segRec && _segRec.state==='paused'){ _segStart += Date.now()-_segPausedAt; ... } }
+```
+
+iOS 的 WKWebView 里 `MediaRecorder.pause()` **可能不生效也不报错**（state 停在 `recording`）。
+于是 resume 那笔补账被跳过、`_segPausedAt` 留着没清 ——
+**下一句再 pause 时 `_segPausedAt=Date.now()` 把它覆盖掉，前面那几秒就漏了。**
+一条回复念几句就漏几笔，所以**只在多句回复里露头**，单句测不出来。
+
+改成按调用方的意图记账，不看 state：
+
+```js
+function _pauseSeg(){ if(!_segRec||_segPausedAt)return; _segPausedAt=Date.now(); try{_segRec.pause()}catch(e){} }
+function _resumeSeg(){ if(!_segRec||!_segPausedAt)return; _segStart+=Date.now()-_segPausedAt; _segPausedAt=0; try{_segRec.resume()}catch(e){} }
+```
+
+离线跑 8 个组合（pause 生效/不生效 × 单句/三句 × 新/旧）：
+**三句 + pause() 不生效 → 旧的标 12s、新的标 4s（真说了 4s）**，其余七组新旧一致。
+她那头复测已确认对了。
+
+### 🔎 `/interrupt` 其实很少真的发出去（不是 bug，是够不着）
+
+日志里 `[打断]` 三次、「叫停」零次。闸在 backend：
+
+```js
+if (busy && activeTurn === msg.turn) interruptGatewayTurn(...)
+```
+
+**他写完了但还在念**的时候 `busy` 已经是 `false` 了 —— 而她几乎总在这个窗口里打断
+（首字→成句 0-539ms，出声却要念好几秒）。所以真叫停只在「他还在写」时够得着，
+比如那次 CLI 自己慢到 9.4s 的。逻辑没错，但意味着**打断省下的时间只在长回复上兑现**；
+她感觉「他立刻停了」，那是前端掐 TTS 的功劳。你们那边多半是同一个形状，值得量一下。
+
+### ✅ 清单里那两条做掉了
+
+**1. TTS 下一句提前合成。** 当前这句一开播就把队列里下一句的 SSE 开上，
+音频块**只囤着不排期**，轮到它时直接喂。
+⚠️ 只囤不播是故意的：提前排进 AudioContext 的话，打断时有好几秒已排期的音频要收，
+`_stopTTSPlayback` 的语义得跟着改。囤着的话打断只要 cancel 一下（那条 SSE 也一并关掉，MiniMax 照字计费）。
+只提前一句，再多就是替一个可能被打断的轮次白付钱。
+离线 6 例：正常分批 / 半块拼接 / 服务端 error / 非 200 / 打断后 11ms 返回且 cancel 成立 /
+**预合成后消费耗时 0ms**。
+
+**2. 第一句按逗号切**（你们写的 11.2 那条）。`，、：—` 也当断点，
+但**只对这一轮的第一句**，且攒够 8 个字才认（不然「嗯，」单独成一句）。后面的句子不变。
+这条是大头，看「首字→成句」：
+
+| | 改之前 | 现在 |
+|---|---|---|
+| 首字→成句 | 2869 / 1044 / 539ms | **1 / 1 / 252 / 192ms** |
+
+**改完实测一通（四轮）：嘴停→出声 4111 / 4421 / 3767 / 4679ms，没有离群的。**
+成句→出声稳定 1.0~2.0s，那是 MiniMax 首包——预合成管不到第一句（第一句没有「上一句」给它藏在后面）。
+
+### 🔀 两台的网关已经分叉了，照搬前先 grep
+
+你们那三处，我们这边只真缺一处：
+
+| | 你们 | 我们 |
+|---|---|---|
+| `/interrupt` | 新增 | **缺，已补**（stdin 递 `control_request{subtype:"interrupt"}`） |
+| 逐字转发 | 要 `relayStreamText` | **本来就有**：`relay()` 的 `stream_event → send({delta})` 一直在跑，常驻 spawn 带着 `--include-partial-messages`。所以 `stream_text:true` 在我们这儿是空参数 |
+| `/drop` | 你们说不存在 | **我们有** |
+
+网关不在仓库里、两边各自手改，这种分叉只会越来越多。
+**拿到对面的网关改动先 `grep` 一遍自己那份再决定补什么**，别挨条抄。
+
+
 ## 📞 2026-09-12 · 通话大修：打断能用了，嘴停→出声 7s → 4s
 
 她拿了一份 Cove 的「GPT-Live 式双工语音」教程 PDF 来，照着它把通话一段一段修了。
