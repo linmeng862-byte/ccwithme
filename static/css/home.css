@@ -783,10 +783,12 @@ input,textarea,select,button{font-size:16px}
 .home-together{margin-top:4px;font:400 13px/1.4 var(--font-sans);color:#8A8276}
 .home-together-num{font:italic 700 22px/1 var(--font-sans);color:#E8A8B8;margin:0 2px}
 .home-since{font:400 10px/1 var(--font-sans);color:#8A8276;letter-spacing:.06em;margin-top:4px}
-@media(prefers-color-scheme:dark){.home-together,.home-since{color:rgba(255,255,255,.55)}.msg-user .bubble{background:#E2D0D2;color:#fff}.msg-claude .bubble{background:#F0ECE4;color:#2C2821}}
+@media(prefers-color-scheme:dark){.home-together,.home-since{color:rgba(255,255,255,.55)}.msg-user .bubble{background:var(--bubble-her);color:var(--text-primary)}.msg-claude .bubble{background:var(--bubble-him);color:var(--text-primary)}}
 html[data-theme="dark"] .home-together,html[data-theme="dark"] .home-since{color:rgba(255,255,255,.55)}
-html[data-theme="dark"] .msg-user .bubble{background:#E2D0D2;color:#fff}
-html[data-theme="dark"] .msg-claude .bubble{background:#F0ECE4;color:#2C2821}
+/* 09-12 她说暗色气泡刺眼：原来这里硬写了两块近白（#E2D0D2/#F0ECE4），
+   特异性压过了下面 1123 行那套深色 --bubble-her/him，暗底上两块亮斑。改回走变量。 */
+html[data-theme="dark"] .msg-user .bubble{background:var(--bubble-her);color:var(--text-primary)}
+html[data-theme="dark"] .msg-claude .bubble{background:var(--bubble-him);color:var(--text-primary)}
 .home-nav{display:flex;flex-direction:column;gap:1px;flex:none;margin-bottom:16px}
 .home-nav-item{height:55px;display:flex;align-items:center;padding:0 16px;font:400 18px/1 var(--font-sans);color:#3C3935;text-align:left;border-radius:12px;transition:opacity .3s}
 .home-nav-item:hover{opacity:.7}
@@ -1782,6 +1784,10 @@ html.ui-plain .msg-claude .bubble>div+div{margin-top:14px}
 html.ui-plain[data-theme="dark"] .msg-claude .bubble{background:none;color:#F5F4EF}
 html.ui-plain[data-theme="dark"] .msg-user .bubble{background:#30302E;color:#F5F4EF}
 
+/* 09-12 她要思考摘要往左挪 2px（钟表图标的视觉左缘比正文略靠右）。
+   两个模式都生效，放在 228 行那条之后靠顺序生效，不动特异性。 */
+.thinking-summary{margin-left:-2px}
+
 /* 官端样式续：思考摘要行 + 常驻操作栏（2026-09-05） */
 /* 摘要行结构本来就跟官端一样（钟表 + 一行灰字 + 右尖角），只差字号和深浅。
    官端是 14px、比正文淡一档、跟正文之间留 12px。 */
@@ -1827,11 +1833,11 @@ html.ui-plain{
 }
 html.ui-plain .msg-user .bubble{background:#EBEBE9}
 @media(prefers-color-scheme:dark){
-  html.ui-plain:not([data-theme="light"]){--bg-primary:#242426;--bg-surface:#2E2E30;--bubble-user:#1A1A1C}
-  html.ui-plain:not([data-theme="light"]) .msg-user .bubble{background:#1A1A1C}
+  html.ui-plain:not([data-theme="light"]){--bg-primary:#242426;--bg-surface:#2D2D2F;--bubble-user:#141416}
+  html.ui-plain:not([data-theme="light"]) .msg-user .bubble{background:#141416}
 }
-html.ui-plain[data-theme="dark"]{--bg-primary:#242426;--bg-surface:#2E2E30;--bubble-user:#1A1A1C}
-html.ui-plain[data-theme="dark"] .msg-user .bubble{background:#1A1A1C}
+html.ui-plain[data-theme="dark"]{--bg-primary:#242426;--bg-surface:#2D2D2F;--bubble-user:#141416}
+html.ui-plain[data-theme="dark"] .msg-user .bubble{background:#141416}
 /* 输入框那层玻璃底色本来是暖的 rgba(242,239,237,.25)，跟冷背景搭着发黄，一起调中性 */
 html.ui-plain .composer-box{background:rgba(238,238,240,.28)}
 html.ui-plain[data-theme="dark"] .composer-box{background:rgba(48,48,52,.32)}
@@ -1839,9 +1845,9 @@ html.ui-plain[data-theme="dark"] .composer-box{background:rgba(48,48,52,.32)}
    不是 --bg-primary —— 只改 --bg-primary 时深色底还是暖褐 #1E1B18，就是被它盖的。 */
 html.ui-plain{--claude-sidebar-bg:#F5F5F3;--claude-main-surface:#F5F5F3;--claude-main-surface-soft:#EDEDEB}
 @media(prefers-color-scheme:dark){
-  html.ui-plain:not([data-theme="light"]){--claude-sidebar-bg:#242426;--claude-main-surface:#242426;--claude-main-surface-soft:#2E2E30}
+  html.ui-plain:not([data-theme="light"]){--claude-sidebar-bg:#242426;--claude-main-surface:#242426;--claude-main-surface-soft:#2D2D2F}
 }
-html.ui-plain[data-theme="dark"]{--claude-sidebar-bg:#242426;--claude-main-surface:#242426;--claude-main-surface-soft:#2E2E30}
+html.ui-plain[data-theme="dark"]{--claude-sidebar-bg:#242426;--claude-main-surface:#242426;--claude-main-surface-soft:#2D2D2F}
 html.ui-plain[data-theme="light"]{--claude-sidebar-bg:#F5F5F3;--claude-main-surface:#F5F5F3;--claude-main-surface-soft:#EDEDEB}
 
 /* 官端深色：输入区那几颗按钮跟着底一起压黑（浅色下本来就是黑圆，不用动）。
