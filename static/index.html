@@ -1238,7 +1238,7 @@ function _renderVoiceFavs(){
         '还没有收藏过语音。<br>在任何一条语音条右边点那颗小心，就会留在这儿。</div>';
       return;
     }
-    var h='<div style="padding:6px 16px 40px">';
+    var h='<div style="padding:6px 16px calc(40px + 35dvh)">';
     items.forEach(function(it){
       var when=new Date((it.created_at||0)*1000);
       var ds=(when.getMonth()+1)+'/'+when.getDate()+' '+String(when.getHours()).padStart(2,'0')+':'+String(when.getMinutes()).padStart(2,'0');
@@ -5060,6 +5060,7 @@ initSheetDrag($('thoughtSheet'),'#closeThought',()=>{delete $('thoughtSheet').da
 initSheetDrag($('artifactsSheet'),'#closeArtifacts');
 initSheetDrag($('todoSheet'),'#closeTodo');
 initSheetDrag($('lyricsSheet'),'#closeLyrics');
+initSheetDrag($('voiceFavSheet'),'#closeVoiceFav');
 var _lyricsAudio=null,_lyricsLines=[],_lyricsIdx=-1;
 function _showLyricsSheet(music){
   var c=$('lyricsContent');if(!c)return;
