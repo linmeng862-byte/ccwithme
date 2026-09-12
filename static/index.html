@@ -1540,7 +1540,13 @@ function showQuoteBar(who,text){
   var t=_quoteSanitize(text);
   if(!t)return;
   _quoteRef={who:who,text:t};
-  $('quoteBarWho').textContent=who==='him'?'回复 Cis':'回复 我自己';
+  $('quoteBarWho').textContent='“'+(who==='him'?'回复 Cis':'回复 我自己');
+  // 跟气泡上那张卡同一套配色：引他 = 浅蓝，引自己 = 浅粉
+  var _bc=who==='him'?'#6E9FC4':'#D48FA6';
+  var _bbg='var(--bg-sunken)';   // 底色不跟着变，只有名字有颜色
+  $('quoteBarWho').style.color=_bc;
+  // 竖条去掉了（她定的，改成名字前一个 “），这条也跟着走全圆角
+  var _qbar=$('quoteBar');_qbar.style.borderLeft='none';_qbar.style.borderRadius='10px';_qbar.style.background=_bbg;
   $('quoteBarText').textContent=t;
   var bar=$('quoteBar');bar.classList.remove('hidden');bar.style.display='flex';
   try{input.focus()}catch(e){}
@@ -1612,14 +1618,20 @@ function _renderQuoteCard(row,raw){
   var card=document.createElement('div');
   card.className='quote-ref';card.dataset.qtext=q.text;card.dataset.qwho=q.who;
   // 09-12 她说「好看，但有点太高了」→ 压扁：内边距和行高都收一档，三行截断改两行。
-  card.style.cssText='margin:0 0 5px;padding:3px 8px;border-left:3px solid var(--accent);border-radius:0 8px 8px 0;background:rgba(0,0,0,.04);cursor:pointer;max-width:100%';
+  // 颜色按**被引的是谁**分（她定的）：他的话浅蓝，她的话浅粉。
+  // 底色用半透明的同一支颜色，深浅两个主题下都不会糊。
+  // ⚠️ 颜色**只上在名字上**（她 09-12 定的）：底色还是原来那层灰，别跟着名字变蓝变粉。
+  var _qc=q.who==='him'?'#6E9FC4':'#D48FA6';
+  var _qbg='rgba(0,0,0,.04)';
+  // 09-12 她定的：**不要左边那根竖条，改成名字前面一个 “**。
+  card.style.cssText='margin:0 0 5px;padding:3px 9px;border-radius:8px;background:'+_qbg+';cursor:pointer;max-width:100%';
   // 名字跟原话**同一行**（像微信那样 "Cis：原话"）—— 分两行摆的时候卡有 44px 高，
   // 她说太高了。并成一行最矮，单行时 22px 上下。
   var tx=document.createElement('div');
   tx.style.cssText='font:12px/1.4 var(--font-serif);color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word';
   var who=document.createElement('span');
-  who.style.cssText='font-weight:600;color:var(--accent);opacity:.85;margin-right:4px';
-  who.textContent=(q.who==='him'?'Cis':'Vicky')+'：';
+  who.style.cssText='font-weight:600;color:'+_qc+';margin-right:4px';
+  who.textContent='“'+(q.who==='him'?'Cis':'Vicky')+'：';
   tx.append(who,document.createTextNode(q.text));
   card.append(tx);
   card.onclick=function(e){e.stopPropagation();_scrollToQuoted(q.who,q.text)};
