@@ -2034,3 +2034,6 @@ html.ui-plain .msg-user .bubble,html.ui-plain .msg-user .md{font-size:16px!impor
 
 /* 09-12 官端 thinking 再左移 1px（通用那条是 -2px）。 */
 html.ui-plain .thinking-summary{margin-left:-3px}
+
+/* 09-12 官端她的气泡圆角 14 → 20，她嫌方。气泡模式仍是 14。 */
+html.ui-plain .msg-user .bubble{border-radius:20px!important}
