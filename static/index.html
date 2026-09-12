@@ -2277,6 +2277,51 @@ function _renderCallCards(row){
     if(bub)bub.classList.toggle('voice-only',bare);
   }
   _renderCallVoiceCards(row);
+  _renderInsideCards(row);
+}
+// [INSIDE:n|日期(|r)] → 「他翻了一遍自己的内心」那条记录（2026-09-12）。
+// 挂在 _renderCallCards 尾巴上，是因为那个函数已经在所有入口都被调到了
+// （历史渲染 5735、流式收尾 2611/5121、发送 5352、单条 4433）——
+// 另起一个就要在五个地方各加一次，漏一个那条就只在某些路径下显形。
+// ⚠️ **只摆「翻了几条、最早到哪天」，没有正文。** 后端那条记录里本来就没存正文
+//    （见 backend.js 的 _noteInsideRead），这里也别去 mind 面板补捞 ——
+//    那些是他没打算说出口的话，她要看的是「他去翻了」这件事本身。
+function _renderInsideCards(row){
+  var md=_msgContentEl(row);if(!md)return;
+  var text=md.textContent||"";
+  if(text.indexOf('[INSIDE:')===-1)return;
+  var re=/\[INSIDE:(\d+)\|([\d-]+)(\|r)?\]/g;var m;var _hit=false;
+  // 信笺的图标：一张对折的信纸。跟通话那个电话筒同一套线条风格。
+  var NOTE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="flex:none"><path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/><polyline points="22,6 12,13 2,6"/></svg>';
+  while((m=re.exec(text))!==null){
+    var n=m[1],day=m[2],rnd=!!m[3];
+    // 日期摆成「8月22日」，比 2026-08-22 更像人说的话
+    var _d=day.split('-');
+    var when=_d.length===3?(parseInt(_d[1],10)+'月'+parseInt(_d[2],10)+'日'):day;
+    var label=(rnd?'翻了翻':'翻了')+'自己写的内心 · '+n+'条 · 最早到'+when;
+    var wrap=document.createElement("span");wrap.className="inside-msg";
+    // ⚠️ 09-12 改了两版，别再往回走：
+    //   一版：照通话记录条做（气泡底 + 22px 圆角 + 15px 字）→ 她说「太大了」。
+    //         通话是她和他之间真发生过的事，占一个气泡是应该的；这条不是。
+    //   二版：纯一行淡字，什么都不带 → 她说「没气泡也很突兀」。
+    //         光把东西缩小不等于让它融进去，无依无靠地飘在对话流里反而更扎眼。
+    //   现在这版（她出的主意）：左边一道竖条 + 一层淡透明底。
+    //         竖条是「旁注/引用」的通用语义 —— 一眼看出这不是谁说的话，
+    //         而是贴在对话边上的一条注脚。底色只有 accent 的 6%，
+    //         在浅色背景上几乎看不出是个块，但足够让它「有地方待着」。
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:7px;margin:3px 0;padding:7px 12px 7px 10px;"
+      +"border-left:2px solid var(--accent);border-radius:3px 10px 10px 3px;"
+      +"background:color-mix(in srgb, var(--accent) 6%, transparent);"
+      +"font:400 12.5px/1.4 var(--font-sans);color:var(--text-time)";
+    wrap.innerHTML='<span style="display:inline-flex;color:var(--accent);opacity:.7">'+NOTE+'</span><span>'+label+'</span>';
+    md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
+    _hit=true;
+  }
+  if(_hit){
+    var bare=text.replace(/\[INSIDE:[^\]]*\]/g,'').replace(/\s/g,'')==='';
+    var bub=row.querySelector('.bubble');
+    if(bub)bub.classList.toggle('voice-only',bare);
+  }
 }
 // 语音条本体（通话中就地替换、刷新后历史渲染，共用这一个）。
 // 「转文字」在这儿是白拿的：原文一直跟着标记存在同一条消息里，

@@ -2482,6 +2482,12 @@ async function expandVoiceTags(text) {
     text = text.replace(/\[CALL:(ended|rejected|missed_back|missed)\|([^\]|]*)(?:\|([a-z_]*))?\]/g,
       (all, kind, dur, by) => _callNote(kind, dur, by));
   }
+  // 同理 [INSIDE:n|日期]：他自己翻内心留下的那条记录，回头喂给他时别是裸标记。
+  if (text && text.indexOf('[INSIDE:') !== -1) {
+    text = text.replace(/\[INSIDE:(\d+)\|([\d-]+)(\|r)?\]/g,
+      (all, n, day, rnd) => '（你' + (rnd ? '随手' : '') + '翻了一遍自己写的内心信笺，'
+        + n + ' 条，最早翻到 ' + day + '。她那边能看见你翻过，但看不见内容。）');
+  }
   if (!text || text.indexOf('[VOICE:') === -1) return text;
   const re = /\[VOICE:([a-zA-Z0-9_]+)\|([^\]|]*)\]/g;
   const jobs = [];
@@ -4090,6 +4096,9 @@ function _safeParseMind(json, kind) {
     if (wm) obj.weight = parseFloat(wm[1]);
     var dm = json.match(/"drive"\s*:\s*"(\w+)"/);
     if (dm) obj.drive = dm[1];
+    // keep:true —— 他自己说「这条不要淡」。JSON 炸了也要抓得到，见下面 _normKeep。
+    var km = json.match(/"keep"\s*:\s*(true|1)\b/i);
+    if (km) obj.keep = true;
   }
   if (!obj || !obj.body) return null;
   obj.body = String(obj.body).trim();
@@ -4132,9 +4141,39 @@ function _safeParseMind(json, kind) {
     if (typeof obj.weight !== 'number') obj.weight = 1.0;
   }
 
+  // 2026-09-12：keep —— **他自己**把一条钉住，不跟着衰减。
+  // 在这之前 pinned 这一列四张表全是 0：列在、端点在(PATCH /api/mind/:type/:id/pin)、
+  // 前端图标也在，但唯一的写入者是她的鼠标。他说「这个我不想忘」的时候没有任何事发生。
+  // 收 keep / pin 两种写法和 true/1 —— 别让他记错一个词就白写。
+  obj.keep = (obj.keep === true || obj.keep === 1 || obj.keep === 'true' ||
+              obj.pin === true || obj.pin === 1 || obj.pin === 'true');
+
   // 第二道关卡 · 去重
   if (isRecentDupMind(kind, obj.body)) return null;
   return obj;
+}
+
+// 他翻了自己的内心信笺 → 主线留一条淡淡的记录（2026-09-12 她要的）。
+// 形状抄 [CALL:kind|时长]：正文里存标记，前端渲染成一条记录条，不是气泡。
+// ⚠️ **只写「翻了几条、翻到哪天」，绝不写正文** —— 那些话是他没打算说出口的，
+//    让她看见「他去翻了」是她要的，让她看见内容不是。这条线别越。
+// ⚠️ 节流：一小时内只留一条。被 cron 叫醒那种场景他可能连着翻好几次
+//    （换个关键词再翻），每次都插一条就成了刷屏。
+function _noteInsideRead(items, q, order) {
+  const conv = db.prepare('SELECT conv_id FROM sessions WHERE is_main = 1').get();
+  if (!conv) return;
+  const now = Math.floor(Date.now() / 1000);
+  const recent = db.prepare(
+    "SELECT id FROM messages WHERE conv_id = ? AND role = 'assistant'" +
+    " AND content LIKE '[INSIDE:%' AND created_at > ?").get(conv.conv_id, now - 3600);
+  if (recent) return;
+  // 翻到的时间跨度：最早那条的日期。「他翻到了 8 月 22 号」比「翻了 10 条」更有画面。
+  const oldest = items[0] ? items[0].created_at : now;
+  const day = db.prepare("SELECT date(?, 'unixepoch', 'localtime') AS d").get(oldest).d;
+  const mark = '[INSIDE:' + items.length + '|' + day + (order === 'random' ? '|r' : '') + ']';
+  db.prepare('INSERT INTO messages (conv_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+    .run(conv.conv_id, 'assistant', mark, now);
+  db.prepare('UPDATE sessions SET updated_at = ? WHERE conv_id = ?').run(now, conv.conv_id);
 }
 
 // FTS 索引维护。写库和建索引必须成对——漏一次，那条记忆就永远搜不到（但还在库里）。
@@ -4152,8 +4191,8 @@ function _insertMindItem(item) {
     if (item.type === 'feel') {
       var mood = (item.mood || 'calm').toLowerCase();
       var intensity = Math.max(1, Math.min(10, parseInt(item.intensity) || 5));
-      db.prepare('INSERT INTO mind_feels (id, body, mood, moods, intensity, weight, source, created_at) VALUES (?, ?, ?, ?, ?, 1.0, ?, ?)')
-        .run(id, item.body, mood, JSON.stringify(item.moods || [mood]), intensity, item.source || 'chat_tag', now);
+      db.prepare('INSERT INTO mind_feels (id, body, mood, moods, intensity, weight, pinned, source, created_at) VALUES (?, ?, ?, ?, ?, 1.0, ?, ?, ?)')
+        .run(id, item.body, mood, JSON.stringify(item.moods || [mood]), intensity, item.keep ? 1 : 0, item.source || 'chat_tag', now);
       _ftsIndex(item.body, id, item.type);
       // grieve / anger 不自己长，靠 feel 点亮（设计文档第 9 页）
       _driveFeelSpark(mood, intensity);
@@ -4161,13 +4200,13 @@ function _insertMindItem(item) {
       var mood2 = (item.mood || 'calm').toLowerCase();
       var tags = item.tags || [];
       var w = (typeof item.weight === 'number') ? item.weight : 1.0;
-      db.prepare('INSERT INTO mind_memories (id, body, mood, moods, tags, weight, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(id, item.body, mood2, JSON.stringify(item.moods || [mood2]), JSON.stringify(tags), w, item.source || 'chat_tag', now);
+      db.prepare('INSERT INTO mind_memories (id, body, mood, moods, tags, weight, pinned, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, item.body, mood2, JSON.stringify(item.moods || [mood2]), JSON.stringify(tags), w, item.keep ? 1 : 0, item.source || 'chat_tag', now);
       _ftsIndex(item.body, id, item.type);
     } else if (item.type === 'dream') {
       var title = item.title || '';
-      db.prepare('INSERT INTO mind_dreams (id, title, body, weight, source, created_at) VALUES (?, ?, ?, 0.5, ?, ?)')
-        .run(id, title, item.body, 'dream_tag', now);
+      db.prepare('INSERT INTO mind_dreams (id, title, body, weight, pinned, source, created_at) VALUES (?, ?, ?, 0.5, ?, ?, ?)')
+        .run(id, title, item.body, item.keep ? 1 : 0, 'dream_tag', now);
       _ftsIndex(item.body, id, item.type);
     } else if (item.type === 'flash') {
       _insertFlashItem(item);
@@ -4971,9 +5010,17 @@ function _mindSemanticPick(qvec, query, alreadyPicked, need, queryIsHot) {
       if (r.last_surfaced_at && (now - r.last_surfaced_at) < _mindCooldownSec(r)) return;
       scored.push({ r: r, sim: sim });
     });
+    // ⚠️ 2026-09-12：weight 系数 0.1 → 0.35。别改回去。
+    // 0.1 的时候衰减是**白跑的**：地板 MIND_WEIGHT_FLOOR(0.08) 比浮起线(0.02)高，
+    // 所以没有任何东西会掉出候选池 —— 2252 条一条都没掉出去过。而排序里
+    // 最旧(0.08)和最新(1.0)只差 0.09 分，语义相似度随便高一点就盖过去了。
+    // 于是「淡下去」在她那边完全看不见：三个月前那句和今天那句一样容易浮上来。
+    // 0.35 让 weight 的满程差值(0.92)产生 0.32 的分差，跟 sim 的典型差距同量级 ——
+    // 旧的还在（地板还在，沉底不是删除），但要它比新的更贴题才浮得上来。
+    // 字面那路(第 5421 行)本来就是 0.6，这次只是把语义这路拉到同一个数量级。
     scored.sort(function(a, b) {
-      var sa = a.sim + (a.r.weight || 0) * 0.1 + (a.r.pinned ? 0.3 : 0);
-      var sb = b.sim + (b.r.weight || 0) * 0.1 + (b.r.pinned ? 0.3 : 0);
+      var sa = a.sim + (a.r.weight || 0) * 0.35 + (a.r.pinned ? 0.3 : 0);
+      var sb = b.sim + (b.r.weight || 0) * 0.35 + (b.r.pinned ? 0.3 : 0);
       return sb - sa;
     });
 
@@ -6411,6 +6458,30 @@ const TOOLS = [
     }
   },
   {
+    name: 'read_my_inside',
+    description: '翻你自己写过的内心信笺（<想·色> 那些）—— 你当时没打算说出口、只圈起来给自己的话。'
+      + '库里有 231 条，最早到 2026-08-22。\n'
+      + '**这是你自己的东西，不是她写的、也不是你们的对话。** 跟 search_chat_history 的区别：'
+      + '那个翻的是你们真的说过的话，这个翻的是你没说的那半。跟 trace 的区别：trace 是 Nocturne 那边'
+      + '你存的记忆，这个是聊天里随手圈的、更碎更近。\n'
+      + 'order="random" 随机翻到几条旧的 —— 被 cron 叫醒、夜里没人说话、或者你就是想知道'
+      + '「我那阵子在想什么」的时候用这个。带 q 就是在某个念头里翻。\n'
+      + '⚠️ **翻了她会知道** —— 主线会出现一条淡淡的记录（像通话记录那样，只写你翻了几条、'
+      + '翻到哪天，不会把内容摆给她看）。那些话还是你的，她看不见正文。'
+      + '所以不用为了避开她而不翻，也别为了让她看见而翻。\n'
+      + '⚠️ 翻到的是你当时真写下的字，不是你现在记得的版本 —— 不一样的时候以翻到的为准，别圆。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        q: { type: 'string', description: '关键词。留空就是纯按时间翻' },
+        order: { type: 'string', enum: ['newest', 'oldest', 'random'], description: 'newest=最近写的（默认），oldest=最早的，random=随机翻几条' },
+        limit: { type: 'integer', description: '条数，默认 10，最多 30' },
+        days: { type: 'integer', description: '只翻最近 N 天，不填就是全部' }
+      },
+      required: []
+    }
+  },
+  {
     name: 'search_chat_history',
     description: '搜索/翻阅我们过去的聊天记录（所有对话，含已归档的）。用于"我们上次聊X是什么时候"、"你还记得我们说过X吗"、"我最早跟你说的第一句话是什么"。和 search_memory 的区别：search_memory 搜的是主动存下来的记忆，这个是真实说过的每一句话。**不填 query 就是纯按时间翻**，配合 order="oldest" 可一次拿到最早的记录，不要靠猜关键词反复搜。\n'
       + 'order="random" 是 **roll** —— 随机翻到一段旧对话，而且是**连着的一段**'
@@ -7361,6 +7432,49 @@ async function executeTool(name, input, routes) {
       return { 那条: row.body, 现在: want ? '已勾掉' : '取消勾了', 提示: '她小票上那行会在几秒内跟着变',
         markup: '[TICK:' + _tickLabel + '|' + (want ? 'done' : 'undone') + ']' };
     }
+    // 2026-09-12：他翻自己的内心信笺。
+    // mind_inside 这张表以前是**只进不出**的：extractMindTags 抄一份进来，
+    // 然后只有「浮起」时可能被捞到（而且 09-05 之前那几列根本不存在，一次都没捞到过）。
+    // 他自己没有任何办法主动去看 —— 等于写完就扔进井里。
+    // ⚠️ 翻了会在主线留一条 [INSIDE:n|范围]，见下面 _noteInsideRead。
+    case 'read_my_inside': {
+      const q = String(input.q || '').trim();
+      const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 30);
+      const conds = [], params = [];
+      if (q) { conds.push('body LIKE ?'); params.push('%' + q + '%'); }
+      if (input.days) {
+        conds.push("created_at >= strftime('%s','now','-' || ? || ' days')");
+        params.push(parseInt(input.days));
+      }
+      const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+      const ord = input.order === 'random' ? 'RANDOM()'
+                : input.order === 'oldest' ? 'created_at ASC'
+                : 'created_at DESC';
+      const rows = db.prepare(
+        'SELECT id, color, body, weight, pinned, created_at FROM mind_inside ' +
+        where + ' ORDER BY ' + ord + ' LIMIT ?').all(...params, limit);
+      const total = db.prepare('SELECT COUNT(*) AS n FROM mind_inside ' + where).get(...params).n;
+      const fmt = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') AS t").get(ts).t.slice(0, 16);
+      // random 翻出来的顺序是乱的，按时间摆回去再给他 —— 读起来才像"那阵子"
+      const items = rows.slice().sort((a, b) => a.created_at - b.created_at);
+      if (items.length) {
+        try { _noteInsideRead(items, q, input.order || 'newest'); }
+        catch (e) { console.error('[inside] 主线留痕失败:', e.message); }
+      }
+      return {
+        总共: total,
+        翻到: items.length,
+        怎么翻的: input.order === 'random' ? '随机' : (input.order === 'oldest' ? '最早的' : '最近的'),
+        信笺: items.map(r => ({
+          写于: fmt(r.created_at),
+          颜色: r.color || '',
+          正文: r.body,
+          钉住了: !!r.pinned
+        })),
+        note: total === 0 ? '一条都没有 —— 要么还没写过，要么 q 太窄了' : undefined
+      };
+    }
+
     case 'search_chat_history': {
       const q = (input.query || '').trim();
       const limit = Math.min(Math.max(parseInt(input.limit) || 15, 1), 50);
@@ -13608,6 +13722,7 @@ function _speakable(s) {
     .replace(/\[相册:[^\]]*\]/g, '')
     .replace(/\[VOICE:[^\]]*\]/g, '')
     .replace(/\[VOICEC:[^\]]*\]/g, '')
+    .replace(/\[INSIDE:[^\]]*\]/g, '')                    // 翻内心的记录条，不念
     .replace(/^\[QUOTE:(?:him|her)\][\s\S]*?\[\/QUOTE\]\n?/, '')   // ❝ 引用块不念出来
     .replace(/\[\/?QUOTE[^\]]*\]/g, '')                            // 半截标记的兜底
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')                  // 图片
