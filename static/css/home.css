@@ -2031,3 +2031,6 @@ html.ui-plain{
 html.ui-plain .msg-claude .bubble{padding-left:6px!important}
 html.ui-plain .msg-claude .bubble,html.ui-plain .msg-claude .md,
 html.ui-plain .msg-user .bubble,html.ui-plain .msg-user .md{font-size:16px!important}
+
+/* 09-12 官端 thinking 再左移 1px（通用那条是 -2px）。 */
+html.ui-plain .thinking-summary{margin-left:-3px}
