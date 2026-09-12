@@ -24,7 +24,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1788681000">
+<link rel="stylesheet" href="/css/home.css?v=1788767200">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -3819,7 +3819,7 @@ function _maybeTimeSep(ts,who){
 }
 function addUser(text,timestamp='',attachments=[]){_maybeTimeSep(timestamp,'user');const row=_buildUserRow(text,timestamp,attachments);streamInner.append(row);row.scrollIntoView({block:'end'});return row}
 function plainConversation(){return[...streamInner.children].map(x=>x.classList.contains('msg-user')?`You: ${x.dataset.raw}`:x.classList.contains('msg-claude')?`Claude: ${x.dataset.raw||''}`:'').filter(Boolean).join('\n\n')}
-function actions(row,raw,userText,userAttachments=[]){const bar=document.createElement('div');bar.className='message-actions';const make=(name,title,fn)=>{const b=document.createElement('button');b.className='action-button';b.title=title;b.innerHTML=icon(name);b.onclick=e=>{e.stopPropagation();fn(b)};bar.append(b);return b};
+function actions(row,raw,userText,userAttachments=[]){const bar=document.createElement('div');bar.className='message-actions';const make=(name,title,fn)=>{const b=document.createElement('button');b.className='action-button';b.dataset.act=name;b.title=title;b.innerHTML=icon(name);b.onclick=e=>{e.stopPropagation();fn(b)};bar.append(b);return b};
   make('copy','复制',async b=>{await navigator.clipboard.writeText(_stripQuote(raw));b.innerHTML="<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\"><polyline points=\"20 6 9 17 4 12\"/></svg>";setTimeout(()=>b.innerHTML=icon('copy'),1000)});
   // ❝ 引用他这句来回 —— 点完输入框上方出现引用条（见 showQuoteBar）。
   make('quote','引用回复',()=>{showQuoteBar('him',_stripQuote(raw))});

@@ -1797,6 +1797,26 @@ html.ui-plain .thinking-summary .thinking-summary-spacer{flex:0 0 auto}
 html.ui-plain .msg-claude .message-actions{display:flex}
 html.ui-plain .msg-claude .message-actions{margin-top:10px;gap:14px;color:var(--text-faint)}
 
+/* 官端样式续三：去掉气泡投影（2026-09-12，她说官端不要日常那套悬浮感）
+   1133 行给两侧气泡加了极淡投影，那是日常模式要的；官端是平的，
+   连她那侧的灰气泡也不该浮起来。带 !important 是因为那条在 media 外、
+   特异度同级，不带就要看谁写在后面。 */
+html.ui-plain .msg-user .bubble,
+html.ui-plain .msg-claude .bubble{box-shadow:none!important}
+
+/* 官端样式续四（2026-09-12，照她给的截图调）
+   1. 操作栏里的引号（引用回复）在官端不出 —— 官端那排没有这个。
+      按钮靠 data-act 认，3822 行的 make() 给每个都打了名字；
+      日常模式那排一个不动，引用功能本身也还在。
+   2. 图标和思考摘要都从 --text-faint(#A6A39A) 加深到 --text-secondary(#6E6D66)，
+      两处同色 —— 她要的是「摘要跟图标一个深浅」。
+   3. 他的正文往右挪 10px，跟第一个复制图标的左缘对齐。
+      气泡上面那条 padding:0!important 压着，这里必须也带 !important。 */
+html.ui-plain .msg-claude .message-actions [data-act="quote"]{display:none}
+html.ui-plain .msg-claude .message-actions{color:var(--text-secondary)}
+html.ui-plain .thinking-summary{color:var(--text-secondary)}
+html.ui-plain .msg-claude .bubble{padding-left:7px!important}
+
 /* 官端样式续二：配色再冷一档（2026-09-05，她说气泡该是灰的）
    只在 ui-plain 下改变量，有头像那套的暖米色一点不动。
    --bg-primary 暖米 #faf9f5 → 中性 #F5F5F3；她的气泡 #E9E3D8（暖）→ #EBEBE9（灰）。 */
