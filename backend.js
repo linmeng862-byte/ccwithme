@@ -2451,6 +2451,23 @@ function _offloadLongPaste(text, convId) {
   }
 }
 
+// ❝ 引用回复（2026-09-12）—— 两个方向共用一个标记，躺在 content 里：
+//   她引用他 → 她那条开头 [QUOTE:him]被引原话[/QUOTE]
+//   他引用她 → 他那条开头 [QUOTE:her]被引原话[/QUOTE]
+// 没加数据库列、没加 SSE 事件：存库原样、流式原样、历史重放原样，
+// 前端 renderMessage 把标记剥掉、另画一张引用卡（static/index.html 里 _renderQuoteCard）。
+// 这里只管**发给模型那一份**：把标记翻成人话，他才知道她在回哪一句。
+// ⚠️ 只翻她那条（role=user）。他自己那条保持原标记 —— 让他在历史里看见的是
+//    自己真正用过的语法，翻成人话他下次就会模仿人话、不再输出标记。
+const _QUOTE_RE_BE = /^\[QUOTE:(him|her)\]([\s\S]*?)\[\/QUOTE\]\n?/;
+function _quoteStrip(text) { return String(text || '').replace(_QUOTE_RE_BE, ''); }
+function _quoteForModel(text) {
+  const m = _QUOTE_RE_BE.exec(String(text || ''));
+  if (!m) return text;
+  const who = m[1] === 'him' ? '你之前说的这句' : '她自己之前说的这句';
+  return '[她这句是在回' + who + '：「' + m[2].trim() + '」]\n' + String(text).replace(_QUOTE_RE_BE, '');
+}
+
 async function expandVoiceTags(text) {
   // [VOICEC:id|时长] 是通话语音条的壳，后面紧跟着原文。他读到的一直是原文，
   // 不用再识别一次 —— 这段音频本来就是这段文字变出来的。
@@ -8703,7 +8720,7 @@ app.post('/api/chat', auth, async (req, res) => {
   // 如果是新会话，创建
   const existing = db.prepare('SELECT conv_id FROM sessions WHERE conv_id = ?').get(convId);
   if (!existing) {
-    db.prepare('INSERT INTO sessions (conv_id, title, project_id) VALUES (?, ?, ?)').run(convId, message.slice(0, 50) || '新对话', project_id || null);
+    db.prepare('INSERT INTO sessions (conv_id, title, project_id) VALUES (?, ?, ?)').run(convId, _quoteStrip(message).slice(0, 50) || '新对话', project_id || null);
   }
 
   // ⚠️ 必须在插入这条之前取：后面报时那段要拿「上一句」的时间算间隔，
@@ -8745,6 +8762,8 @@ app.post('/api/chat', auth, async (req, res) => {
     'SELECT role, content, attachments FROM messages WHERE conv_id = ? AND COALESCE(superseded,0) = 0 ORDER BY id ASC'
   ).all(convId);
   const history = await Promise.all(rawMessages.map(async (r) => {
+    // ❝ 她那条里的引用标记翻成人话（他那条留原样，理由见 _quoteForModel 上面）
+    if (r.role === 'user') r = { ...r, content: _quoteForModel(r.content) };
     const stkParts = _stickerContextParts(r.content, r.role);
     if (stkParts) return { role: r.role, content: stkParts };
     const atts = JSON.parse(r.attachments || '[]');
@@ -8952,7 +8971,7 @@ app.post('/api/chat', auth, async (req, res) => {
   // ★ 根据格式分流
   if (useGateway) {
     // 网关模式下 claude -p 只吃文本，图片附件转成本地绝对路径标注，靠网关开的 Read 工具去看
-    let gatewayMessage = await expandVoiceTags(message);
+    let gatewayMessage = _quoteForModel(await expandVoiceTags(message));
     // 📄 她一次粘太长就卸到文件里（2026-08-29）。
     // 08-27 那次：她贴了 20,832 字的审计报告 HTML，他又 Read 了同一份 md（32,503 字），
     // 两份全文都永久留在 CLI 的 transcript 里，十轮涨了 22k token —— 而 --resume
@@ -13589,6 +13608,8 @@ function _speakable(s) {
     .replace(/\[相册:[^\]]*\]/g, '')
     .replace(/\[VOICE:[^\]]*\]/g, '')
     .replace(/\[VOICEC:[^\]]*\]/g, '')
+    .replace(/^\[QUOTE:(?:him|her)\][\s\S]*?\[\/QUOTE\]\n?/, '')   // ❝ 引用块不念出来
+    .replace(/\[\/?QUOTE[^\]]*\]/g, '')                            // 半截标记的兜底
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')                  // 图片
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')               // 链接留文字
     .replace(/```[\s\S]*?```/g, '（这段代码我发到聊天框里了）')

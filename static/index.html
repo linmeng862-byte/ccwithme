@@ -89,6 +89,15 @@
         <button id="rewriteSkipBtn" style="flex:0 0 auto;padding:8px 16px;background:transparent;color:var(--text-secondary);border:1px solid var(--border);border-radius:9px;font:500 13px/1 var(--font-sans);cursor:pointer">不改</button>
       </div>
     </div>
+    <!-- ❝ 她点了某条气泡的「引用」。跟 rewriteBar 一样摆在输入框正上方 ——
+         被引的那条多半已经滚出屏幕了，而「我在回哪一句」必须一直看得见。 -->
+    <div id="quoteBar" class="hidden" style="align-items:flex-start;gap:8px;margin:0 8px 6px;padding:8px 10px;border-left:3px solid var(--accent);border-radius:0 10px 10px 0;background:var(--bg-sunken)">
+      <div style="flex:1;min-width:0">
+        <div id="quoteBarWho" style="font:600 11px/1.4 var(--font-sans);color:var(--accent);margin-bottom:2px">回复 他</div>
+        <div id="quoteBarText" style="font:13px/1.5 var(--font-serif);color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"></div>
+      </div>
+      <button id="quoteBarClose" aria-label="取消引用" style="flex:0 0 auto;width:22px;height:22px;padding:0;border:none;border-radius:50%;background:transparent;color:var(--text-faint);font:16px/1 var(--font-sans);cursor:pointer">×</button>
+    </div>
     <div class="composer-box">
       <div class="attachment-preview hidden" id="attachmentPreview"></div>
       <!-- ✎ 她的思考草稿。存下来不花钱，进上下文才花钱（docs/context-cost.md）——
@@ -835,7 +844,7 @@ const lucidePaths={
   terminal:'<path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216Z"/><path d="M40,88H216v14H40Z"/><path d="M65,72a9,9,0,1,1-9-9A9,9,0,0,1,65,72Z"/><path d="M97,72a9,9,0,1,1-9-9A9,9,0,0,1,97,72Z"/><path d="M129,72a9,9,0,1,1-9-9A9,9,0,0,1,129,72Z"/>',
   history:'<path d="M136,80v43.47l36.12,21.67a8,8,0,0,1-8.24,13.72l-40-24A8,8,0,0,1,120,128V80a8,8,0,0,1,16,0Zm-8-48A95.44,95.44,0,0,0,60.08,60.15C52.81,67.51,46.35,74.59,40,82V64a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H72a8,8,0,0,0,0-16H49c7.15-8.42,14.27-16.35,22.39-24.57a80,80,0,1,1,1.66,114.75,8,8,0,1,0-11,11.64A96,96,0,1,0,128,32Z"/>'
 };
-const _actionPaths={copy:'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',share:'<path d="M12 2v13"/><path d="m16 6-4-4-4 4"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>',play:'<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/>',stop:'<rect width="18" height="18" x="3" y="3" rx="2"/>',up:'<path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/>',down:'<path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/>',audio:'<path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/>'};
+const _actionPaths={quote:'<path d="M10 11H6a1 1 0 0 1-1-1V7a2 2 0 0 1 2-2h2a1 1 0 0 1 1 1z"/><path d="M10 11c0 4-1.5 6-4 7"/><path d="M20 11h-4a1 1 0 0 1-1-1V7a2 2 0 0 1 2-2h2a1 1 0 0 1 1 1z"/><path d="M20 11c0 4-1.5 6-4 7"/>',copy:'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',share:'<path d="M12 2v13"/><path d="m16 6-4-4-4 4"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>',play:'<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/>',stop:'<rect width="18" height="18" x="3" y="3" rx="2"/>',up:'<path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/>',down:'<path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/>',audio:'<path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/>'};
 const icon=name=>_actionPaths[name]?`<svg class="lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${_actionPaths[name]}</svg>`:`<svg class="lucide" viewBox="0 0 256 256" fill="currentColor">${lucidePaths[name]||''}</svg>`;
 const logo=(cls='mark-20')=>`<svg class="brand-mark ${cls}"><use href="#claude-mark"/></svg>`;
 document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon)});
@@ -1509,6 +1518,84 @@ function showRewriteBar(cmd){
   $('rewriteBar').classList.remove('hidden');
 }
 function hideRewriteBar(){_rewriteCmd=null;$('rewriteBar').classList.add('hidden')}
+
+// ── ❝ 引用回复（2026-09-12）─────────────────────────────────────
+// 两个方向都走**同一个标记**，跟 [VOICE:] / [ARTIFACT:] 一个路子：
+//   她引用他 → 她那条消息开头是 [QUOTE:him]被引的原话[/QUOTE]
+//   他引用她 → 他那条回复开头是 [QUOTE:her]被引的原话[/QUOTE]
+// 标记就躺在 content 里，所以**存库、历史重放、流式、搜索全都不用单独改** ——
+// 没加数据库列、没加 SSE 事件。正文渲染时剥掉（见 renderMessage 开头），
+// 引用卡由 _renderQuoteCard 单独挂在气泡顶上。
+// ⚠️ 必须是**整条消息的开头**，正则才认；他在中间写的不算引用（提示词里讲清了）。
+var _QUOTE_RE=/^\[QUOTE:(him|her)\]([\s\S]*?)\[\/QUOTE\]\n?/;
+// 原话里绝不能再出现 [/QUOTE]，否则截断处不对 —— 塞进标记前先捏干净。
+function _quoteSanitize(t){return String(t||'').replace(/\[\/?QUOTE[^\]]*\]/gi,'').replace(/\s+/g,' ').trim().slice(0,300)}
+function _quoteTag(who,text){var t=_quoteSanitize(text);return t?'[QUOTE:'+who+']'+t+'[/QUOTE]\n':''}
+function _parseQuote(raw){var m=_QUOTE_RE.exec(String(raw||''));return m?{who:m[1],text:m[2].trim()}:null}
+function _stripQuote(raw){return String(raw||'').replace(_QUOTE_RE,'')}
+
+// 她选中的那条（发出去的时候拼进标记，发完就清 —— 跟思考草稿同一个规矩）
+var _quoteRef=null;
+function showQuoteBar(who,text){
+  var t=_quoteSanitize(text);
+  if(!t)return;
+  _quoteRef={who:who,text:t};
+  $('quoteBarWho').textContent=who==='him'?'回复 他':'回复 我自己';
+  $('quoteBarText').textContent=t;
+  var bar=$('quoteBar');bar.classList.remove('hidden');bar.style.display='flex';
+  try{input.focus()}catch(e){}
+}
+function hideQuoteBar(){_quoteRef=null;var bar=$('quoteBar');if(bar){bar.classList.add('hidden');bar.style.display=''}}
+if($('quoteBarClose'))$('quoteBarClose').onclick=function(){hideQuoteBar()};
+
+// 点引用卡 → 滚回被引的那条并闪一下。没有 id 可认（标记里只有原话），
+// 所以按**原文包含**在 DOM 里找，找的是对应角色的气泡。找不到就什么都不做 ——
+// 那条多半还在「之前 50 条」里没加载出来，别给她一个假的跳转。
+function _scrollToQuoted(who,text){
+  var sel=who==='him'?'.msg-claude':'.msg-user';
+  var key=text.replace(/\s+/g,'').slice(0,24);
+  if(!key)return;
+  var rows=[].slice.call(streamInner.querySelectorAll(sel));
+  for(var i=rows.length-1;i>=0;i--){
+    var raw=(rows[i].dataset.raw||'').replace(/\s+/g,'');
+    if(raw.indexOf(key)>=0){
+      rows[i].scrollIntoView({block:'center',behavior:'smooth'});
+      var b=rows[i].querySelector('.bubble')||rows[i];
+      b.style.transition='background .25s';var old=b.style.background;
+      b.style.background='var(--bg-sunken)';
+      setTimeout(function(){b.style.background=old||''},900);
+      return;
+    }
+  }
+  try{toast('那条还没加载出来')}catch(e){}
+}
+
+// 引用卡：挂在气泡**里面的最顶上**。不挂气泡外面 —— 她的气泡是右对齐有底色的，
+// 挂外面会歪出来；挂里面两边的视觉规则一致。幂等，流式期间每个 delta 都会调。
+function _renderQuoteCard(row,raw){
+  if(!row)return;
+  var q=_parseQuote(raw!==undefined?raw:(row.dataset.raw||''));
+  var b=row.querySelector('.bubble');
+  if(!b)return;
+  var old=b.querySelector(':scope > .quote-ref');
+  if(!q){if(old)old.remove();return}
+  if(old){
+    if(old.dataset.qtext===q.text)return;      // 没变，别重建（流式每个字都会进来）
+    old.remove();
+  }
+  var card=document.createElement('div');
+  card.className='quote-ref';card.dataset.qtext=q.text;card.dataset.qwho=q.who;
+  card.style.cssText='margin:0 0 6px;padding:6px 9px;border-left:3px solid var(--accent);border-radius:0 8px 8px 0;background:rgba(0,0,0,.04);cursor:pointer;max-width:100%';
+  var who=document.createElement('div');
+  who.style.cssText='font:600 10px/1.4 var(--font-sans);color:var(--accent);margin-bottom:1px;opacity:.85';
+  who.textContent=q.who==='him'?'他说过' : '你说过';
+  var tx=document.createElement('div');
+  tx.style.cssText='font:12px/1.5 var(--font-serif);color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word';
+  tx.textContent=q.text;
+  card.append(who,tx);
+  card.onclick=function(e){e.stopPropagation();_scrollToQuoted(q.who,q.text)};
+  b.insertBefore(card,b.firstChild);
+}
 if($('rewriteDoBtn')){
   $('rewriteDoBtn').onclick=function(){
     if(!_rewriteCmd)return;
@@ -3496,6 +3583,8 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
     }
     m.append(item('重新生成',_rollThis));
     if(text)m.append(item('编辑后重发',_editThis));
+    // ❝ 引用自己说过的那句（「我刚才说的那件事……」）。他那边的入口在 actions 里。
+    if(text)m.append(item('引用这句',function(){showQuoteBar('her',_stripQuote(text))}));
     m.append(item('取消',function(){}));
     document.body.append(m);
     // 摆在气泡上方，超出视口就翻到下面/夹回边内
@@ -3528,12 +3617,14 @@ function _buildUserRow(text,timestamp='',attachments=[]){const row=document.crea
   if(files.length){const fc=document.createElement('div');fc.className='message-attachments';
     files.forEach(function(item){_renderToolFileCard({id:item.path||item.id,filename:item.filename||item.name,size:item.size},fc)});
     b.append(fc)}
-  if(text){const content=document.createElement('div');content.className='u-md';renderMessage(content,text,true);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(text);toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}
+  if(text){const content=document.createElement('div');content.className='u-md';renderMessage(content,text,true);b.append(content);if(text.trim().length<=30){let _cpT=null;const _cpCancel=()=>{clearTimeout(_cpT);_cpT=null};b.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;_cpCancel();_cpT=setTimeout(()=>{try{navigator.clipboard?.writeText?.(_stripQuote(text));toast?.('已复制')}catch(e){}_cpT=null},550)});b.addEventListener('pointerup',_cpCancel);b.addEventListener('pointercancel',_cpCancel);b.addEventListener('pointermove',()=>{if(_cpT)_cpCancel()})}}
   if(text||files.length)col.append(b);
   if(imgs.length)row.append(col);
   // 09-05：她那条也要画卡。「发给他看」现在发的是一行 [ARTIFACT:…]，
   //   不画的话她自己气泡里就是一行光秃秃的标记。
   if(text&&text.indexOf('[ARTIFACT:')>=0){try{_renderArtifactCards(row)}catch(e){}}
+  // ❝ 她引用他的那条：引用卡挂气泡顶上。实时和历史都过这儿，只写一遍。
+  try{_renderQuoteCard(row,text)}catch(e){}
   return row}
 var _claudeMsgGroupStart=null;
 // 这一轮他的第一条摆过时间戳没有。她一说话就重置成 false，新的一轮重新开始。
@@ -3558,7 +3649,10 @@ function _buildClaudeRow(text,userText='',thinking='',timestamp='',userAttachmen
   var md=document.createElement('div');md.className='md';renderMessage(md,text);b.append(md);body.append(b);
   // 时间戳不再挂在每条气泡下面了 —— 改成隔了一段时间才在他这句上面摆一条分隔条，
   // 见 _maybeTimeDivider()。row.dataset.timestamp 留着给它算间隔用。
-  actions(body,text,userText,userAttachments);row.append(body);return row}
+  actions(body,text,userText,userAttachments);row.append(body);
+  // ❝ 他引用她的那条：同一张卡，只是方向反过来（见 _renderQuoteCard）。
+  try{_renderQuoteCard(row,text)}catch(e){}
+  return row}
 function _fmtTokens(n){if(n>=1000000)return (n/1000000).toFixed(1)+'M';if(n>=1000)return (n/1000).toFixed(1)+'k';return String(n)}
 // 真实订阅额度（5 小时窗口）。跟 cost_usd 不是一回事——那个是按 API 价估的钱，
 // 她走订阅，真正会把她卡住的是这个。数据从 CLI 的 rate_limit_event 一路传下来。
@@ -3653,9 +3747,11 @@ function _maybeTimeSep(ts,who){
 function addUser(text,timestamp='',attachments=[]){_maybeTimeSep(timestamp,'user');const row=_buildUserRow(text,timestamp,attachments);streamInner.append(row);row.scrollIntoView({block:'end'});return row}
 function plainConversation(){return[...streamInner.children].map(x=>x.classList.contains('msg-user')?`You: ${x.dataset.raw}`:x.classList.contains('msg-claude')?`Claude: ${x.dataset.raw||''}`:'').filter(Boolean).join('\n\n')}
 function actions(row,raw,userText,userAttachments=[]){const bar=document.createElement('div');bar.className='message-actions';const make=(name,title,fn)=>{const b=document.createElement('button');b.className='action-button';b.title=title;b.innerHTML=icon(name);b.onclick=e=>{e.stopPropagation();fn(b)};bar.append(b);return b};
-  make('copy','复制',async b=>{await navigator.clipboard.writeText(raw);b.innerHTML="<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\"><polyline points=\"20 6 9 17 4 12\"/></svg>";setTimeout(()=>b.innerHTML=icon('copy'),1000)});
+  make('copy','复制',async b=>{await navigator.clipboard.writeText(_stripQuote(raw));b.innerHTML="<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\"><polyline points=\"20 6 9 17 4 12\"/></svg>";setTimeout(()=>b.innerHTML=icon('copy'),1000)});
+  // ❝ 引用他这句来回 —— 点完输入框上方出现引用条（见 showQuoteBar）。
+  make('quote','引用回复',()=>{showQuoteBar('him',_stripQuote(raw))});
   make('share','分享',async()=>{await navigator.clipboard.writeText(location.href);toast('已复制链接')});
-  make('play','朗读',b=>{if(speechSynthesis.speaking){speechSynthesis.cancel();b.classList.remove('active');b.innerHTML=icon('play')}else{const u=new SpeechSynthesisUtterance(raw);u.lang='zh-CN';u.onend=()=>{b.classList.remove('active');b.innerHTML=icon('play')};speechSynthesis.speak(u);b.classList.add('active');b.innerHTML=icon('stop')}});
+  make('play','朗读',b=>{if(speechSynthesis.speaking){speechSynthesis.cancel();b.classList.remove('active');b.innerHTML=icon('play')}else{const u=new SpeechSynthesisUtterance(_stripQuote(raw));u.lang='zh-CN';u.onend=()=>{b.classList.remove('active');b.innerHTML=icon('play')};speechSynthesis.speak(u);b.classList.add('active');b.innerHTML=icon('stop')}});
   const voteKey=`vote:${state.convId||'new'}:${raw.slice(0,40)}`;['up','down'].forEach(v=>{const b=make(v,v==='up'?'点赞':'点踩',btn=>{const next=localStorage.getItem(voteKey)===v?'':v;localStorage.setItem(voteKey,next);bar.querySelectorAll('[data-vote]').forEach(x=>x.classList.toggle('active',x.dataset.vote===next))});b.dataset.vote=v;b.classList.toggle('active',localStorage.getItem(voteKey)===v)});
   make('retry','重新生成',()=>{var msg=row.closest('.msg-claude');if(msg)msg.remove();else row.remove();sendMessage(userText,false,[],userAttachments)});
   row.append(bar)}
@@ -3796,7 +3892,13 @@ function _stripPageStyles(md){
   md.querySelectorAll('meta,base').forEach(function(el){el.remove()});
 }
 
-function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripUrlsFromRaw(String(text||''));if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
+function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripUrlsFromRaw(String(text||''));
+  // ❝ 引用标记不是正文，剥掉 —— 引用卡由 _renderQuoteCard 单独画（见那儿的注释）。
+  // ⚠️ 流式期间 `[QUOTE:her]…` 还没闭合，正则不匹配，那会儿它会以原文露在气泡里。
+  //    所以半截的也挡掉：整条以 [QUOTE: 开头、还没见到闭合标签 = 他正在写引用，先什么都不显示。
+  if(/^\[QUOTE:/.test(src)&&!/\[\/QUOTE\]/.test(src))src='';
+  else src=_stripQuote(src);
+  if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
   var imgRe=/\[IMAGE:([^\]]+)\]/g;var imgsHtml='',imgMatch;imgRe.lastIndex=0;
   while((imgMatch=imgRe.exec(src))!==null){imgsHtml+='<img src=\"'+assetUrl(imgMatch[1])+'\" style=\"max-width:320px;max-height:400px;border-radius:26px;display:block;margin:6px 0;cursor:pointer;object-fit:scale-down;box-shadow:0 4px 24px rgba(0,0,0,.06)\" onclick=\"var ex=document.createElement(\'div\');ex.className=\'image-expand\';var fi=document.createElement(\'img\');fi.src=this.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)\" />'}
   if(imgsHtml){src=src.replace(imgRe,'');md.innerHTML=imgsHtml+(src.trim()?'':'');_fixImgSrcs(md);if(!src.trim())return}var cmdRe=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var cmdHtml='',cmdMatch;cmdRe.lastIndex=0;while((cmdMatch=cmdRe.exec(src))!==null){var cid=cmdMatch[1],ctype=cmdMatch[2],ctitle=cmdMatch[3];var cmdIcon=ctype==='quiz'?'\u{1F4DD}':ctype==='task'?'\u{1F4CB}':'\u23F1\uFE0F';cmdHtml+='<div class="cmd-capsule" data-cmd-id="'+cid+'" data-cmd-type="'+ctype+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer" onclick="openCmdCapsule(\''+cid+'\')"><span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span></div>'}if(cmdHtml){src=src.replace(cmdRe,'')}if(window.marked){try{var markedResult=marked.parse(src,{breaks:true,gfm:true});md.innerHTML=(imgsHtml||'')+(cmdHtml||'')+markedResult.trimEnd();md.querySelectorAll('a[href]').forEach(function(a){var h=a.getAttribute('href');if(h&&/^https?:\/\//.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});
@@ -4271,7 +4373,12 @@ function _splitMessages(row){
     }
     return;
   }
-  var raw=row.dataset.raw||'';var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=parts[0];_reRenderCards(row)}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=part;_reRenderCards(row);return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);clone.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){c.remove()});clone.querySelectorAll('.thinking-summary,.trace-row').forEach(function(tb){tb.remove()});var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();clone.querySelectorAll('.memory-save-card,.gallery-album-card-chat,.music-card,.artifact-card,.file-card,.action-report-card').forEach(function(cc){cc.remove()});/* 08-28 空气泡的真正成因：`.clawd-emote-label`（「Clawd替你害羞」那行小字）是**整条消息**的，不是某一片的，`_renderClawdLabel` 把它挂在 .bubble 后面 —— cloneNode(true) 于是把它复制进每一片。一是重复显示，二是更阴的：它让下面 `_rowLooksEmpty` 读到的 textContent 非空，于是「渲染完什么都没有」的那一片删不掉，就留成了空气泡。清掉它，那道网自己就管用了，不用在 `_partIsBlank` 里给 clawd 开特例。 */clone.querySelectorAll('.clawd-emote-label').forEach(function(cc){cc.remove()});parent.insertBefore(clone,next.nextSibling);_reRenderCards(clone);if(_rowLooksEmpty(clone)){clone.remove();return}next=clone})}
+  var raw=row.dataset.raw||'';
+  /* ❝ 引用标记占着自己一行，而「短句换行自动分气泡」（_chatLineSplit）会把它当成**一条话**
+     拆出去 —— 于是他的引用卡留在一个空的第一片上，正文跑到第二片，她看到的是卡没了。
+     所以分片之前先把标记摘掉，分完再贴回第一片的 dataset.raw（卡本身已经画好了）。 */
+  var _qpfx='';var _qm=_QUOTE_RE.exec(raw);if(_qm){_qpfx=_qm[0];raw=raw.slice(_qm[0].length)}
+  var parts=raw.split(/\n---\n/);if(parts.length<2){var _cl=_chatLineSplit(raw);if(_cl)parts=_cl}if(parts.length<2){var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;var html=md.innerHTML;parts=html.split(/<hr[^>]*\/?>/i);if(parts.length<2)return}parts=parts.filter(function(p){return !_partIsBlank(p)});var body=row.querySelector('.msg-body');if(!body)return;var md=body.querySelector('.md');if(!md)return;if(parts.length<2){if(parts.length===1&&parts[0].indexOf('<')<0){renderMessage(md,parts[0]);row.dataset.raw=_qpfx+parts[0];_reRenderCards(row)}return}var parent=row.parentNode;var next=row;parts.forEach(function(part,i){part=part.trim();if(!part)return;if(i===0){renderMessage(md,part);row.dataset.raw=_qpfx+part;_reRenderCards(row);return}var clone=row.cloneNode(true);clone.classList.remove('streaming');clone.dataset.finished='1';clone.dataset.raw=part;var cmd=clone.querySelector('.md');if(cmd)renderMessage(cmd,part);clone.querySelectorAll('.cmd-capsule[data-cmd-id]').forEach(function(c){c.remove()});clone.querySelectorAll('.thinking-summary,.trace-row').forEach(function(tb){tb.remove()});var tl=clone.querySelector('.claude-trail-logo');if(tl)tl.remove();var ar=clone.querySelector('.action-report-card');if(ar)ar.remove();var gs=clone.querySelector('.gallery-save-card');if(gs)gs.remove();var ga=clone.querySelector('.gallery-album-card-chat');if(ga)ga.remove();clone.querySelectorAll('.memory-save-card,.gallery-album-card-chat,.music-card,.artifact-card,.file-card,.action-report-card').forEach(function(cc){cc.remove()});/* 08-28 空气泡的真正成因：`.clawd-emote-label`（「Clawd替你害羞」那行小字）是**整条消息**的，不是某一片的，`_renderClawdLabel` 把它挂在 .bubble 后面 —— cloneNode(true) 于是把它复制进每一片。一是重复显示，二是更阴的：它让下面 `_rowLooksEmpty` 读到的 textContent 非空，于是「渲染完什么都没有」的那一片删不掉，就留成了空气泡。清掉它，那道网自己就管用了，不用在 `_partIsBlank` 里给 clawd 开特例。 */clone.querySelectorAll('.clawd-emote-label').forEach(function(cc){cc.remove()});/* ❝ 引用卡是**整条消息**的，只该留在第一片上 —— cloneNode(true) 会把它复制进每一片（同 clawd-emote-label 那个坑）。 */clone.querySelectorAll('.quote-ref').forEach(function(cc){cc.remove()});parent.insertBefore(clone,next.nextSibling);_reRenderCards(clone);if(_rowLooksEmpty(clone)){clone.remove();return}next=clone})}
 function _addHtmlPreviews(md){if(!md)return;md.querySelectorAll('pre code').forEach(function(block){var cls=block.className||'';var pre=block.parentElement;if(pre.querySelector('.html-preview-btn'))return;var isHtml=/language-html|language-htm|lang-html|lang-htm/i.test(cls);var isCss=/language-css|lang-css/i.test(cls);var isJs=/language-js|language-javascript|lang-js/i.test(cls);if(!isHtml&&!isCss&&!isJs)return;var btn=document.createElement('button');btn.className='html-preview-btn';btn.textContent='▸ Preview';btn.style.cssText='margin-top:6px;padding:5px 14px;border:1px solid var(--accent);border-radius:16px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;font-family:var(--font-sans)';var iframe=null;btn.onclick=function(){if(iframe){iframe.remove();iframe=null;btn.textContent='▸ Preview';return}var code=block.textContent;if(isCss){code='<style>'+code+'<\/style>'}else if(isJs){code='<script>'+code+'<\/script>'}iframe=document.createElement('iframe');iframe.style.cssText='width:100%;max-width:440px;min-height:550px;border:1px solid var(--border);border-radius:14px;background:#fff;margin-top:8px;display:block';iframe.sandbox='allow-scripts';iframe.src=URL.createObjectURL(new Blob(['<!DOCTYPE html><html><head><meta charset=\"utf-8\"><\/head><body>'+code+'</body></html>'],{type:'text/html'}));pre.after(iframe);btn.textContent='▸ Hide preview'};pre.after(btn)})}
 async function refineThoughtSummary(summary,thinking){if(!thinking)return;setThoughtSummary(summary,thinking,'Thinking summary...');try{const r=await api('/api/thinking-summary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thinking})});if(!r.ok)throw Error();const data=await r.json();setThoughtSummary(summary,thinking,data.summary||'')}catch{setThoughtSummary(summary,thinking)}}
 function thoughtSummary(thinking){const summary=document.createElement('button');summary.className='thinking-summary show';setThoughtSummary(summary,thinking);refineThoughtSummary(summary,thinking);summary.onclick=()=>{$('thoughtContent').textContent=thinking;sheet('thought',true)};return summary}
@@ -4916,6 +5023,8 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
         }
       }
       raw+=t;_clawdLastMsgTime=Date.now();renderMessage(md,raw);
+      // ❝ 他开头写了引用 → 标记一闭合就把卡画出来。_renderQuoteCard 幂等，每个 delta 调都不重建。
+      try{_renderQuoteCard(row,raw)}catch(e){}
     },
     traceSummary(text){
       const traceRow=[..._toolToRow.values()][0];
@@ -4935,6 +5044,7 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
       row.dataset.raw=raw;row.dataset.timestamp=new Date().toISOString();
       _renderFileCards(row);_renderCmdCapsulesAfter(row);_renderArtifactCards(row);_renderClawdLabel(row);
       _renderVoiceCards(row);_renderCallCards(row);
+      try{_renderQuoteCard(row,raw)}catch(e){}
       _splitMessages(row);
       _hideBubbleIfEmpty(row);
       delete $('thoughtSheet').dataset.live;
@@ -5154,6 +5264,9 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
   if((!text&&!files.length&&!existingAttachments.length)||state.busy)return;
   state.busy=true;updateSendButton();laTurnStart();let msg;
   try{
+    // ❝ 她选了要回哪一句 → 标记拼在正文**最前面**跟着这条一起走。
+    // 只在她亲手发的那次拼（showUser）；roll / 重新生成走的是原文，原文里已经带着标记了。
+    if(showUser&&_quoteRef&&text){text=_quoteTag(_quoteRef.who,_quoteRef.text)+text;hideQuoteBar()}
     const attachments=existingAttachments.length?existingAttachments:await uploadPendingFiles(files);
     if(showUser){
       await dismissEmpty();
@@ -5162,7 +5275,7 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
       // 08-23：这里原来传空字符串当时间戳，_maybeTimeSep 第一行 if(!ts)return 直接吃掉了——
       // 于是「隔了很久回来」那道居中分界线只有刷新页面（历史那条路）才看得见，实时聊天永远不出现。
       var _ur=addUser(text,new Date().toISOString(),attachments);_renderVoiceCards(_ur);_renderCallCards(_ur);
-      if(state.currentTitle==='新对话'){state.currentTitle=(text||attachments[0]?.name||'附件').slice(0,40);updateSessionHeader()}
+      if(state.currentTitle==='新对话'){state.currentTitle=(_stripQuote(text)||attachments[0]?.name||'附件').slice(0,40);updateSessionHeader()}
       input.value='';input.style.height='auto';clearPendingFiles();
     }
     // 08-23：他的小时间戳（.msg-time-inline）也一样——addClaude 走的是历史那条路，
