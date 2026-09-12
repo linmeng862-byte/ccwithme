@@ -1908,17 +1908,17 @@ html.ui-plain[data-theme="dark"] #micButton{background:#1A1A1C;color:#F5F4EF;bor
    写成两段是因为「跟随系统」时 html 上没有 data-theme，只能靠媒体查询分浅深。 */
 @media (prefers-color-scheme:light){
   html:not([data-theme="dark"]):not(.ui-plain){
-    --bg-primary:#F8F6F7;--bg-surface:#ECE9EB;--claude-main-surface:#F8F6F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#F8F6F7;
+    --bg-primary:#FBF8F7;--bg-surface:#ECE9EB;--claude-main-surface:#FBF8F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#FBF8F7;
     --bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9;
-    --accent:#6E5A66;--accent-hover:#5C4A55;--accent-fg:#FFF;
-    --text-primary:#2C2629;--border:rgba(44,38,41,.08);--border-strong:rgba(44,38,41,.16);
+    --accent:#6B5147;--accent-hover:#583F36;--accent-fg:#FFF;
+    --text-primary:#2B2421;--border:rgba(43,36,33,.08);--border-strong:rgba(43,36,33,.16);
   }
 }
 html[data-theme="light"]:not(.ui-plain){
-  --bg-primary:#F8F6F7;--bg-surface:#ECE9EB;--claude-main-surface:#F8F6F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#F8F6F7;
+  --bg-primary:#FBF8F7;--bg-surface:#ECE9EB;--claude-main-surface:#FBF8F7;--claude-main-surface-soft:#EFECEE;--claude-sidebar-bg:#FBF8F7;
   --bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9;
-  --accent:#6E5A66;--accent-hover:#5C4A55;--accent-fg:#FFF;
-  --text-primary:#2C2629;--border:rgba(44,38,41,.08);--border-strong:rgba(44,38,41,.16);
+  --accent:#6B5147;--accent-hover:#583F36;--accent-fg:#FFF;
+  --text-primary:#2B2421;--border:rgba(43,36,33,.08);--border-strong:rgba(43,36,33,.16);
 }
 
 /* ============ 09-12 气泡照 /preview/palettes.html 那版来 ============

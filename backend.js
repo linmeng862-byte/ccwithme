@@ -3440,7 +3440,7 @@ app.get('/api/sessions/:id/messages-by-date', auth, (req, res) => {
   const date = req.query.date;
   if (!date) return res.status(400).json({ error: 'date required (YYYY-MM-DD)' });
   const rows = db.prepare(
-    "SELECT id, role, content, thinking, attachments, traces, created_at FROM messages WHERE conv_id = ? AND date(created_at, 'unixepoch') = ? ORDER BY id ASC"
+    "SELECT id, role, content, thinking, attachments, traces, usage, created_at FROM messages WHERE conv_id = ? AND date(created_at, 'unixepoch') = ? ORDER BY id ASC"
   ).all(req.params.id, date);
   const messages = rows.map(r => ({
     id: r.id,
@@ -3449,6 +3449,7 @@ app.get('/api/sessions/:id/messages-by-date', auth, (req, res) => {
     thinking: r.thinking,
     attachments: _hydrateAttachments(r.attachments),
     traces: (function(){ try { return JSON.parse(r.traces || '[]'); } catch (e) { return []; } })(),
+    usage: (function(){ try { return r.usage ? JSON.parse(r.usage) : null; } catch (e) { return null; } })(),
     timestamp: new Date(r.created_at * 1000).toISOString()
   }));
   res.json({ messages, date });
@@ -3480,6 +3481,7 @@ app.get('/api/sessions/:id/messages', auth, (req, res) => {
     thinking: r.thinking,
     attachments: _hydrateAttachments(r.attachments),
     traces: (function(){ try { return JSON.parse(r.traces || '[]'); } catch (e) { return []; } })(),
+    usage: (function(){ try { return r.usage ? JSON.parse(r.usage) : null; } catch (e) { return null; } })(),
     timestamp: new Date(r.created_at * 1000).toISOString()
   }));
   res.json({
@@ -10636,6 +10638,7 @@ async function handleGatewayChat(req, res, ctx) {
     // 中转 API 那条路（同文件另一处 INSERT）一直是存的，两条路功能不对等。
     // 这里把 gateway 路径补齐，跟中转对齐。⚠️ 只对以后的新消息有效，旧的补不回来。
     let gwThinking = '';
+    let gwUsage = null;   // 这一轮的用量，跟消息一起落库 —— 长按气泡那行 input/output 刷新后要靠它
     let gwMarkers = '';
     const gwStickers = [];   // 表情单独成条，不拼进正文
     // 08-24：网关这条路以前不存 tool_use / tool_result —— 卡片和 trace row
@@ -10758,6 +10761,7 @@ async function handleGatewayChat(req, res, ctx) {
           res.write('event: rate_limit\ndata: ' + JSON.stringify(evt.rate_limit) + '\n\n');
         } else if (evt.usage) {
           const u = evt.usage;
+          gwUsage = u;
           try {
             db.prepare(`INSERT INTO usage_log
               (conv_id, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms, num_turns)
@@ -10807,8 +10811,12 @@ async function handleGatewayChat(req, res, ctx) {
           // 别让一条巨大的工具输出把库撑坏（比如读了个大文件）
           if (_gwTraces.length > 200000) _gwTraces = '[]';
         } catch (e) { _gwTraces = '[]'; }
-        db.prepare('INSERT INTO messages (conv_id, role, content, thinking, traces) VALUES (?, ?, ?, ?, ?)')
-          .run(convId, 'assistant', gwFull, gwThinking, _gwTraces);
+        const _gwUsage = gwUsage ? JSON.stringify({
+          input_tokens: gwUsage.input_tokens || 0, output_tokens: gwUsage.output_tokens || 0,
+          cache_read_tokens: gwUsage.cache_read_tokens || 0, cache_write_tokens: gwUsage.cache_write_tokens || 0,
+        }) : '';
+        db.prepare('INSERT INTO messages (conv_id, role, content, thinking, traces, usage) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(convId, 'assistant', gwFull, gwThinking, _gwTraces, _gwUsage);
       }
       // 文字一条、表情一条 —— 拆开存，历史里表情才是一张裸图而不是气泡里的插图
       for (const u of gwStickers) {
@@ -15626,6 +15634,9 @@ startOWC();
 // 而工具结果从来没落过库。（文件卡侥幸活着，因为它另外还写了一个 [FILE:..] 文本标记。）
 // 存下来之后 trace row 也能恢复：她刷新后还能点开看他当时做了什么。
 try { db.exec("ALTER TABLE messages ADD COLUMN traces TEXT DEFAULT '[]'"); }
+catch (e) { /* 列已存在 */ }
+// 09-12：每条回复的用量（JSON）。以前只在流式那一刻推给前端，刷新就没了，长按旧气泡出不来那行。
+try { db.exec("ALTER TABLE messages ADD COLUMN usage TEXT DEFAULT ''"); }
 catch (e) { /* 列已存在 */ }
 
 // === 启动 ===
