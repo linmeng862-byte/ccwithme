@@ -120,7 +120,7 @@ function _renderGalleryHome() {
   // Bottom delete bar (edit mode)
   if (_galHomeEditMode) {
     var selCount = Object.keys(_galHomeSelected).length;
-    html += '<div id="galHomeDeleteBar" style="position:fixed;bottom:0;left:0;right:0;z-index:90;display:flex;align-items:center;gap:12px;padding:14px 20px calc(env(safe-area-inset-bottom) + 14px);background:var(--g-bg,#FAF9F5);border-top:1px solid var(--g-line,#E5DFD4)">';
+    html += '<div id="galHomeDeleteBar" style="position:fixed;bottom:0;left:0;right:0;z-index:90;display:flex;align-items:center;gap:12px;padding:14px 20px calc(env(safe-area-inset-bottom) + 14px);background:var(--g-bg,#FBF7F0);border-top:1px solid var(--g-line,#E5DFD4)">';
     html += '<span style="font:600 15px/1 var(--font-sans);color:var(--g-text,#2C2821)">' + selCount + ' selected</span>';
     html += '<div style="flex:1"></div>';
     html += '<button id="galHomeDeleteBtn" onclick="_deleteSelectedAlbums()" style="padding:10px 22px;border:0;border-radius:999px;background:' + (selCount > 0 ? '#E05050' : '#D0C8C0') + ';color:#fff;font:600 14px/1 var(--font-sans);cursor:pointer;transition:background .15s" ' + (selCount === 0 ? 'disabled' : '') + '>Delete</button>';
@@ -213,7 +213,7 @@ function _renderAlbumDetail() {
   // Bottom delete bar
   if (_galSelectMode) {
     var selCount = Object.keys(_galSelected).length;
-    html += '<div id="galDeleteBar" style="position:fixed;bottom:0;left:0;right:0;z-index:90;display:flex;align-items:center;gap:12px;padding:14px 20px calc(env(safe-area-inset-bottom) + 14px);background:var(--g-bg,#FAF9F5);border-top:1px solid var(--g-line,#E5DFD4)">';
+    html += '<div id="galDeleteBar" style="position:fixed;bottom:0;left:0;right:0;z-index:90;display:flex;align-items:center;gap:12px;padding:14px 20px calc(env(safe-area-inset-bottom) + 14px);background:var(--g-bg,#FBF7F0);border-top:1px solid var(--g-line,#E5DFD4)">';
     html += '<span style="font:600 15px/1 var(--font-sans);color:var(--g-text,#2C2821)">' + selCount + ' selected</span>';
     html += '<div style="flex:1"></div>';
     html += '<button id="galDeleteBtn" onclick="_deleteSelected()" style="padding:10px 22px;border:0;border-radius:999px;background:' + (selCount > 0 ? '#E05050' : '#D0C8C0') + ';color:#fff;font:600 14px/1 var(--font-sans);cursor:pointer;transition:background .15s" ' + (selCount === 0 ? 'disabled' : '') + '>Delete</button>';
@@ -542,9 +542,9 @@ function _initGalleryStyles() {
   style.id = 'galleryStyles';
   style.textContent = [
     '/* Gallery — Editorial Memory Archive */',
-    '#galleryPanel { --g-bg: #FAF9F5; --g-card: #F2EFE7; --g-text: #2C2821; --g-muted: #A0988B; --g-line: #E5DFD4; }',
-    '@media (prefers-color-scheme: dark) { #galleryPanel { --g-bg: #2A1D22; --g-card: #35262C; --g-text: #EDE0E4; --g-muted: #B0989E; --g-line: #4A3840; } }',
-    'html[data-theme="dark"] #galleryPanel { --g-bg: #2A1D22; --g-card: #35262C; --g-text: #EDE0E4; --g-muted: #B0989E; --g-line: #4A3840; }',
+    '#galleryPanel { --g-bg: var(--bg-primary); --g-card: #F2EFE7; --g-text: #2C2821; --g-muted: #A0988B; --g-line: #E5DFD4; }',
+    '@media (prefers-color-scheme: dark) { #galleryPanel { --g-bg: var(--bg-primary); --g-card: #35262C; --g-text: #EDE0E4; --g-muted: #B0989E; --g-line: #4A3840; } }',
+    'html[data-theme="dark"] #galleryPanel { --g-bg: var(--bg-primary); --g-card: #35262C; --g-text: #EDE0E4; --g-muted: #B0989E; --g-line: #4A3840; }',
 
     /* Home header */
     '.gallery-home-header { padding:20px 16px 8px; }',
@@ -623,9 +623,9 @@ function _initGalleryStyles() {
     '.gallery-modal { position:fixed;inset:0;z-index:200;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:opacity .25s; }',
     '.gallery-modal.show { opacity:1;pointer-events:auto; }',
     '.gallery-modal-overlay { position:absolute;inset:0;background:rgba(0,0,0,.25); }',
-    '.gallery-modal-card { --g-bg:#FAF9F5;--g-card:#F2EFE7;--g-text:#2C2821;--g-muted:#A0988B;--g-line:#E5DFD4; position:relative;z-index:1;width:100%;max-width:440px;background:var(--g-bg);border-radius:24px 24px 0 0;padding:28px 24px calc(env(safe-area-inset-bottom) + 20px); transform:translateY(20px); transition:transform .3s cubic-bezier(.32,.72,0,1); }',
-    '@media (prefers-color-scheme:dark) { .gallery-modal-card { --g-bg:#2A1D22;--g-card:#35262C;--g-text:#EDE0E4;--g-muted:#B0989E;--g-line:#4A3840; } }',
-    'html[data-theme="dark"] .gallery-modal-card { --g-bg:#2A1D22;--g-card:#35262C;--g-text:#EDE0E4;--g-muted:#B0989E;--g-line:#4A3840; }',
+    '.gallery-modal-card { --g-bg:var(--bg-primary);--g-card:#F2EFE7;--g-text:#2C2821;--g-muted:#A0988B;--g-line:#E5DFD4; position:relative;z-index:1;width:100%;max-width:440px;background:var(--g-bg);border-radius:24px 24px 0 0;padding:28px 24px calc(env(safe-area-inset-bottom) + 20px); transform:translateY(20px); transition:transform .3s cubic-bezier(.32,.72,0,1); }',
+    '@media (prefers-color-scheme:dark) { .gallery-modal-card { --g-bg:var(--bg-primary);--g-card:#35262C;--g-text:#EDE0E4;--g-muted:#B0989E;--g-line:#4A3840; } }',
+    'html[data-theme="dark"] .gallery-modal-card { --g-bg:var(--bg-primary);--g-card:#35262C;--g-text:#EDE0E4;--g-muted:#B0989E;--g-line:#4A3840; }',
     '.gallery-modal.show .gallery-modal-card { transform:translateY(0); }',
     '.gallery-modal-title { font:700 22px/1.2 var(--font-serif, Georgia); color:var(--g-text); margin:0 0 4px; }',
     '.gallery-modal-sub { font:400 14px/1.4 var(--font-sans); color:var(--g-muted); margin:0 0 22px; }',

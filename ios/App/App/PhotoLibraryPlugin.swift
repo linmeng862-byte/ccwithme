@@ -69,8 +69,11 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin {
             let mgr = PHImageManager.default()
             let req = PHImageRequestOptions()
             req.isSynchronous = true                 // 已经在后台队列里了
-            req.deliveryMode = .fastFormat           // 缩略图要快，不要高保真
-            req.resizeMode = .fast
+            // 09-12 她说「图片都好糊」：.fastFormat 允许系统**无视 targetSize** 直接吐一张
+            // 更小的缓存图，三列网格在 DPR3 的屏上放大近一倍就糊了。改成 .opportunistic +
+            // .exact：同步请求下它会给出符合尺寸的那一张，代价是慢一点点（仍走本地缓存）。
+            req.deliveryMode = .opportunistic
+            req.resizeMode = .exact
             req.isNetworkAccessAllowed = false       // iCloud 上没下载的就跳过，别卡住面板
 
             var out: [[String: Any]] = []

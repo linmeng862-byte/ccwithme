@@ -269,12 +269,12 @@ function _initCalendarStyles() {
   if (_calStylesDone) return;
   _calStylesDone = true;
   var css = [
-    '#calendarPanel { --c-bg:#F8F7F4; --c-card:#FFFDF9; --c-text:#2C2821; --c-muted:#A0988B; --c-line:#E5DFD4; --c-accent:#2C2821; ' +
+    '#calendarPanel { --c-bg:var(--bg-primary); --c-card:#FFFDF9; --c-text:#2C2821; --c-muted:#A0988B; --c-line:#E5DFD4; --c-accent:#2C2821; ' +
       'position:fixed; inset:0; z-index:80; display:none; flex-direction:column; background:var(--c-bg); color:var(--c-text); overflow:hidden; }',
     '#calendarPanel.show { display:flex; }',
-    '@media (prefers-color-scheme: dark) { #calendarPanel { --c-bg:#1C1A17; --c-card:#25221E; --c-text:#E8E4DB; --c-muted:#8A8276; --c-line:#3A3530; --c-accent:#E8E4DB; } }',
-    'html[data-theme="dark"] #calendarPanel { --c-bg:#1C1A17; --c-card:#25221E; --c-text:#E8E4DB; --c-muted:#8A8276; --c-line:#3A3530; --c-accent:#E8E4DB; }',
-    'html[data-theme="light"] #calendarPanel { --c-bg:#F8F7F4; --c-card:#FFFDF9; --c-text:#2C2821; --c-muted:#A0988B; --c-line:#E5DFD4; --c-accent:#2C2821; }',
+    '@media (prefers-color-scheme: dark) { #calendarPanel { --c-bg:var(--bg-primary); --c-card:#25221E; --c-text:#E8E4DB; --c-muted:#8A8276; --c-line:#3A3530; --c-accent:#E8E4DB; } }',
+    'html[data-theme="dark"] #calendarPanel { --c-bg:var(--bg-primary); --c-card:#25221E; --c-text:#E8E4DB; --c-muted:#8A8276; --c-line:#3A3530; --c-accent:#E8E4DB; }',
+    'html[data-theme="light"] #calendarPanel { --c-bg:var(--bg-primary); --c-card:#FFFDF9; --c-text:#2C2821; --c-muted:#A0988B; --c-line:#E5DFD4; --c-accent:#2C2821; }',
 
     '.cal-header { flex:none; display:grid; grid-template-columns:36px 1fr 36px; align-items:center; padding:calc(env(safe-area-inset-top) + 10px) 18px 6px; }',
     '.cal-title { text-align:center; font:500 17px var(--font-sans); }',

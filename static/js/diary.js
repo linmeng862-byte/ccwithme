@@ -1250,9 +1250,9 @@ function _initDiaryStyles() {
   style.id = 'diaryStyles';
   style.textContent = [
     '/* === Diary — Apple HIG Warm Paper === */',
-    '#diaryPanel { --d-bg: #F8F7F4; --d-card: #FFFDF9; --d-text: #2C2821; --d-muted: #A0988B; --d-line: #E5DFD4; --d-accent: #2C2821; }',
-    '@media (prefers-color-scheme: dark) { #diaryPanel { --d-bg: #1C1A17; --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } .diary-card { background:#25221E; } .diary-today-header { color:#E8E4DB; } .diary-cal-overview,.diary-year-month,.diary-stats-summary { background:#25221E; } }',
-    'html[data-theme="dark"] #diaryPanel { --d-bg: #1C1A17; --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } html[data-theme="dark"] .diary-card { background:#25221E; } html[data-theme="dark"] .diary-cal-overview,html[data-theme="dark"] .diary-year-month,html[data-theme="dark"] .diary-stats-summary { background:#25221E; }',
+    '#diaryPanel { --d-bg: var(--bg-primary); --d-card: #FFFDF9; --d-text: #2C2821; --d-muted: #A0988B; --d-line: #E5DFD4; --d-accent: #2C2821; }',
+    '@media (prefers-color-scheme: dark) { #diaryPanel { --d-bg: var(--bg-primary); --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } .diary-card { background:#25221E; } .diary-today-header { color:#E8E4DB; } .diary-cal-overview,.diary-year-month,.diary-stats-summary { background:#25221E; } }',
+    'html[data-theme="dark"] #diaryPanel { --d-bg: var(--bg-primary); --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } html[data-theme="dark"] .diary-card { background:#25221E; } html[data-theme="dark"] .diary-cal-overview,html[data-theme="dark"] .diary-year-month,html[data-theme="dark"] .diary-stats-summary { background:#25221E; }',
 
     /* Timeline shell */
     '#diaryTimeline { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:0 0 calc(env(safe-area-inset-bottom) + 80px); }',

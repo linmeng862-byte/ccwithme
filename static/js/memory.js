@@ -245,9 +245,9 @@ function _initMemoryStyles() {
   var style = document.createElement('style');
   style.id = 'memoryStyles';
   style.textContent = [
-    '#memoryPanel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:#F8F7F4;color:#2C2821;overflow:hidden}',
-    '@media(prefers-color-scheme:dark){#memoryPanel{background:#1C1A17;color:#E8E4DB}}',
-    'html[data-theme="dark"] #memoryPanel{background:#1C1A17;color:#E8E4DB}',
+    '#memoryPanel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:#2C2821;overflow:hidden}',
+    '@media(prefers-color-scheme:dark){#memoryPanel{background:var(--bg-primary);color:#E8E4DB}}',
+    'html[data-theme="dark"] #memoryPanel{background:var(--bg-primary);color:#E8E4DB}',
     '.mem-tabs{display:flex;gap:4px;padding:8px 16px 0;overflow-x:auto;flex:none}',
     '.mem-tab{flex:none;padding:8px 16px;border:0;border-radius:999px;font:500 13px/1 var(--font-sans);cursor:pointer;background:rgba(0,0,0,.03);color:#8A8276;transition:all .15s}',
     '.mem-tab.active{background:#2C2821;color:#F8F7F4}',

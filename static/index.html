@@ -24,19 +24,19 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1788767217">
+<link rel="stylesheet" href="/css/home.css?v=1789211449">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
 <!-- 叠卡（微信式多图合并）：第三方组件 PhotoStack，非商用许可，见 vendor-licenses/ -->
 <link rel="stylesheet" href="/css/photo-stack.css?v=1">
 <script src="/js/photo-stack.js?v=1"></script>
-<script src="/js/books.js?v=49"></script>
-<script src="/js/diary.js?v=11"></script>
-<script src="/js/calendar.js?v=1"></script>
-<script src="/js/gallery.js?v=1"></script>
-<script src="/js/memory.js?v=1"></script>
-<script src="/js/mind.js?v=2"></script>
+<script src="/js/books.js?v=1789209745"></script>
+<script src="/js/diary.js?v=1789209745"></script>
+<script src="/js/calendar.js?v=1789209745"></script>
+<script src="/js/gallery.js?v=1789209745"></script>
+<script src="/js/memory.js?v=1789209745"></script>
+<script src="/js/mind.js?v=1789209745"></script>
 <script src="/js/cinema.js?v=19"></script>
 <script src="/js/mcp.js?v=1"></script>
 <script src="/js/journey.js?v=1"></script>
@@ -373,7 +373,7 @@
 </div>
 
 <!-- 🏠 Gallery 照片墙 -->
-<section id="galleryPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--g-bg,#FDF9F3);color:var(--g-text,#2C2821);overflow:hidden">
+<section id="galleryPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--g-bg,var(--bg-primary));color:var(--g-text,#2C2821);overflow:hidden">
   <header style="padding:calc(env(safe-area-inset-top) + 6px) 12px 0;flex:none;display:flex;align-items:center">
     <button class="profile-round-button" id="closeGallery" aria-label="Close" style="flex:none">×</button>
   </header>
@@ -381,7 +381,22 @@
 </section>
 
 <!-- 🏠 Mind 内心世界 -->
-<section id="mindPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:#FDF9F3;color:#2C2821;overflow:hidden"></section>
+<!-- 相册网格（09-12 她给的参考图）：原生 PhotoLib 供货，多选带粉色序号，
+     底部胶囊未选是「全部照片」→ 唤起系统选择器，选中后变「添加 N 张照片」。
+     ⚠️ 只有装成 App 才有货；网页里 PhotoLib 不存在，这个面板不开，照旧走系统选择器。 -->
+<div id="photoGridOverlay" class="pg-overlay" hidden></div>
+<section id="photoGridPanel" class="pg-panel" aria-hidden="true" hidden>
+  <div class="pg-scroll"><div class="pg-grid" id="pgGrid"></div>
+    <div class="pg-hint" id="pgHint"></div>
+  </div>
+  <div class="pg-footer">
+    <button type="button" class="pg-back" id="pgBack" aria-label="返回">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <button type="button" class="pg-cta" id="pgCta">全部照片</button>
+  </div>
+</section>
+<section id="mindPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:#2C2821;overflow:hidden"></section>
 
 <section id="usagePanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden">
   <!-- 08-24：这儿原来有 border-bottom:1px solid var(--bg-sunken) —— 面板背景本来就跟页面同色，
@@ -3810,7 +3825,7 @@ function _loadRecentPhotos(){
   var box=$('attachRecentPhotos'); if(!box)return;
   var P=_photoLib(); if(!P||!P.recent)return;
   if(_recentPhotosBusy)return; _recentPhotosBusy=true;
-  _withTimeout(P.recent({limit:12,size:240}),4000).then(function(r){
+  _withTimeout(P.recent({limit:12,size:Math.min(600,Math.ceil(64*(window.devicePixelRatio||2)))}),4000).then(function(r){
     var list=(r&&r.photos)||[];
     if(r&&r.status==='denied'){
       box.innerHTML='<div class="attach-recent-hint">在「设置 › éclat › 照片」里允许访问，这儿就会显示最近拍的</div>';
@@ -3846,12 +3861,106 @@ function _pickRecentPhoto(id,btn){
   }).then(function(){if(btn)btn.classList.remove('is-loading')});
 }
 function _openAttachSheet(){sheet('attach',true);_loadRecentPhotos()}
+
+// ===== 相册网格（09-12）=====
+// 供货的是同一个原生插件（PhotoLib.recent / PhotoLib.full），跟上面那条缩略图带子共用。
+// ⚠️ 插件一次最多给 60 张（Swift 侧 fetchLimit 夹在 60），没有翻页参数 ——
+//    所以底部「全部照片」不是装饰：更早的照片只能靠它唤起系统选择器去拿。
+// ⚠️ 能力检测照旧要超时：插件代理对任意方法名都返回函数，没登记就永远不 resolve。
+var _pgSel=[];            // 选中的 id，按点击顺序 —— 徽章上的序号就是它的下标
+var _pgBusy=false;
+function _pgSetCta(){
+  var cta=$('pgCta'); if(!cta)return;
+  if(_pgSel.length){cta.textContent='添加 '+_pgSel.length+' 张照片';cta.classList.add('on')}
+  else{cta.textContent='全部照片';cta.classList.remove('on')}
+}
+function _pgRenumber(){
+  document.querySelectorAll('#pgGrid .pg-cell').forEach(function(c){
+    var i=_pgSel.indexOf(c.dataset.pid);
+    var b=c.querySelector('.pg-badge');
+    if(i>=0){c.classList.add('sel');if(b)b.textContent=String(i+1)}
+    else{c.classList.remove('sel');if(b)b.textContent=''}
+  });
+  _pgSetCta();
+}
+function openPhotoGrid(){
+  var P=_photoLib();
+  // 网页里没有原生插件 —— 别开一个空面板，直接退回系统选择器
+  if(!P||!P.recent){_pickPhotosFromLibrary(true);return}
+  var ov=$('photoGridOverlay'),pn=$('photoGridPanel');
+  _pgSel=[];_pgSetCta();
+  ov.hidden=false;pn.hidden=false;pn.setAttribute('aria-hidden','false');
+  requestAnimationFrame(function(){pn.classList.add('show')});
+  var grid=$('pgGrid'),hint=$('pgHint');
+  grid.innerHTML='';hint.textContent='正在读相册…';
+  // 糊的原因：写死 240px，而三列格子在 390pt/DPR3 的屏上是 ~390 物理像素 —— 放大了近一倍。
+  // 按真实格子尺寸要图（插件上限 600）。
+  var _cell=Math.ceil((window.innerWidth-12)/3*(window.devicePixelRatio||2));
+  var _px=Math.max(240,Math.min(600,_cell));
+  _withTimeout(P.recent({limit:60,size:_px}),8000).then(function(r){
+    var list=(r&&r.photos)||[];
+    if(r&&r.status==='denied'){hint.textContent='在「设置 › éclat › 照片」里允许访问，这儿就会显示你的照片';return}
+    if(!list.length){hint.textContent='没读到照片。用下面的「全部照片」去系统相册选。';return}
+    hint.textContent=(r&&r.status==='limited')
+      ? '只授权了部分照片。要看全部，去「设置 › éclat › 照片」改成「所有照片」。'
+      : '最近 '+list.length+' 张。更早的用下面的「全部照片」。';
+    var frag=document.createDocumentFragment();
+    list.forEach(function(ph){
+      var c=document.createElement('button');c.type='button';c.className='pg-cell';c.dataset.pid=ph.id;
+      var im=document.createElement('img');im.src=ph.thumb;im.alt='';im.loading='lazy';
+      var bd=document.createElement('span');bd.className='pg-badge';
+      c.appendChild(im);c.appendChild(bd);
+      c.onclick=function(){
+        var i=_pgSel.indexOf(ph.id);
+        if(i>=0)_pgSel.splice(i,1); else _pgSel.push(ph.id);
+        _pgRenumber();
+      };
+      frag.appendChild(c);
+    });
+    grid.appendChild(frag);
+  }).catch(function(){hint.textContent='相册读不出来。用下面的「全部照片」。'});
+}
+function closePhotoGrid(){
+  var ov=$('photoGridOverlay'),pn=$('photoGridPanel');
+  pn.classList.remove('show');pn.setAttribute('aria-hidden','true');
+  setTimeout(function(){pn.hidden=true;ov.hidden=true},320);
+}
+// 选中的那几张挨个取原图。串行不并行 —— full() 是 isSynchronous 的，
+// 并发几张会把主线程和内存一起顶上去（这台只有 2G）。
+async function _pgConfirm(){
+  if(_pgBusy)return; 
+  if(!_pgSel.length){_pickPhotosFromLibrary(true);closePhotoGrid();return}
+  var P=_photoLib(); if(!P||!P.full)return;
+  _pgBusy=true;
+  var cta=$('pgCta');cta.disabled=true;
+  var files=[],done=0;
+  for(var k=0;k<_pgSel.length;k++){
+    cta.textContent='读取中 '+(done+1)+'/'+_pgSel.length;
+    try{
+      var r=await _withTimeout(P.full({id:_pgSel[k],maxSize:1600}),20000);
+      if(r&&r.dataUrl){
+        var parts=r.dataUrl.split(','),bin=atob(parts[1]||'');
+        var buf=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
+        files.push(new File([buf],r.filename||('photo-'+k+'.jpg'),{type:'image/jpeg'}));
+      }
+    }catch(e){}
+    done++;
+  }
+  cta.disabled=false;_pgBusy=false;
+  if(files.length)addSelectedFiles(files);
+  if(files.length<_pgSel.length)toast('有 '+(_pgSel.length-files.length)+' 张没读出来');
+  closePhotoGrid();sheet('attach',false);
+}
+if($('pgCta'))$('pgCta').onclick=_pgConfirm;
+if($('pgBack'))$('pgBack').onclick=closePhotoGrid;
+if($('photoGridOverlay'))$('photoGridOverlay').onclick=closePhotoGrid;
+
 function _pickPhotosFromLibrary(multiple){var input=document.createElement('input');input.type='file';input.accept='image/*';if(multiple)input.multiple=true;input.onchange=function(){var files=Array.from(input.files||[]);if(files.length){addSelectedFiles(files);sheet('attach',false)}else{toast('未选择照片')}};input.click()}
 var _attachSelected=[];
 $('attachUploadBtn').onclick=function(){$('fileInput').click();sheet('attach',false)}
 $('attachCameraBtn').onclick=function(){var input=document.createElement('input');input.type='file';input.accept='image/*';if(!_API_BASE)input.capture='environment';input.onchange=function(){var files=Array.from(input.files||[]);if(files.length){addSelectedFiles(files);sheet('attach',false);if(!files.length)toast('未选择照片')}else{toast('未选择照片')}};input.click()}
-$('attachAllPhotos').onclick=function(){_pickPhotosFromLibrary(true)}
-$('attachLibraryBtn').onclick=function(){_pickPhotosFromLibrary(true)}
+$('attachAllPhotos').onclick=function(){openPhotoGrid()}
+$('attachLibraryBtn').onclick=function(){openPhotoGrid()}
 $('attachProjectBtn').onclick=function(){sheet('attach',false);if(typeof openProjectPanel==='function'){openProjectPanel();showProjectList()}}
 $('attachAppearanceBtn').onclick=function(){sheet('attach',false);toast('Appearance coming soon')}
 $('closeAttach').onclick=function(){sheet('attach',false)}
@@ -4096,7 +4205,8 @@ function _updateRateLimit(rl){
   var el=document.getElementById('rateLimitLine');
   if(el){var t=_rateLimitText(rl);el.textContent=t||'';el.style.display=t?'':'none'}
 }
-function _showTokenUsage(usage){if(!usage)return;var total=(usage.input_tokens||0)+(usage.output_tokens||0);if(!total)return;var parts=[];if(usage.cache_read_input_tokens||usage.cache_creation_input_tokens){var cacheTokens=usage.cache_read_input_tokens||usage.cache_creation_input_tokens||0;parts.push('<span class="cache-hit"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align:-2px;margin-right:2px"><path d="M13 2L3 14h6l-1 8 10-12h-6l1-8z"/></svg>缓存命中 '+_fmtTokens(cacheTokens)+'</span>');}parts.push('消耗 '+_fmtTokens(total));var row=streamInner.querySelector('.msg-user:last-of-type');if(!row)return;var old=row.querySelector('.token-usage');if(old)old.remove();var el=document.createElement('div');el.className='token-usage';el.innerHTML=parts.join(' · ');var bubble=row.querySelector('.bubble');if(bubble)bubble.after(el);else row.append(el)}
+function _showTokenUsage(usage){if(!usage)return;// 两条链路字段名不一样：网关 event:usage 是 cache_read_tokens，中转 API 的 done 是 cache_read_input_tokens。
+usage={input_tokens:usage.input_tokens||0,output_tokens:usage.output_tokens||0,cache_read_input_tokens:usage.cache_read_input_tokens||usage.cache_read_tokens||0,cache_creation_input_tokens:usage.cache_creation_input_tokens||usage.cache_write_tokens||0};var inTok=(usage.input_tokens||0)+(usage.cache_read_input_tokens||0)+(usage.cache_creation_input_tokens||0);var outTok=usage.output_tokens||0;var cacheRead=usage.cache_read_input_tokens||0;var hit=inTok>0?Math.round(cacheRead/inTok*100):0;var plain=document.documentElement.classList.contains('ui-plain');if(plain){var total=(usage.input_tokens||0)+(usage.output_tokens||0);if(!total)return;var parts=[];if(usage.cache_read_input_tokens||usage.cache_creation_input_tokens){var cacheTokens=usage.cache_read_input_tokens||usage.cache_creation_input_tokens||0;parts.push('<span class="cache-hit"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" style="vertical-align:-2px;margin-right:2px"><path d="M13 2L3 14h6l-1 8 10-12h-6l1-8z"/></svg>缓存命中 '+_fmtTokens(cacheTokens)+'</span>');}parts.push('消耗 '+_fmtTokens(total));var prow=streamInner.querySelector('.msg-user:last-of-type');if(!prow)return;var pold=prow.querySelector('.token-usage');if(pold)pold.remove();var pel=document.createElement('div');pel.className='token-usage';pel.innerHTML=parts.join(' · ');var pb=prow.querySelector('.bubble');if(pb)pb.after(pel);else prow.append(pel);return}if(!inTok&&!outTok)return;var rows=streamInner.querySelectorAll('.msg-claude');var row=rows.length?rows[rows.length-1]:null;if(!row)return;var old=row.querySelector('.token-usage');if(old)old.remove();var el=document.createElement('div');el.className='token-usage usage-stats';el.innerHTML='<span class="us-in">input '+_fmtTokens(inTok)+'</span>'+'<span class="us-out">output '+_fmtTokens(outTok)+'</span>'+'<span class="us-hit">hit rate '+hit+'%</span>';var bb=row.querySelector('.bubble');if(bb)bb.after(el);else{var ma=row.querySelector('.message-actions');if(ma)ma.before(el);else row.append(el)}}
 var _lastMsgTime=0;
 // 一段对话开始时摆一条时间。三条规矩（2026-08-22 按她的参考图调）：
 //   1) 只在「他」要说话之前摆 —— 她自己发的话上面不摆
@@ -5730,7 +5840,7 @@ async function sendMessage(text,showUser=true,files=[],existingAttachments=[]){
     }
     if(r.status===401){showGate();throw Error('登录已失效')}if(!r.ok||!r.body){const detail=await r.json().catch(()=>({}));throw Error(detail.detail||'请求失败')}
     const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='',finished=false;
-    const frame=f=>{let event='',data='';f.split('\n').forEach(line=>{if(line.startsWith('event:'))event=line.slice(6).trim();if(line.startsWith('data:'))data+=line.slice(5).trim()});if(!event||!data)return;const d=JSON.parse(data);if(event==='conversation'){state.convId=d.conversation_id;state.legacySessionId=null;localStorage.setItem('chat_conversation',state.convId);localStorage.removeItem('chat_session')}if(event==='thinking')msg.thinking(d.text||'');if(event==='delta')msg.text(d.text||'');if(event==='tool_use')msg.toolUse(d);if(event==='tool_result')msg.toolResult(d);if(event==='trace_summary')msg.traceSummary(d.text||'');if(event==='done'){state.convId=d.conversation_id||state.convId;localStorage.setItem('chat_conversation',state.convId);msg.finish();finished=true;if(d.usage)_showTokenUsage(d.usage)}if(event==='cmd'){if(d.type==='timer'){pollCommands()}else{var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',d.id);cap.setAttribute('data-cmd-type',d.type);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});var ci=_cmdIconSvg(d.type);cap.innerHTML='<span>'+ci+'</span><span class="cmd-capsule-label">'+(d.type==='quiz'?'答题':escHtml(d.title||''))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';var bEl=msg.row.querySelector('.bubble');if(bEl)bEl.after(cap);else(msg.row.querySelector('.md')||msg.row).appendChild(cap)}}if(event==='sticker'){var si=document.createElement('img');si.src=assetUrl(d.url);si.className='msg-sticker';si.style.cssText='max-width:200px;max-height:200px;border-radius:12px;display:block';
+    const frame=f=>{let event='',data='';f.split('\n').forEach(line=>{if(line.startsWith('event:'))event=line.slice(6).trim();if(line.startsWith('data:'))data+=line.slice(5).trim()});if(!event||!data)return;const d=JSON.parse(data);if(event==='conversation'){state.convId=d.conversation_id;state.legacySessionId=null;localStorage.setItem('chat_conversation',state.convId);localStorage.removeItem('chat_session')}if(event==='thinking')msg.thinking(d.text||'');if(event==='delta')msg.text(d.text||'');if(event==='tool_use')msg.toolUse(d);if(event==='tool_result')msg.toolResult(d);if(event==='trace_summary')msg.traceSummary(d.text||'');if(event==='usage')_showTokenUsage(d);if(event==='done'){state.convId=d.conversation_id||state.convId;localStorage.setItem('chat_conversation',state.convId);msg.finish();finished=true;if(d.usage)_showTokenUsage(d.usage)}if(event==='cmd'){if(d.type==='timer'){pollCommands()}else{var cap=document.createElement('div');cap.className='cmd-capsule';cap.setAttribute('data-cmd-id',d.id);cap.setAttribute('data-cmd-type',d.type);cap.style.cssText='display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer;transition:background .15s,box-shadow .15s';cap.addEventListener('click',function(){openCmdCapsule(this.getAttribute('data-cmd-id'))});var ci=_cmdIconSvg(d.type);cap.innerHTML='<span>'+ci+'</span><span class="cmd-capsule-label">'+(d.type==='quiz'?'答题':escHtml(d.title||''))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span>';var bEl=msg.row.querySelector('.bubble');if(bEl)bEl.after(cap);else(msg.row.querySelector('.md')||msg.row).appendChild(cap)}}if(event==='sticker'){var si=document.createElement('img');si.src=assetUrl(d.url);si.className='msg-sticker';si.style.cssText='max-width:200px;max-height:200px;border-radius:12px;display:block';
       // 挂到气泡**外面** —— 表情不进气泡（后端也是单独存一条，刷新后渲染一致）
       var _sb=msg.row&&msg.row.querySelector('.bubble');if(_sb&&_sb.parentNode)_sb.parentNode.appendChild(si);else md.appendChild(si)}if(event==='voice_replace'){var _vr=msg.row;if(_vr){var _vmd=_vr.querySelector('.md');if(_vmd){_vr.dataset.raw=d.content||'';renderMessage(_vmd,d.content||'');_renderVoiceCards(_vr)}}}if(event==='rate_limit'){_updateRateLimit(d)}if(event==='notice'){_guestNote(d)}if(event==='error'){msg.fail(d.message);finished=true}};
     // ⚠️ 2026-09-04：记一下「最后一次真的收到东西是什么时候」。
@@ -6222,7 +6332,7 @@ function _usageBlock(title,d){if(!d)d={};
 function _usageBar(label,spent,limit){
   spent=Number(spent||0);limit=Number(limit||0);
   var pct=limit>0?Math.min(100,spent/limit*100):0;
-  var col=pct>=100?'#e54d2e':pct>=80?'#f5a524':'var(--accent)';
+  var col=_spendColor(pct);
   var txt=limit>0?('$'+spent.toFixed(2)+' / $'+limit.toFixed(2)):('$'+spent.toFixed(2)+' · 未设上限');
   return '<div style="margin-bottom:12px">'
     +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">'
@@ -6235,22 +6345,27 @@ function _usageBar(label,spent,limit){
 // 两边改了互相看得见 —— 别在这儿再存一份状态，那就是「同一件事记两遍」。
 // 放在花费上限旁边是有道理的：一趟逛街 ≈ 20 万 token，她额度紧的时候
 // 正好在看额度条的时候顺手就关了。
-function _wanderCard(w){
-  if(!w)return '';
-  var on=!!w.on;
+// 09-12 她把 Wander 卡从用量面板撤了，这格换成 Opus 5 的用量条。
+// 数据来源就是上面那张 live 卡的 bars（`claude -p "/usage"` 解析出来的），
+// 不额外跑一次 —— 所以它跟着 _liveUsageData 走，live 还没回来就显示「正在跑…」。
+function _opusCard(d){
+  var bar=null;
+  if(d&&d.ok&&d.bars)for(var i=0;i<d.bars.length;i++){if(/opus/i.test(String(d.bars[i].label||''))){bar=d.bars[i];break}}
+  var body;
+  if(!d){body='<div style="font:13px var(--font-sans);color:var(--text-faint)">正在跑…</div>'}
+  else if(!bar){body='<div style="font:13px/1.6 var(--font-sans);color:var(--text-faint)">这次的 /usage 里没有 Opus 那根条。</div>'}
+  else{
+    var p=Math.max(0,Math.min(100,Number(bar.pct)||0)),c=_spendColor(p);
+    body='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:5px">'
+      +'<span style="font:600 14px var(--font-sans);color:var(--text-primary)">Opus 5</span>'
+      +'<span style="font:600 14px var(--font-sans);color:'+c+'">'+p+'%</span></div>'
+      +'<div style="height:8px;border-radius:999px;background:var(--bg-sunken);overflow:hidden">'
+        +'<div style="height:100%;width:'+p+'%;background:'+c+';border-radius:999px"></div></div>'
+      +(bar.resets?'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:4px">重置于 '+escHtml(bar.resets)+'</div>':'');
+  }
   return '<div style="margin-bottom:22px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:14px 16px">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
-      +'<div><div style="font:600 13px var(--font-sans);color:var(--text-secondary)">Wander</div>'
-      +'<div style="font:11px/1.5 var(--font-sans);color:var(--text-faint);margin-top:2px">每天 12:07 / 21:07 叫他一次，他自己决定想不想逛。一趟约 20 万 token。</div></div>'
-      +'<label style="flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:pointer">'
-        +'<input id="wanderOn" type="checkbox" '+(on?'checked':'')+' style="accent-color:var(--accent)">'
-        +'<span id="wanderOnTxt" style="font:12px var(--font-sans);color:var(--text-secondary)">'+(on?'on':'off')+'</span></label>'
-    +'</div>'
-    +(w.last_said?'<div style="margin-top:11px;padding:9px 11px;background:var(--bg-sunken);border-radius:10px">'
-      +'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-bottom:3px">上一趟 '+escHtml(w.last_at||'')+'</div>'
-      +'<div style="font:12px/1.6 var(--font-sans);color:var(--text-secondary)">'+escHtml(w.last_said)+'</div></div>':'')
-    +'<button id="wanderNow" style="width:100%;margin-top:11px;padding:9px 16px;border:1px solid var(--bg-sunken);border-radius:10px;background:var(--bg-primary);color:var(--text-primary);font:600 13px var(--font-sans);cursor:pointer">Wander now</button>'
-    +'</div>'}
+    +'<div style="font:600 13px var(--font-sans);color:var(--text-secondary);margin-bottom:10px">Opus 5 用量</div>'
+    +body+'</div>'}
 async function _wanderToggle(){
   var c=$('wanderOn'),on=c.checked;
   if($('wanderOnTxt'))$('wanderOnTxt').textContent=on?'on':'off';
@@ -6279,9 +6394,9 @@ function _usageLimitsCard(d){
         +'<input id="limDaily" type="number" min="0" step="0.5" value="'+Number(L.daily_usd||0)+'" style="width:100%;padding:7px 10px;border:1px solid var(--bg-sunken);border-radius:10px;font:14px var(--font-sans);background:var(--bg-primary);color:var(--text-primary);outline:none"></label>'
       +'<label style="flex:1"><div style="font:11px var(--font-sans);color:var(--text-faint);margin-bottom:4px">每周上限 $</div>'
         +'<input id="limWeekly" type="number" min="0" step="1" value="'+Number(L.weekly_usd||0)+'" style="width:100%;padding:7px 10px;border:1px solid var(--bg-sunken);border-radius:10px;font:14px var(--font-sans);background:var(--bg-primary);color:var(--text-primary);outline:none"></label>'
-      +'<button id="limSave" style="flex:0 0 auto;padding:8px 16px;border:none;border-radius:10px;background:var(--accent);color:var(--accent-fg);font:600 13px var(--font-sans);cursor:pointer">保存</button></div>'
+      +'<button id="limSave" style="flex:0 0 auto;padding:8px 16px;border:none;border-radius:10px;background:var(--text-primary);color:var(--bg-primary);font:600 13px var(--font-sans);cursor:pointer">保存</button></div>'
     +'<label style="display:flex;align-items:center;gap:7px;margin-top:11px;cursor:pointer">'
-      +'<input id="limEnforce" type="checkbox" '+(L.enforce?'checked':'')+' style="accent-color:var(--accent)">'
+      +'<input id="limEnforce" type="checkbox" '+(L.enforce?'checked':'')+' style="accent-color:var(--text-primary)">'
       +'<span style="font:12px var(--font-sans);color:var(--text-secondary)">超出上限时阻断发送</span></label>'
     +'<div style="font:11px var(--font-sans);color:var(--text-faint);margin-top:6px">填 0 = 不限制。取消勾选则只显示进度、不拦截。</div>'
     // 08-23 删掉「工程模式」开关：改代码是工作台那边的事（Opus 5），不是聊天的他。
@@ -6302,7 +6417,7 @@ function _cacheCard(recent){
   if(!recent||!recent.length)return '';
   var rows=recent.map(function(x){
     var w=Number(x.w)||0,r=Number(x.r)||0;
-    var st=w<2000?['命中','#30a46c']:(w<25000?['重建','#f5a524']:['重写','#e54d2e']);
+    var st=w<2000?['命中','#7A9E86']:(w<25000?['重建','#C9A87C']:['重写','#C88080']);
     var tot=w+r,pct=tot?Math.round(r/tot*100):0;
     return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bg-sunken)">'
       +'<span style="flex:0 0 38px;font:11px var(--font-sans);color:var(--text-faint)">'+escHtml(x.hm||'')+'</span>'
@@ -6315,10 +6430,10 @@ function _cacheCard(recent){
   return '<div style="margin-bottom:22px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:14px 16px">'
     +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">'
       +'<span style="font:600 13px var(--font-sans);color:var(--text-secondary)">缓存命中（最近 '+recent.length+' 条）</span>'
-      +'<span style="font:600 13px var(--font-sans);color:'+(hit>recent.length/2?'#30a46c':'#e54d2e')+'">'+hit+'/'+recent.length+'</span></div>'
+      +'<span style="font:600 13px var(--font-sans);color:'+(hit>recent.length/2?'#7A9E86':'#C88080')+'">'+hit+'/'+recent.length+'</span></div>'
     +rows
     +'<div style="font:11px/1.6 var(--font-sans);color:var(--text-faint);margin-top:8px">'
-      +'<b style="color:#30a46c">命中</b>=几乎不花钱　<b style="color:#f5a524">重建</b>=换会话时的一次性　<b style="color:#e54d2e">重写</b>=整段重来<br>'
+      +'<b style="color:#7A9E86">命中</b>=几乎不花钱　<b style="color:#C9A87C">重建</b>=换会话时的一次性　<b style="color:#C88080">重写</b>=整段重来<br>'
       +'连着聊命中率高；隔一小时以上回来，第一条必定是重写。</div></div>'}
 // 订阅额度卡片——放在用量面板最上面，因为这才是真正会把她卡住的那个数。
 // 下面那些 $ 都是按 API 价估的，她走订阅，那些只能当"这轮值多少钱"的参考。
@@ -6398,11 +6513,14 @@ function _subscriptionCard(rl){
 // 上面那张订阅额度卡读的是 CLI 顺手报下来的快照，经常几小时旧。这张是当场跑出来的。
 // `claude -p "/usage"` 是本地命令，不发请求给模型，所以按多少次都不花钱。
 var _LIVE_LABEL={'Current session':'当前会话窗口','Current week (all models)':'本周 · 全部模型','Current week (Opus)':'本周 · Opus','Current week (all models, including Opus)':'本周 · 含 Opus'};
-function _liveBarColor(p){return p>=90?'#e54d2e':(p>=70?'#f5a524':'#30a46c')}
+// 09-12 随消耗变色：淡粉（还早）→ 粉（过半）→ 红（快满/超了）。
+// 花费上限那两根和这儿的三根共用同一条斜坡，别再各写一套。
+function _spendColor(p){p=Number(p)||0;return p>=100?'#B0413F':(p>=85?'#C25A5A':(p>=60?'#D9788F':'#E9A8B8'))}
+function _liveBarColor(p){return _spendColor(p)}
 function _liveUsageCard(d){
   var head='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">'
     +'<span style="font:600 13px var(--font-sans);color:var(--text-secondary)">现在的额度 —— 当场跑的 /usage</span>'
-    +'<button id="liveUsageRefresh" style="font:12px var(--font-sans);color:var(--accent);background:none;border:none;cursor:pointer;padding:0">重新跑一次</button></div>';
+    +'<button id="liveUsageRefresh" style="font:12px var(--font-sans);color:var(--text-primary);background:none;border:none;cursor:pointer;padding:0">重新跑一次</button></div>';
   var body;
   if(!d){body='<div style="font:13px var(--font-sans);color:var(--text-faint)">正在跑…</div>'}
   else if(!d.ok||!d.bars||!d.bars.length){
@@ -6460,7 +6578,7 @@ function _renderUsage(data){
   $('usageBody').innerHTML=
      _liveUsageCard(_liveUsageData)
     +_usageLimitsCard(data)
-    +_wanderCard(_wanderData)
+    +_opusCard(_liveUsageData)
     +_cacheCard(data.recent)
     +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">缓存命中越高越省钱。</div>';
   // 2026-08-22 她说「api 估算的不要，只要真实的」：

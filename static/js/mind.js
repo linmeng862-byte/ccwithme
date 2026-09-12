@@ -163,9 +163,9 @@ function _initMindStyles() {
   s.id = 'mindStyles';
   s.textContent = [
     // Panel
-    '.mind-panel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:#FAF8F3;color:#2C2821;overflow:hidden;font-family:var(--font-sans)}',
-    '@media(prefers-color-scheme:dark){.mind-panel{background:#1C1A17;color:#E8E4DB}}',
-    'html[data-theme="dark"] .mind-panel{background:#1C1A17;color:#E8E4DB}',
+    '.mind-panel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:#2C2821;overflow:hidden;font-family:var(--font-sans)}',
+    '@media(prefers-color-scheme:dark){.mind-panel{background:var(--bg-primary);color:#E8E4DB}}',
+    'html[data-theme="dark"] .mind-panel{background:var(--bg-primary);color:#E8E4DB}',
 
     // Header
     '.mind-header{flex:none;display:flex;align-items:center;justify-content:space-between;padding:calc(env(safe-area-inset-top) + 12px) 16px 0;height:56px}',
@@ -309,8 +309,8 @@ function _initMindStyles() {
     '.mind-card-entering{animation:mindFadeIn .4s ease both}',
 
     // === data-theme="dark" fallback — 用 !important 确保覆盖 ===
-    'html[data-theme="dark"] .mind-panel{background:#1C1A17!important;color:#E8E4DB!important}',
-    'html[data-theme="dark"] .mind-content{background:#1C1A17!important}',
+    'html[data-theme="dark"] .mind-panel{background:var(--bg-primary)!important;color:#E8E4DB!important}',
+    'html[data-theme="dark"] .mind-content{background:var(--bg-primary)!important}',
     'html[data-theme="dark"] .mind-section-title{color:#8A8276!important}',
     'html[data-theme="dark"] .mind-identity-title{color:#E8E4DB!important}',
     'html[data-theme="dark"] .mind-identity-sub{color:#8A8276!important}',
