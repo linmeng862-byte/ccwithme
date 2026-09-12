@@ -161,6 +161,16 @@ db.exec(`
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('minimax_api_key','')").run();
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('minimax_voice_id','')").run();
 
+// ElevenLabs 语音配置默认值（2026-09-13）
+// tts_provider 是唯一的开关：'minimax'（默认）或 'elevenlabs'。
+// MiniMax 那套一行没删 —— ElevenLabs 跑不通，把这个值改回 'minimax' 就全回去了。
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_provider','minimax')").run();
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_api_key','')").run();
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_voice_id','')").run();
+// 模型不写死：中文最稳的是 eleven_multilingual_v2；嫌打电话卡就在设置里换成
+// eleven_flash_v2_5（延迟最低、音色表现力弱一点）。
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_model_id','eleven_multilingual_v2')").run();
+
 // 语音消息识别出的文字存这里，同一段语音不重复花钱识别
 try { db.prepare('ALTER TABLE uploads ADD COLUMN transcript TEXT').run(); } catch (e) {}
 
@@ -2213,12 +2223,57 @@ async function _barkPush(title, body, opts) {
   }
 }
 
+// === ElevenLabs TTS（2026-09-13）=================================
+// 跟 MiniMax 并存，由 settings 里的 tts_provider 决定走哪家。
+// 两家的差别都封在这几个函数里，四个调用点只管问「现在是哪家」。
+//
+// ⚠️ 两家返回的东西完全不一样，这是改这块最容易栽的地方：
+//   MiniMax    → JSON，音频是 hex 字符串，自带 audio_length 和计费字符数
+//   ElevenLabs → 直接就是二进制音频流，没有 JSON、没有时长、没有用量字段
+// 所以 ElevenLabs 这边时长只能按码率反推，用量只能按送进去的字符数算。
+const _sget = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+function ttsProvider() { return _sget('tts_provider') === 'elevenlabs' ? 'elevenlabs' : 'minimax'; }
+
+// mp3_44100_128 = 128kbps = 16000 字节/秒，跟 MiniMax 那边反推用的是同一个除数。
+const EL_MP3_BYTES_PER_SEC = 16000;
+function elevenUrl(voiceId, { stream = false, format = 'mp3_44100_128' } = {}) {
+  return 'https://api.elevenlabs.io/v1/text-to-speech/' + encodeURIComponent(voiceId)
+    + (stream ? '/stream' : '') + '?output_format=' + encodeURIComponent(format);
+}
+
+// 一次性合成。成功返回 Buffer（mp3），失败抛 Error，错误信息里带 ElevenLabs 的原话 ——
+// 401/422 光看状态码看不出是 key 错了还是 voice_id 错了，必须把 body 带出来。
+async function elevenSynth(said, { format = 'mp3_44100_128', timeout = 30000 } = {}) {
+  const apiKey = _sget('elevenlabs_api_key');
+  const voiceId = _sget('elevenlabs_voice_id');
+  if (!apiKey || !voiceId) throw new Error('ElevenLabs 还没配 API Key 或 Voice ID');
+  const resp = await fetch(elevenUrl(voiceId, { format }), {
+    method: 'POST',
+    headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+    body: JSON.stringify({
+      text: said,
+      model_id: _sget('elevenlabs_model_id') || 'eleven_multilingual_v2',
+    }),
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!resp.ok) throw new Error('ElevenLabs HTTP ' + resp.status + '：' + (await resp.text()).slice(0, 300));
+  const buf = Buffer.from(await resp.arrayBuffer());
+  if (!buf.length) throw new Error('ElevenLabs 没有返回音频数据');
+  return buf;
+}
+
 app.post('/api/settings/tts', auth, (req, res) => {
   const { minimax_api_key, minimax_voice_id, minimax_group_id } = req.body;
   const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
   if (minimax_api_key !== undefined) upsert.run('minimax_api_key', minimax_api_key);
   if (minimax_voice_id !== undefined) upsert.run('minimax_voice_id', minimax_voice_id);
   if (minimax_group_id !== undefined) upsert.run('minimax_group_id', minimax_group_id);
+  // ElevenLabs 那几个走同一个接口，省得前端多一套表单。
+  const { tts_provider, elevenlabs_api_key, elevenlabs_voice_id, elevenlabs_model_id } = req.body;
+  if (tts_provider !== undefined) upsert.run('tts_provider', tts_provider === 'elevenlabs' ? 'elevenlabs' : 'minimax');
+  if (elevenlabs_api_key !== undefined) upsert.run('elevenlabs_api_key', elevenlabs_api_key);
+  if (elevenlabs_voice_id !== undefined) upsert.run('elevenlabs_voice_id', elevenlabs_voice_id);
+  if (elevenlabs_model_id !== undefined) upsert.run('elevenlabs_model_id', elevenlabs_model_id);
   res.json({ ok: true });
 });
 
@@ -2226,7 +2281,11 @@ app.post('/api/settings/tts', auth, (req, res) => {
 app.get('/api/settings/tts', auth, (req, res) => {
   const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   res.json({ minimax_voice_id: g('minimax_voice_id'), minimax_group_id: g('minimax_group_id'),
-             has_key: !!g('minimax_api_key') });
+             has_key: !!g('minimax_api_key'),
+             tts_provider: ttsProvider(),
+             elevenlabs_voice_id: g('elevenlabs_voice_id'),
+             elevenlabs_model_id: g('elevenlabs_model_id'),
+             has_elevenlabs_key: !!g('elevenlabs_api_key') });
 });
 
 // MiniMax 有两个互不通用的站，key 只在自己那站有效：
@@ -2248,6 +2307,20 @@ function minimaxUrl(host) {
 // 配置自检：不回显 key，只告诉她通没通、哪一步卡住
 app.post('/api/tts/test', auth, async (req, res) => {
   const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  // 想单独试 ElevenLabs 而不切过去：body 里带 {provider:'elevenlabs'}。
+  // 不带就按当前 tts_provider 走。
+  const which = req.body?.provider || ttsProvider();
+  if (which === 'elevenlabs') {
+    if (!g('elevenlabs_api_key')) return res.json({ ok: false, step: 'key', message: 'ElevenLabs 还没填 API Key' });
+    if (!g('elevenlabs_voice_id')) return res.json({ ok: false, step: 'voice', message: 'ElevenLabs 还没填 Voice ID' });
+    try {
+      const buf = await elevenSynth('在呢');
+      return res.json({ ok: true, message: '通了（ElevenLabs / ' + (g('elevenlabs_model_id') || 'eleven_multilingual_v2')
+        + '），试听音频 ' + Math.round(buf.length / 1024) + ' KB' });
+    } catch (e) {
+      return res.json({ ok: false, step: 'elevenlabs', message: String(e.message || e).slice(0, 400) });
+    }
+  }
   if (!g('minimax_api_key')) return res.json({ ok: false, step: 'key', message: '还没填 API Key' });
   if (!g('minimax_voice_id')) return res.json({ ok: false, step: 'voice', message: '还没填 Voice ID' });
   // 已记住的站排前面先试，省一个来回；没记住就按 MINIMAX_HOSTS 的顺序。
@@ -2352,8 +2425,9 @@ async function transcribeUpload(uploadId, durSec) {
 async function synthVoiceTags(text, res) {
   if (!text || text.indexOf('<voice>') === -1) return text;
   const _origText = text;
-  const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
-  const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
+  const _prov = ttsProvider();
+  const apiKey = _sget(_prov === 'elevenlabs' ? 'elevenlabs_api_key' : 'minimax_api_key');
+  const voiceId = _sget(_prov === 'elevenlabs' ? 'elevenlabs_voice_id' : 'minimax_voice_id');
   // 没配好就把标签剥了当普通文字发 —— 宁可少个语音条，也不能让她收到一堆尖括号。
   if (!apiKey || !voiceId) return text.replace(/<\/?voice>/g, '');
 
@@ -2364,6 +2438,29 @@ async function synthVoiceTags(text, res) {
 
   for (const j of jobs) {
     if (!j.said) { text = text.replace(j.tag, ''); continue; }
+    // ElevenLabs 分支：拿到的直接就是 mp3 二进制，没有 JSON 外壳。
+    if (_prov === 'elevenlabs') {
+      try {
+        const t0 = Date.now();
+        const buf = await elevenSynth(j.said);
+        logVoiceUsage('tts', j.said.length, Date.now() - t0);
+        const id = 'f_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const destPath = path.join(uploadDir, 'files', id + '.mp3');
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.writeFileSync(destPath, buf);
+        // 没有 audio_length 可用，只能按 128kbps 反推。
+        const secs = Math.max(1, Math.round(buf.length / EL_MP3_BYTES_PER_SEC));
+        const dur = Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+        db.prepare('INSERT INTO uploads (id, filename, path, size, transcript) VALUES (?,?,?,?,?)')
+          .run(id, 'voice-' + id + '.mp3', destPath, buf.length, j.said);
+        text = text.replace(j.tag, '[VOICE:' + id + '|' + dur + ']');
+        console.log('[tts] 他发了一条 ' + dur + ' 的语音（ElevenLabs）');
+      } catch (e) {
+        console.warn('[tts] ElevenLabs 语音条合成失败: ' + e.message);
+        text = text.replace(j.tag, j.said);
+      }
+      continue;
+    }
     try {
       const t0 = Date.now();
       const resp = await fetch(minimaxUrl(), {
@@ -2655,6 +2752,13 @@ app.post('/api/tts', auth, async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: 'text required' });
     const _ttsT0 = Date.now();
+    if (ttsProvider() === 'elevenlabs') {
+      const buf = await elevenSynth(text);
+      logVoiceUsage('tts', text.length, Date.now() - _ttsT0);
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Content-Length', buf.length);
+      return res.send(buf);
+    }
     const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
     const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
     if (!apiKey || !voiceId) return res.status(400).json({ error: '请先配置 MiniMax API Key 和 Voice ID' });
@@ -2709,9 +2813,10 @@ app.post('/api/tts', auth, async (req, res) => {
 
 // MiniMax 流式 TTS——边生成边播放，零等待
 app.post('/api/tts/stream', auth, async (req, res) => {
-  const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
-  const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
-  if (!apiKey || !voiceId) { res.status(400).json({ error: '请先配置 MiniMax API Key 和 Voice ID' }); return; }
+  const _prov = ttsProvider();
+  const apiKey = _sget(_prov === 'elevenlabs' ? 'elevenlabs_api_key' : 'minimax_api_key');
+  const voiceId = _sget(_prov === 'elevenlabs' ? 'elevenlabs_voice_id' : 'minimax_voice_id');
+  if (!apiKey || !voiceId) { res.status(400).json({ error: '请先配置 ' + (_prov === 'elevenlabs' ? 'ElevenLabs' : 'MiniMax') + ' API Key 和 Voice ID' }); return; }
   const { text } = req.body;
   if (!text) { res.status(400).json({ error: 'text required' }); return; }
 
@@ -2727,6 +2832,59 @@ app.post('/api/tts/stream', auth, async (req, res) => {
   //    结果只发出 meta 和 done、一个音频分片都没有（她那头接通了却一片安静）。
   //    要等的是「客户端把连接断了」，那是 res 上的事件。
   res.on('close', () => { aborted = true; });
+
+  // ElevenLabs 流式：拿到的是**裸 PCM 二进制流**，不是 SSE、没有 JSON 分片。
+  // 所以这儿自己把二进制切成 hex 往外发，前端那套 {type:'audio', data:hex} 一个字都不用改
+  // —— 也就没有 MiniMax 那个「最后再补一条整段汇总包」的坑，不需要 isFinal 判断。
+  if (_prov === 'elevenlabs') {
+    try {
+      const elResp = await fetch(elevenUrl(voiceId, { stream: true, format: 'pcm_24000' }), {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          model_id: _sget('elevenlabs_model_id') || 'eleven_multilingual_v2',
+          // 打电话要的是「快点出声」，不是音质 —— 让它尽早吐第一片。
+          optimize_streaming_latency: 3,
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!elResp.ok) {
+        // ⚠️ 这里一定要把 ElevenLabs 的原话带出去：pcm_24000 是付费档才给的格式，
+        //    额度不够时它回的是 401，光看状态码会以为是 key 错了，能查很久。
+        const body = (await elResp.text()).slice(0, 400);
+        res.write('data: ' + JSON.stringify({ type: 'error', message: 'ElevenLabs ' + elResp.status + '：' + body }) + '\n\n');
+        res.end();
+        return;
+      }
+      // 流式同样拿不到用量字段，按送进去的字符数记账。
+      logVoiceUsage('tts', text.length, 0);
+      res.write('data: ' + JSON.stringify({ type: 'meta', sampleRate: 24000 }) + '\n\n');
+
+      const reader = elResp.body.getReader();
+      // PCM 是 16 位小端，一个采样两个字节。分片边界可能把一个采样劈成两半，
+      // 落单的那个字节必须留到下一片拼上 —— 不然前端按 Int16 解出来整段都是错位的噪音。
+      let odd = null;
+      while (!aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        let chunk = Buffer.from(value);
+        if (odd) { chunk = Buffer.concat([odd, chunk]); odd = null; }
+        if (chunk.length % 2) { odd = chunk.subarray(chunk.length - 1); chunk = chunk.subarray(0, chunk.length - 1); }
+        if (chunk.length) {
+          res.write('data: ' + JSON.stringify({ type: 'audio', data: chunk.toString('hex') }) + '\n\n');
+          res.flush?.();
+        }
+      }
+      res.write('data: ' + JSON.stringify({ type: 'done' }) + '\n\n');
+      res.end();
+    } catch (e) {
+      if (!aborted) {
+        try { res.write('data: ' + JSON.stringify({ type: 'error', message: e.message }) + '\n\n'); res.end(); } catch (_) {}
+      }
+    }
+    return;
+  }
 
   try {
     const mmResp = await fetch(minimaxUrl(), {
