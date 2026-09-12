@@ -5968,6 +5968,12 @@ function _recallRender(data, seen) {
   return lines.join('\n').trim();
 }
 
+// 09-12 通话专用：召回晚到的结果先存这儿，挂到她下一句一起给他（她选的「晚一轮再用」）。
+// convId -> { text, at }。只认 2 分钟内的，免得挂完电话、下一通第一句带上一堆旧的。
+const _voiceRecallLate = new Map();
+const VOICE_RECALL_BUDGET_MS = 300;
+const VOICE_RECALL_LATE_TTL_MS = 2 * 60 * 1000;
+
 // 对外：拼成【勾起来的】段。任何一步出错都返回空串 —— 这条链路**绝不能拦住她说话**。
 async function nocturneRecall(query, convId, cliSid) {
   try {
@@ -9066,7 +9072,29 @@ app.post('/api/chat', auth, async (req, res) => {
 
   // 中转 API 路径：浮起挂在最后一条用户消息末尾（同样不进系统提示词）
   // 这里才收车。上面发出去到这儿之间的活儿已经白赚了。
-  const recallSurfaced = await recallPromise;
+  // 09-12：通话实测召回每轮要 850~1080ms，而这里前面的本地活儿只要几毫秒 ——
+  //   「并行掉」没并起来，每轮都在干等它。通话改成：最多等 VOICE_RECALL_BUDGET_MS，
+  //   没回来就先不带、让他先开口；回来了存着，挂到她下一句一起给他（晚一句想起来，不是想不起来）。
+  //   打字聊天照旧等满。
+  let recallSurfaced;
+  if (voice_call) {
+    const _late = _voiceRecallLate.get(convId);
+    _voiceRecallLate.delete(convId);
+    const carried = (_late && Date.now() - _late.at < VOICE_RECALL_LATE_TTL_MS) ? _late.text : '';
+    const _r = await Promise.race([recallPromise,
+      new Promise(function(rs) { setTimeout(function() { rs(null); }, VOICE_RECALL_BUDGET_MS); })]);
+    if (_r === null) {
+      recallPromise.then(function(t) { if (t) _voiceRecallLate.set(convId, { text: t, at: Date.now() }); });
+      recallSurfaced = carried;
+      _mark('语义召回没等（晚一轮再用）' + (carried ? '，带上一轮的' : ''));
+    } else {
+      recallSurfaced = carried + _r;
+      _mark('语义召回完' + (carried ? '，带上一轮的' : ''));
+    }
+  } else {
+    recallSurfaced = await recallPromise;
+    _mark('语义召回完');
+  }
   // 两边撞车时留 Nocturne 那份（她 08-28 定的），Mind 库本身不动。
   const mindSurfacedKept = _dedupeMindAgainstRecall(mindSurfaced, recallSurfaced);
   const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced + herDiaryNotesLine() + wanderShownLine();
@@ -9086,6 +9114,7 @@ app.post('/api/chat', auth, async (req, res) => {
   if (useGateway) {
     // 网关模式下 claude -p 只吃文本，图片附件转成本地绝对路径标注，靠网关开的 Read 工具去看
     let gatewayMessage = _quoteForModel(await expandVoiceTags(message));
+    _mark('expandVoiceTags 完');
     // 📄 她一次粘太长就卸到文件里（2026-08-29）。
     // 08-27 那次：她贴了 20,832 字的审计报告 HTML，他又 Read 了同一份 md（32,503 字），
     // 两份全文都永久留在 CLI 的 transcript 里，十轮涨了 22k token —— 而 --resume
@@ -9257,7 +9286,10 @@ app.post('/api/chat', auth, async (req, res) => {
         + '你回复她的时候照常用单独一行的 --- 分条发。）\n'
         + '下面才是粥粥说的：\n' + gatewayMessage;
     }
+    _mark('交给网关前');
     return handleGatewayChat(req, res, {
+      // 09-12：通话的分段计时往里传，handleGatewayChat 里补「调网关」「网关第一个字」两个点
+      voiceT0: _isVoice ? _T0 : 0,
       message: gatewayMessage, convId, systemPrompt,
       cliSessionId: cliRow?.[_sidCol] || null,
       cliTurns: cliRow?.[_turnCol] || 0,
@@ -9288,6 +9320,25 @@ function dropGatewayProc(sid, why) {
     headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
     body: JSON.stringify({ session_id: sid, why: why || 'backend 换了会话' }),
   }).catch(function() {});
+}
+
+// 09-12：通话里她打断了 —— 让网关把主会话正在跑的那一轮叫停（常驻进程不死、缓存不丢）。
+// 叫停后网关照常结束那一轮，_callAI 很快返回，排着的她那句马上接上。
+// 存进库的是他停下前实际写到的那半截（走正常落库，不是整段）。
+// ⚠️ 这轮恰好是换窗新开的会话时，库里的 session id 还是旧的 → 网关回 no_active_turn，
+//    等于没叫停、退回「等上一轮写完」，不会出错。
+function interruptGatewayTurn(convId) {
+  if (!convId || !GATEWAY_KEY) return;
+  const row = db.prepare('SELECT cli_session_id FROM sessions WHERE conv_id = ?').get(convId);
+  const sid = row && row.cli_session_id;
+  if (!sid) return;
+  fetch(GATEWAY_BASE + '/interrupt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+    body: JSON.stringify({ session_id: sid }),
+  }).then(r => r.json())
+    .then(d => console.log('[call] 叫停上一轮：' + (d.ok ? 'ok' : d.reason)))
+    .catch(e => console.log('[call] 叫停失败：' + e.message));
 }
 
 // 给 cc-gateway 用的工具桥接：列出全部工具 / 执行工具
@@ -10482,6 +10533,7 @@ async function handleGatewayChat(req, res, ctx) {
   const gwMessage = _stickerTextForCli(message, 'user') || message;
 
   try {
+    if (ctx.voiceT0) console.log('[延迟·后端] 调网关 +' + (Date.now() - ctx.voiceT0) + 'ms');
     const gwResp = await fetch(GATEWAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
@@ -10497,6 +10549,9 @@ async function handleGatewayChat(req, res, ctx) {
         // 08-29：搜索开关跟模型走同一条路。它决定网关给 CLI 的 --allowedTools，
         //   跟模型一样是 spawn 时定死的，所以改了也要重开常驻进程。
         web_search: _webSearchOn(),
+        // 09-12：通话让网关逐字转发，第一句写完就能送去念，不用等整段写完。
+        //   打字聊天不传，维持整块（逐字模式只在通话里验过）。
+        stream_text: !!(req.body && req.body.voice_call),
         is_new_session: isNewSession, dev_mode: !!getLimits()?.dev_mode }),
     });
     if (!gwResp.ok || !gwResp.body) {
@@ -10566,6 +10621,10 @@ async function handleGatewayChat(req, res, ctx) {
           gwThinking += evt.thinking;
           res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
         } else if (evt.delta) {
+          if (ctx.voiceT0 && !ctx._firstDeltaAt) {
+            ctx._firstDeltaAt = Date.now();
+            console.log('[延迟·后端] 网关第一个字 +' + (ctx._firstDeltaAt - ctx.voiceT0) + 'ms');
+          }
           assistantText += evt.delta;
           res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n');
         } else if (evt.error) {
@@ -10577,7 +10636,10 @@ async function handleGatewayChat(req, res, ctx) {
           const ctt = evt.tool_result;
           const parsed = ctt.parsed;
           // 表情不进正文 —— 单独存一条消息，前端才能不套气泡地渲染（见下面的 INSERT）
-          if (parsed && parsed.sticker_url) { gwStickers.push(parsed.sticker_url); res.write('event: sticker\ndata: ' + JSON.stringify({ url: parsed.sticker_url }) + '\n\n'); }
+          // 09-11：同一轮里同一张表情只认第一次。模型偶尔会把 send_sticker push 两遍
+          //   （09-11 20:41 实测：两个 tool_use 同名同参，库里就多出一条裸图）。
+          //   去重放在这儿，推流和落库一起挡住 —— gwStickers 就是下面 INSERT 的来源。
+          if (parsed && parsed.sticker_url && !gwStickers.includes(parsed.sticker_url)) { gwStickers.push(parsed.sticker_url); res.write('event: sticker\ndata: ' + JSON.stringify({ url: parsed.sticker_url }) + '\n\n'); }
           if (parsed && parsed.file_card) gwMarkers += '\n[FILE:' + parsed.file_card.filename + '|' + parsed.file_card.id + ']';
           if (parsed && parsed.markup && typeof parsed.markup === 'string') gwMarkers += '\n' + parsed.markup;
           if (parsed && parsed.artifact) {
@@ -13542,32 +13604,64 @@ wss.on('connection', (ws, req) => {
   // 不再是挂断就没了的独立上下文。
   let convId = _mainConvId();
   let busy = false;
+  // 轮次：前端每句带 turn。她打断后说的新一句，不再回 busy 丢掉 ——
+  // 先把 activeTurn 切过去（旧那轮后面的 delta 就不推了），等旧那轮跑完再接新的。
+  // ⚠️ 不能两轮并发：会抢同一个 CLI 会话。旧那轮照样跑完、整段存库（09-05 的断线兜底不动）。
+  let activeTurn;
+  let pending = null;   // 忙着时她又说的话，攒成一句，最新的 turn 为准
+  function runTurn(text, turn) {
+    busy = true; activeTurn = turn;
+    (async () => {
+      try {
+        if (!convId) convId = _mainConvId();
+        const out = await _callAI(text, convId, d => {
+          if (activeTurn !== turn) return;
+          try { ws.send(JSON.stringify({ type: 'delta', text: d, turn })); } catch (e) {}
+        });
+        ws.send(JSON.stringify({ type: 'response', text: out, turn }));
+      } catch (e) {
+        console.error('[call] error:', e.message);
+        if (activeTurn === turn) { try { ws.send(JSON.stringify({ type: 'error', text: e.message, turn })); } catch (e2) {} }
+      } finally {
+        busy = false;
+        if (pending && ws.readyState === WebSocket.OPEN) { const p = pending; pending = null; runTurn(p.text, p.turn); }
+        else pending = null;
+      }
+    })();
+  }
 
   ws.on('message', async (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
-      if (msg.type === 'ping') return ws.send(JSON.stringify({ type: 'pong' }));
-      // 她拨过来：以前这条链路是静默的——WS 一连上就算通了，他那头
+      if (msg.type === 'ping') return ws.send(JSON.stringify({ type: 'pong' }));      // 她拨过来：以前这条链路是静默的——WS 一连上就算通了，他那头
       // 根本不知道电话响了，要等她先开口。现在给他一个「接起来」的信号，
       // 他说的第一句话就是「喂」，前端收到才把「正在呼叫」的界面撤掉。
       if (msg.type === 'dial') {
         if (busy) return;
-        busy = true;
-        (async () => {
-          try {
-            if (!convId) convId = _mainConvId();
-            console.log('[call] 她拨过来了 #' + connId);
-            // ⚠️ 存库的是标记 [CALL_DIAL]，不是提示词原文 —— 照 [VOICE:] 那条路：
-            //    库里存标记，喂给他之前才展开。以前直接把提示词原文发进来，
-            //    它就以「她说的话」的身份留在了她的气泡里，她看到的是自己在念台词。
-            const text = await _callAI(
-              '[CALL_DIAL]',
-              convId, d => { try { ws.send(JSON.stringify({ type: 'delta', text: d })); } catch (e) {} });
-            ws.send(JSON.stringify({ type: 'response', text }));
-          } catch (e) {
-            try { ws.send(JSON.stringify({ type: 'error', text: e.message })); } catch (e2) {}
-          } finally { busy = false; }
-        })();
+        console.log('[call] 她拨过来了 #' + connId);
+        // ⚠️ 存库的是标记 [CALL_DIAL]，不是提示词原文 —— 照 [VOICE:] 那条路：
+        //    库里存标记，喂给他之前才展开。以前直接把提示词原文发进来，
+        //    它就以「她说的话」的身份留在了她的气泡里，她看到的是自己在念台词。
+        runTurn('[CALL_DIAL]', msg.turn);
+        return;
+      }
+      // 她打断了正在念的那一轮：只在它**真的还在跑**时叫停，别误伤已经排上的新一轮
+      if (msg.type === 'interrupt') {
+        if (busy && activeTurn === msg.turn) {
+          console.log('[call] #' + connId + ' 她打断了 turn ' + msg.turn + '，叫停');
+          interruptGatewayTurn(convId || _mainConvId());
+        }
+        return;
+      }
+      // 分段延迟（09-12，长期留着）：前端每轮第一段声音响起时报一次，只有毫秒数。
+      // -1 = 那一段没量到（比如 VAD 没起来就没有「嘴停」那一刻）。
+      if (msg.type === 'voice_metrics') {
+        const n = k => (typeof msg[k] === 'number' ? msg[k] : -1);
+        console.log('[延迟·通话] #' + connId + ' turn ' + msg.turn +
+          '  嘴停→发出 ' + n('endpoint_ms') + '  发出→首字 ' + n('first_text_ms') +
+          '  首字→成句 ' + n('cut_ms') + '  成句→出声 ' + n('tts_ms') +
+          '  ｜嘴停→出声 ' + n('first_sound_ms') + 'ms' +
+          (msg.barged ? '  [打断]' : '') + (msg.interim ? '  [草稿]' : ''));
         return;
       }
       if (msg.type !== 'speech') return;
@@ -13575,15 +13669,17 @@ wss.on('connection', (ws, req) => {
       // 排查「说两遍」：同一句从同一条连接来 = 前端重复识别；
       // 从不同连接来 = 开了两条 WS。两种病因修法完全不同，先分清楚。
       console.log('[call] #' + connId + ' 收到: ' + JSON.stringify(msg.text.trim()));
-      // 上一句还没答完就别插队——否则两个请求会抢同一个 CLI 会话
-      if (busy) return ws.send(JSON.stringify({ type: 'busy' }));
-      busy = true;
-      try {
-        if (!convId) convId = _mainConvId();
-        const text = await _callAI(msg.text.trim(), convId,
-          d => { try { ws.send(JSON.stringify({ type: 'delta', text: d })); } catch (e) {} });
-        ws.send(JSON.stringify({ type: 'response', text }));
-      } finally { busy = false; }
+      // 上一句还没答完：不插队（会抢同一个 CLI 会话），也不丢 ——
+      // 旧那轮立刻静音，她这句排着，旧那轮一跑完就接。
+      if (busy) {
+        activeTurn = msg.turn;
+        pending = pending
+          ? { text: pending.text + ' ' + msg.text.trim(), turn: msg.turn }
+          : { text: msg.text.trim(), turn: msg.turn };
+        console.log('[call] #' + connId + ' 上一轮还在跑，这句排上（turn ' + msg.turn + '）');
+        return;
+      }
+      runTurn(msg.text.trim(), msg.turn);
     } catch (e) {
       console.error('[call] error:', e.message);
       try { ws.send(JSON.stringify({ type: 'error', text: e.message })); } catch (e2) {}

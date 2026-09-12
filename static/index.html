@@ -2221,6 +2221,10 @@ function _showCallCardNow(kind,dur,convId){
     if(convId&&state.convId!==convId)return;
     if(typeof addClaude!=='function')return;
     var row=addClaude('[CALL:'+kind+'|'+(dur||'')+']','','',new Date().toISOString());
+    // addClaude 是直接 append，会落到小花和免责声明【后面】（09-12 她截图）。
+    // 挪回免责声明前面 —— 跟 _callAppend 同一个道理。
+    var note=streamInner.querySelector('.stream-disclaimer');
+    if(note&&row&&row.parentNode===note.parentNode)note.parentNode.insertBefore(row,note);
     _renderCallCards(row);
     row.scrollIntoView({block:'end'});
   }catch(e){console.warn('[call] 当场摆胶囊失败:',e)}
@@ -2259,7 +2263,8 @@ function _renderCallCards(row){
              :kind==='rejected'?'已拒接'
              :kind==='missed_back'?'未接来电 已回拨'
              :'未接来电';
-    var iconColor=kind==='ended'?'var(--accent)':(kind==='rejected'?'var(--text-time)':'#E54D2E');
+    // 09-12 她定的：接通=莫兰迪绿、拒接=红（未接本来就是红）
+    var iconColor=kind==='ended'?'#7F9A83':'#E54D2E';
     var wrap=document.createElement("span");wrap.className="call-msg";
     // 09-12：她说「胶囊太小了，在对话里很不和谐」—— 往说话气泡的尺寸靠，
     // 字号/内边距跟普通消息一个量级，不再像个角标。
@@ -2792,6 +2797,35 @@ var _VAD_FINAL_GRACE=420;
 var _VAD_LATE_FINAL=900;
 var _speechBuf='',_speechTimer=null,_speechFirstAt=0;
 var _lastSpeechText='',_lastSpeechAt=0;
+// ---- 先发草稿（09-12）----
+// iPhone 的 final 常常在她嘴停后一两秒才到（打断后更慢），实测「嘴停→发出」1.3~2.7s 大半在等它。
+// 可 VAD 判她说完时，灰色草稿其实已经八九不离十了 —— 那就先把草稿发出去。
+// 晚到的 final 跟发过的草稿比一下：一样/差不多 → 丢；只是后面多一截 → 只补尾巴；完全不像 → 是新话，照发。
+var _lastInterim='',_interimSent={text:'',at:0};
+function _bigramSim(a,b){
+  if(a===b)return 1;
+  if(a.length<2||b.length<2)return 0;
+  var A={},hit=0,i,g;
+  for(i=0;i<a.length-1;i++){g=a.substr(i,2);A[g]=(A[g]||0)+1}
+  for(i=0;i<b.length-1;i++){g=b.substr(i,2);if(A[g]){A[g]--;hit++}}
+  return 2*hit/((a.length-1)+(b.length-1));
+}
+function _matchSentInterim(fin){
+  var s=_interimSent;
+  if(!s.text||Date.now()-s.at>5000)return fin;
+  _interimSent={text:'',at:0};
+  var f=_norm(fin),p=_norm(s.text);
+  if(f.indexOf(p)===0){
+    if(f.length-p.length<2){console.log('[call] final 跟发过的草稿一样，丢掉');return ''}
+    // 用「去空白」的长度在原文里找切点，只补多出来的那截
+    var seen=0,i=0;
+    for(;i<fin.length&&seen<p.length;i++){if(!/\s/.test(fin[i]))seen++}
+    console.log('[call] final 比草稿多一截，只补尾巴');
+    return fin.slice(i).trim();
+  }
+  if(_bigramSim(f,p)>=0.6){console.log('[call] final 跟发过的草稿差不多，丢掉');return ''}
+  return fin;
+}
 function _queueSpeech(t){
   _speechBuf=_speechBuf?(_speechBuf+' '+t):t;
   if(!_speechFirstAt)_speechFirstAt=Date.now();
@@ -2799,11 +2833,21 @@ function _queueSpeech(t){
   if(Date.now()-_speechFirstAt>=_SPEECH_MAX){_flushSpeech();return}
   // VAD 在跑就由它来判「说完了」（它看的是声音，比定时器准）；
   // 这里的定时器降级成兜底。VAD 起不来时才是原来那套 1500ms 分句。
-  _speechTimer=setTimeout(_flushSpeech,_vadOn?_VAD_LATE_FINAL:_SPEECH_GAP);
+  // 09-12：VAD 已经判她说完了（不在说话），这时才到的 final 不用再等 900ms ——
+  // iPhone 的 final 常常晚于 420ms 那个宽限，实测「嘴停→发出」白白多了一截。
+  // 留 150ms 接住紧跟着的碎片就发。
+  var _wait=!_vadOn?_SPEECH_GAP:(_vadSpeaking?_VAD_LATE_FINAL:150);
+  _speechTimer=setTimeout(_flushSpeech,_wait);
 }
 function _flushSpeech(){
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}
   var t=_speechBuf.trim();_speechBuf='';_speechFirstAt=0;
+  // 先发草稿：VAD 已经判她说完了，final 还没到（或只到了一部分）→ 把草稿接上一起发
+  var _usedInterim=false;
+  if(_vadOn&&!_vadSpeaking&&_lastInterim){
+    t=t?(t+' '+_lastInterim):_lastInterim;
+    _interimSent={text:_lastInterim,at:Date.now()};_lastInterim='';_usedInterim=true;
+  }
   // ⚠️ 顺序要紧：先判连接再擦草稿。反过来的话，WS 没连上时草稿已经没了、
   //    真气泡又不摆，她看到的就是「字闪一下就消失」——一句提示都没有。
   // ⚠️ 下面每条 return 都必须先 _stopSeg()。不丢的话 MediaRecorder 还在录，
@@ -2826,8 +2870,12 @@ function _flushSpeech(){
   // 新的一句真发出去了 —— 上一轮的哑音闸在这里解除。
   // ⚠️ 解除必须在这儿，不能在 _bargeIn 之后随便找个地方：早了的话上一轮还没停下来的
   //    delta 会立刻接着念，她刚打断完他又开口；晚了她这句的回复就一个字都听不见。
+  var _wasBarge=_bargedIn;   // 分段延迟要标：这轮是不是她打断之后说的
   _bargedIn=false;
-  _callWs.send(JSON.stringify({type:'speech',text:t}));
+  _callTurn++;
+  _vm={turn:_callTurn,end:_vmEnd,sent:Date.now(),barged:_wasBarge,interim:_usedInterim};_vmEnd=0;   // 分段延迟：新一轮
+  _resetTTSStream();   // 上一轮没念完的残句和队列作废，别跟新一轮拼在一起
+  _callWs.send(JSON.stringify({type:'speech',text:t,turn:_callTurn}));
   // ⚠️ 用 _buildUserRow 造，别手搓裸 div —— 手搓的没有头像，
   //    而且结构对不上 _msgContentEl，语音条换进去也找不到地方放。
   var bubble=_buildUserRow(t,String(Date.now()),[]);
@@ -2856,6 +2904,7 @@ var VAD={
   startHold:3,        // 连续几块超阈值才算开口（一块 ~43ms）
   endSilenceMs:650,   // 静音多久算这句说完
   bargeInMs:560,      // 他正念着时，她要持续出声这么久才算真打断（防回声/防误触）
+  bargeGapMs:160,     // 这 560ms 里允许的字间气口：短于这个不清零（PDF 的 restoreMs）
   floor:0.006,        // 噪声底线，再安静也不往下走
   gain:3.2,           // 进入阈值 = max(floor, 噪声底*gain)
   exitRatio:0.62,     // 结束阈值 = 进入阈值*这个。双阈值，免得悬在临界来回抖
@@ -2906,11 +2955,14 @@ function _onVadLevel(rms){
   var now=Date.now();
   // 噪声底：她没说话时快跟；说话中只慢慢往「这段里观测到的最小值」靠。
   // ⚠️ 说话中也让它快跟的话，AGC 一抬底噪门槛就跟着涨，她说到一半就被判成静音。
-  if(!_vadSpeaking)_vadNoise=_vadNoise*0.97+rms*0.03;
-  else{_vadSpeechMin=Math.min(_vadSpeechMin,rms);
-       _vadNoise=Math.min(_vadNoise*1.0015,Math.max(_vadNoise,_vadSpeechMin))}
+  // ⚠️ 门槛要先按「旧的底噪」算，超过门槛的那几块**不许喂进底噪**。
+  //    09-12 App 实测：他念着时她开口 rms≈0.19，旧写法把她自己的声音当底噪 3% 一块地吃进去，
+  //    ~170ms 门槛就涨到 0.5 把她压下去，永远凑不够 bargeInMs —— 打断从来没成立过。
   var enter=Math.max(VAD.floor,_vadNoise*VAD.gain);
   if(_callSpeaking)enter*=VAD.speakingGain;
+  if(!_vadSpeaking){if(rms<=enter)_vadNoise=_vadNoise*0.97+rms*0.03}
+  else{_vadSpeechMin=Math.min(_vadSpeechMin,rms);
+       _vadNoise=Math.min(_vadNoise*1.0015,Math.max(_vadNoise,_vadSpeechMin))}
   var exit=enter*VAD.exitRatio;
   if(rms>enter)_vadLastHotAt=now;
 
@@ -2924,7 +2976,12 @@ function _onVadLevel(rms){
         var needed=_callSpeaking?VAD.bargeInMs:0;
         if(now-_vadHotSince>=needed)_vadSpeechStart();
       }
-    }else{_vadHot=0;_vadHotSince=0}
+    }else if(!_callSpeaking||!_vadLastHotAt||now-_vadLastHotAt>VAD.bargeGapMs){
+      // ⚠️ 09-12：以前这里只要掉一块（43ms）就清零。人说话字和字之间本来就有气口，
+      //    要连续 560ms 一块不掉几乎做不到 —— 她说得连贯才打断得了，一停顿就失灵。
+      //    他念着时允许 bargeGapMs 以内的气口，超过了才算她真停了。
+      _vadHot=0;_vadHotSince=0;
+    }
     return;
   }
   if(rms<exit){
@@ -2939,6 +2996,7 @@ function _vadSpeechStart(){
   if(_callSpeaking)_bargeIn();
 }
 function _vadSpeechEnd(){
+  _vmEnd=Date.now();   // 分段延迟：她嘴停的那一刻
   _vadSpeaking=false;_vadSilenceSince=0;_vadHot=0;_vadHotSince=0;
   // 她嘴停了，但浏览器的 final 结果还在路上（实测 200~500ms）。
   // 立刻发的话每句最后几个字都会被切到下一句去 —— 等一小会儿。
@@ -2950,10 +3008,43 @@ function _vadSpeechEnd(){
 // ⚠️ 光停播放不够：后端的 delta 还在源源不断地来，_feedCallDelta 会把后面的句子
 //    继续塞进队列，掐了又响。必须把「这一轮」整个哑掉，直到她下一句真发出去。
 var _bargedIn=false;
+// 这一轮的编号。她每发一句 +1，后端的 delta/response 原样带回来，TTS 队列每句也记着。
+// 对不上的一律不念 —— 光靠 _bargedIn 一个布尔值，她下一句一发出去闸就开了，
+// 上一轮还在飘过来的字会接着念（PDF 里说的「只有一个 isSpeaking」）。
+var _callTurn=0;
+// ---- 分段延迟（09-12，PDF 第 3 节：别只看总耗时）----
+// 每轮记几个时刻：她嘴停(end) → 发出去(sent) → 他第一个字到(delta) → 第一句交给 TTS(tts) → 第一段声音响(audio)。
+// 第一段声音一响就报给后端打日志。只有毫秒数，不带内容。长期留着，调延迟全靠它。
+var _vm={},_vmEnd=0;
+function _vmSend(){
+  var v=_vm,d=function(a,b){return (a&&b)?(b-a):-1};
+  if(!_callWs||_callWs.readyState!==1)return;
+  try{_callWs.send(JSON.stringify({type:'voice_metrics',turn:v.turn,
+    endpoint_ms:d(v.end,v.sent),      // 嘴停 → 发出去（VAD 静音判定 + 等浏览器转写）
+    first_text_ms:d(v.sent,v.delta),  // 发出去 → 第一个字（后端 + 网关 + 模型）
+    cut_ms:d(v.delta,v.tts),          // 第一个字 → 凑够第一句
+    tts_ms:d(v.tts,v.audio),          // 第一句 → 第一段声音（TTS 合成首包 + 往返）
+    first_sound_ms:d(v.end||v.sent,v.audio),
+    barged:!!v.barged,interim:!!v.interim}))}catch(e){}
+}
+// 他挂电话：等告别念完再真挂（见 onmessage 的 hangup 分支）
+var _hangupPending=false,_hangupGotResp=false,_hangupTimer=null;
+function _maybeFinishHangup(){
+  if(!_hangupPending||!_hangupGotResp||_ttsPumping||_ttsQueue.length)return;
+  _finishHisHangup();
+}
+function _finishHisHangup(){
+  if(!_hangupPending)return;
+  _hangupPending=false;
+  if(_hangupTimer){clearTimeout(_hangupTimer);_hangupTimer=null}
+  toast('他挂断了');_hangupBy='him';_stopCall();
+}
 function _bargeIn(){
   if(_bargedIn)return;
   console.log('[call] 她插话了，掐掉他这一轮');
   _bargedIn=true;
+  // 让后端把他还在写的这一轮真停下（不只是不念），她的新话就不用等他写完
+  if(_callWs&&_callWs.readyState===1){try{_callWs.send(JSON.stringify({type:'interrupt',turn:_callTurn}))}catch(e){}}
   _ttsQueue.length=0;
   _rawBuf='';                 // 还没凑成句的残句一起丢掉，别等收口时又冒出来
   _stopTTSPlayback();
@@ -2989,15 +3080,21 @@ async function _startCall(incoming){
     if(!incoming)_showOutgoingCall();
     _callWs.onopen=function(){
       // 告诉他电话响了 —— 不发这条他那头是静默的，得等她先开口
-      try{_callWs.send(JSON.stringify({type:'dial'}))}catch(e){}
+      try{_callWs.send(JSON.stringify({type:'dial',turn:_callTurn}))}catch(e){}
     };
     _callWs.onmessage=function(e){
       var msg=JSON.parse(e.data);
       if(msg.type==='busy'){toast('他还在说上一句，等一下');return}
       // 逐字来的：攒到一句话完整就先念，别等他整段写完 —— 感知延迟的大头在这儿
-      if(msg.type==='delta'){_feedCallDelta(msg.text);return}
+      // 旧后端不带 turn（undefined）就照旧处理；带了又对不上 = 上一轮的，不念
+      var _stale=msg.turn!==undefined&&msg.turn!==_callTurn;
+      if(msg.type==='delta'){
+        if(!_stale){if(_vm.turn===_callTurn&&!_vm.delta)_vm.delta=Date.now();_feedCallDelta(msg.text)}
+        return}
       if(msg.type==='response'){
         _clearOutgoingCall();   // 他开口了 = 接通
+        // 被打断的那轮：库里整段都存了，聊天里照样摆出来对得上，但不念、不挂语音条
+        if(_stale){if(msg.text)_callAppend(_buildClaudeRow(msg.text,'','',String(Date.now())));return}
         _hisPendingText=(msg.text||'').trim();   // 等 TTS 念完，把原声挂到这条上
         // 尾巴收口：把 delta 阶段没凑成句的残句念掉。
         // 已经念过的部分不会重念（_ttsSpokenLen 记着水位）。
@@ -3010,9 +3107,16 @@ async function _startCall(incoming){
         // 他最后一句正好在 delta 阶段念完的话，收口不会有新句子入队，
         // 也就不会再有一轮播放 —— 那这里就是最后的机会。
         _flushHisVoice();
+        if(_hangupPending){_hangupGotResp=true;_maybeFinishHangup()}
       }else if(msg.type==='hangup'){
-        // 他那边用 hangup_call 工具挂断的
-        toast('他挂断了');_hangupBy='him';_stopCall();
+        // 他那边用 hangup_call 工具挂断的。
+        // ⚠️ 工具是在生成**中途**调的，这时告别那句还没念（甚至还没写完）。
+        //    以前当场 _stopCall，TTS 被掐、WS 被关，最后一句只进了库，没声音也没语音条（09-12 她报的）。
+        //    现在等这一轮 response 到了、队列念空了再挂；20 秒硬上限，别卡死。
+        if(!_hangupPending){
+          _hangupPending=true;_hangupGotResp=false;
+          _hangupTimer=setTimeout(_finishHisHangup,20000);
+        }
       }else if(msg.type==='error'){_clearOutgoingCall();toast('通话出错: '+msg.text)}
     };
     // ⚠️ 这两个以前只把按钮颜色恢复了，不提示也不收摊——WS 连不上时听写还在跑，
@@ -3054,6 +3158,9 @@ async function _startCall(incoming){
     // 但看得见「正在听」和干等着，是两件事。
     rec.lang='zh-CN';rec.interimResults=true;rec.continuous=true;
     rec.onresult=function(e){
+      // 09-12：听写一直开着，但他念着的时候、以及他刚念完 350ms 内（没打断的话）听到的，
+      //   多半是扬声器里他自己的声音 —— 不采用。打断一成立 _callSpeaking 就是 false，照常采用。
+      if(_callSpeaking||(!_bargedIn&&Date.now()-_ttsEndAt<350)){_lastInterim='';_showInterim('');return}
       // ⚠️ continuous 模式下 e.results 是**累积**的，从 0 遍历会把之前说过的话
       //    一遍遍重新发出去。只取这次新出现的那几段。
       var t='',interim='';
@@ -3062,31 +3169,47 @@ async function _startCall(incoming){
         else interim+=e.results[i][0].transcript;
       }
       if(!_segRec)_startSeg();   // 没收到 onspeechstart 的浏览器走这条
-      if(t.trim())_queueSpeech(t.trim());
+      _lastInterim=interim.trim();   // 留着：VAD 判她说完时 final 还没到，就先发它
+      // final 先跟发过的草稿对一下，别同一句发两遍
+      if(t.trim()){var _ft=_matchSentInterim(t.trim());if(_ft)_queueSpeech(_ft)}
       _showInterim(interim.trim()||(t.trim()?'':''));
     };
     // 录音跟着「她开口」走，不跟着通话走：语音条里只该有她说话那几秒。
     // onspeechstart 是浏览器判定「有人声了」的最早时机；有些浏览器不给这个事件，
     // 用第一次识别结果兜底（会晚一点，可能吃掉半个字，但不会录进整段沉默）。
-    rec.onspeechstart=function(){if(!_segRec)_startSeg()};
+    // 09-12：听写现在他念着时也开着，这时的「有人声」多半是他的回音 —— 别开录她的语音条
+    rec.onspeechstart=function(){if(!_segRec&&!_callSpeaking)_startSeg()};
     rec.onerror=function(e){if(e.error!=='no-speech')console.error('[call]',e.error)};
     // 浏览器会在静默一段时间后自己结束听写。通话还没挂就自动接上，
     // 否则说着说着他就聋了。
     rec.onend=function(){
-      // 他正在说话时是我们主动停的，别抢着重开——由 _speakWithMicPaused 念完再开
-      if(_callSpeaking)return;
+      // 09-12：他念着的时候也要重开 —— 听写现在一直开着（不采用靠 onresult 那道闸），
+      //   iPhone 静默一会儿会自己停，不接上的话她打断时又没人在听了。
+      //   _speakWithMicPaused 那条路仍会主动 abort，它念完自己会重开，这里重开也无妨（start 重复会抛，已兜住）。
       if(_callWs&&_callRecording===rec){try{rec.start()}catch(e){}}
     };
     rec.start();_callRecording=rec;
-  }catch(e){toast('请允许麦克风权限');_stopCall()}
+  }catch(e){
+    // ⚠️ 09-12：以前这里一律报「请允许麦克风权限」，然后 _stopCall 关掉**还在连接中**的 WS ——
+    //    那会触发 onerror，再弹一句「连不上通话服务」把这句盖掉。她看到的永远是「连不上」，
+    //    真正的错误一个字都看不见。先把 WS 的回调摘掉，再如实报。
+    console.error('[call] 起电话时出错:',e);
+    if(_callWs){_callWs.onerror=null;_callWs.onclose=null}
+    var _perm=e&&(e.name==='NotAllowedError'||e.name==='SecurityError');
+    toast(_perm?'请允许麦克风权限':('通话起不来：'+((e&&(e.name+' '+e.message))||e)));
+    _stopCall();
+  }
 }
 function _stopCall(){
   // ⚠️ _callSeconds 下面几行就被清零了，时长必须先取出来
   if(_callSeconds>0){var _m=Math.floor(_callSeconds/60),_s=_callSeconds%60;
     _logCall('ended',String(_m).padStart(2,'0')+':'+String(_s).padStart(2,'0'),_hangupBy)}
+  // 她在他告别途中自己挂了 / 走了硬上限：等挂的状态一起清掉
+  _hangupPending=false;if(_hangupTimer){clearTimeout(_hangupTimer);_hangupTimer=null}
   _hangupBy='her';   // ⚠️ 一定要复位，否则他挂过一次之后，往后每通都算他挂的
   // 挂断时把还没发出去的半句丢掉，别等挂完了再补发一条
   if(_speechTimer){clearTimeout(_speechTimer);_speechTimer=null}_speechBuf='';_speechFirstAt=0;
+  _lastInterim='';_interimSent={text:'',at:0};
   _showInterim('');
   _stopSeg();
   _stopVAD();
@@ -3200,6 +3323,7 @@ window._toggleCall=function(){
 // 他说话的时候把麦克风的听写停掉——不然扬声器里他自己的声音会被听写成
 // 「她说的话」再发回去，两个人对着自己的回音聊起来。
 var _callSpeaking=false;
+var _ttsEndAt=0;   // 他最后一次念完的时刻：之后 350ms 里听写听到的多半是他的尾音
 var _ttsPlayedAny=false;   // 本次 TTS 有没有真的出过声（防止半途失败时兜底重念一遍）
 
 // ============ 边生成边念 ============
@@ -3298,23 +3422,32 @@ function _enqueueTTS(text){
   // 闸开在 _flushSpeech（她下一句真发出去的时候）。
   if(_bargedIn){console.log('[tts] 这轮被打断了，不念:',JSON.stringify(text.slice(0,30)));return}
   console.log('[tts] 念:',JSON.stringify(text.slice(0,60)),'(队列'+_ttsQueue.length+')');
-  _ttsQueue.push(text);
+  if(_vm.turn===_callTurn&&!_vm.tts)_vm.tts=Date.now();   // 分段延迟：第一句交给 TTS
+  _ttsQueue.push({text:text,turn:_callTurn});
   if(!_ttsPumping)_pumpTTS();
 }
 async function _pumpTTS(){
   if(_ttsPumping)return;
   _ttsPumping=true;_callSpeaking=true;
-  if(_callRecording){try{_callRecording.abort?_callRecording.abort():_callRecording.stop()}catch(e){}}
+  // 09-12：他念的时候**不再关听写**。以前关掉、等打断成立（560ms）再重开，
+  //   她打断时开头那半秒多根本没人在听，前几个字总丢。现在一直听着，
+  //   只是他念着的时候听到的一律不采用（见 rec.onresult），打断一成立就采用 ——
+  //   她那句的 final 是从她第一个字开始算的。
   _pauseSeg();
   try{
     while(_ttsQueue.length){
       var next=_ttsQueue.shift();
-      try{ await _playStreamTTS(next) }catch(e){ console.warn('[tts] 这句没念成:',e.message) }
+      if(next.turn!==_callTurn)continue;   // 上一轮排着的，不念
+      // 每句都重新标「他在说话」：打断会把它置 false，同一个循环接着念新一轮时得标回来，
+      // 不然他念着的时候听写在采用他的声音、她的语音条也在录
+      _callSpeaking=true;_pauseSeg();
+      try{ await _playStreamTTS(next.text,next.turn) }catch(e){ console.warn('[tts] 这句没念成:',e.message) }
     }
   }finally{
-    _ttsPumping=false;_callSpeaking=false;
+    _ttsPumping=false;_callSpeaking=false;_ttsEndAt=Date.now();
     _resumeSeg();
     _flushHisVoice();
+    if(_hangupPending){_maybeFinishHangup();if(!_callWs)return}   // 告别念完了 → 这下才挂
     setTimeout(function(){
       if(_callWs&&_callRecording&&!_ttsPumping){try{_callRecording.start()}catch(e){}}
     },350);
@@ -3333,7 +3466,9 @@ async function _speakWithMicPaused(text){
     },350);
   }
 }
-async function _playStreamTTS(text){
+// turn 只有通话队列会传；平时点播语音不传（undefined），不受轮次管
+async function _playStreamTTS(text,turn){
+  function _gone(){return _bargedIn||(turn!==undefined&&turn!==_callTurn)}
   try{
     // 这个接口在 auth 中间件后面，不带 token 就是 401 —— 然后 catch 会把它
     // 悄悄降级到 speechSynthesis，很多设备上那个是哑的，表现就是"接通了但没声音"。
@@ -3352,7 +3487,7 @@ async function _playStreamTTS(text){
       if(chunk.done)break;
       // 她插话了 —— 别再往下读了。不 cancel 的话这条 SSE 会一直挂着，
       // MiniMax 那边的字也照样计费。
-      if(_bargedIn){try{reader.cancel()}catch(e){}break}
+      if(_gone()){try{reader.cancel()}catch(e){}break}
       buf+=decoder.decode(chunk.value,{stream:true});
       var lines=buf.split('\n');buf=lines.pop()||'';
       for(var i=0;i<lines.length;i++){
@@ -3365,7 +3500,7 @@ async function _playStreamTTS(text){
             //    hex 有脏字符），前面已经放出去的声音收不回来，可标志还是 false，
             //    catch 里就会走兜底把整句再念一遍 —— 她听到的「说两遍」。
             _ttsPlayedAny=true;
-            _feedPCMChunk(obj.data,sampleRate);
+            if(!_gone())_feedPCMChunk(obj.data,sampleRate);
           }
           else if(obj.type==='error'){throw new Error(obj.message)}
         }catch(e){if(e.message!==''&&!e.message.startsWith('Unexpected'))throw e}
@@ -3373,10 +3508,15 @@ async function _playStreamTTS(text){
     }
     // 音频是排着队提前调度的，流读完 ≠ 播完。等队列真的放完再返回，
     // 否则调用方（_speakWithMicPaused）会在他还在说话时就把麦克风打开。
-    if(_bargedIn)return;   // 被掐了就别等了，队列早清空了
-    if(_audioCtx&&_nextPlayTime>_audioCtx.currentTime){
-      await new Promise(function(rs){setTimeout(rs,(_nextPlayTime-_audioCtx.currentTime)*1000+120)});
+    if(_gone())return;   // 被掐了就别等了，队列早清空了
+    // ⚠️ 09-12：以前这里按剩余音频长度一口气睡到底，打断了也不醒 ——
+    //    她打断时他还剩十几秒没播，这段睡眠照睡，她的新回复排在后面干等（实测 16.4s），
+    //    醒来后还没重新标「他在说话」，他的声音被听写采用、录进了她的语音条（5s 记成 24s）。
+    //    改成每 100ms 看一眼：一打断（或换轮）立刻醒。
+    while(!_gone()&&_audioCtx&&_nextPlayTime>_audioCtx.currentTime){
+      await new Promise(function(rs){setTimeout(rs,100)});
     }
+    if(!_gone())await new Promise(function(rs){setTimeout(rs,120)});
   }catch(e){
     // 已经出过声就绝不重念——宁可后半句被截断，也不要整句念两遍
     if(_ttsPlayedAny){
@@ -3420,6 +3560,8 @@ function _feedPCMChunk(hex,sampleRate){
   }
   // 只在通话里攒：平时点播语音消息也走这条路，那些不用再存一份
   if(_callWs){_ttsPCM.push(raw);_ttsPCMRate=sampleRate}
+  // 分段延迟：这一轮第一段声音 → 报上去
+  if(_callWs&&_vm.turn===_callTurn&&_vm.sent&&!_vm.audio){_vm.audio=Date.now();_vmSend()}
   var audioBuf=_audioCtx.createBuffer(1,raw.length,sampleRate);
   var ch=audioBuf.getChannelData(0);
   for(var i=0;i<raw.length;i++)ch[i]=raw[i]/32768;
