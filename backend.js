@@ -161,6 +161,24 @@ db.exec(`
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('minimax_api_key','')").run();
 db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('minimax_voice_id','')").run();
 
+// ElevenLabs 语音配置默认值（2026-09-13）
+// tts_provider 是唯一的开关：'minimax'（默认）或 'elevenlabs'。
+// MiniMax 那套一行没删 —— ElevenLabs 跑不通，把这个值改回 'minimax' 就全回去了。
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_provider','minimax')").run();
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_api_key','')").run();
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_voice_id','')").run();
+// 模型不写死。默认 eleven_v3 —— 表现力最强的那个，语音条要的就是这个。
+// ⚠️ v3 跑不了低延迟流式，所以打电话那条路根本不走 ElevenLabs（见 /api/tts/stream）。
+// 觉得 v3 太飘就在设置里换成 eleven_multilingual_v2（更稳、更平）。
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('elevenlabs_model_id','eleven_v3')").run();
+// 上一版默认值是 multilingual_v2，把还留在旧默认值上的抬到 v3。
+// ⚠️ 必须只跑一次 —— 不加这个标记的话，她哪天真想换回 multilingual_v2，
+//    下次重启就被这行悄悄改回 v3，而且看不出是谁干的。
+if (!db.prepare("SELECT value FROM settings WHERE key='_mig_eleven_v3'").get()) {
+  db.prepare("UPDATE settings SET value='eleven_v3' WHERE key='elevenlabs_model_id' AND value='eleven_multilingual_v2'").run();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('_mig_eleven_v3','1')").run();
+}
+
 // 语音消息识别出的文字存这里，同一段语音不重复花钱识别
 try { db.prepare('ALTER TABLE uploads ADD COLUMN transcript TEXT').run(); } catch (e) {}
 
@@ -2213,12 +2231,57 @@ async function _barkPush(title, body, opts) {
   }
 }
 
+// === ElevenLabs TTS（2026-09-13）=================================
+// 跟 MiniMax 并存，由 settings 里的 tts_provider 决定走哪家。
+// 两家的差别都封在这几个函数里，四个调用点只管问「现在是哪家」。
+//
+// ⚠️ 两家返回的东西完全不一样，这是改这块最容易栽的地方：
+//   MiniMax    → JSON，音频是 hex 字符串，自带 audio_length 和计费字符数
+//   ElevenLabs → 直接就是二进制音频流，没有 JSON、没有时长、没有用量字段
+// 所以 ElevenLabs 这边时长只能按码率反推，用量只能按送进去的字符数算。
+const _sget = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+function ttsProvider() { return _sget('tts_provider') === 'elevenlabs' ? 'elevenlabs' : 'minimax'; }
+
+// mp3_44100_128 = 128kbps = 16000 字节/秒，跟 MiniMax 那边反推用的是同一个除数。
+const EL_MP3_BYTES_PER_SEC = 16000;
+function elevenUrl(voiceId, { stream = false, format = 'mp3_44100_128' } = {}) {
+  return 'https://api.elevenlabs.io/v1/text-to-speech/' + encodeURIComponent(voiceId)
+    + (stream ? '/stream' : '') + '?output_format=' + encodeURIComponent(format);
+}
+
+// 一次性合成。成功返回 Buffer（mp3），失败抛 Error，错误信息里带 ElevenLabs 的原话 ——
+// 401/422 光看状态码看不出是 key 错了还是 voice_id 错了，必须把 body 带出来。
+async function elevenSynth(said, { format = 'mp3_44100_128', timeout = 30000 } = {}) {
+  const apiKey = _sget('elevenlabs_api_key');
+  const voiceId = _sget('elevenlabs_voice_id');
+  if (!apiKey || !voiceId) throw new Error('ElevenLabs 还没配 API Key 或 Voice ID');
+  const resp = await fetch(elevenUrl(voiceId, { format }), {
+    method: 'POST',
+    headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+    body: JSON.stringify({
+      text: said,
+      model_id: _sget('elevenlabs_model_id') || 'eleven_multilingual_v2',
+    }),
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!resp.ok) throw new Error('ElevenLabs HTTP ' + resp.status + '：' + (await resp.text()).slice(0, 300));
+  const buf = Buffer.from(await resp.arrayBuffer());
+  if (!buf.length) throw new Error('ElevenLabs 没有返回音频数据');
+  return buf;
+}
+
 app.post('/api/settings/tts', auth, (req, res) => {
   const { minimax_api_key, minimax_voice_id, minimax_group_id } = req.body;
   const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
   if (minimax_api_key !== undefined) upsert.run('minimax_api_key', minimax_api_key);
   if (minimax_voice_id !== undefined) upsert.run('minimax_voice_id', minimax_voice_id);
   if (minimax_group_id !== undefined) upsert.run('minimax_group_id', minimax_group_id);
+  // ElevenLabs 那几个走同一个接口，省得前端多一套表单。
+  const { tts_provider, elevenlabs_api_key, elevenlabs_voice_id, elevenlabs_model_id } = req.body;
+  if (tts_provider !== undefined) upsert.run('tts_provider', tts_provider === 'elevenlabs' ? 'elevenlabs' : 'minimax');
+  if (elevenlabs_api_key !== undefined) upsert.run('elevenlabs_api_key', elevenlabs_api_key);
+  if (elevenlabs_voice_id !== undefined) upsert.run('elevenlabs_voice_id', elevenlabs_voice_id);
+  if (elevenlabs_model_id !== undefined) upsert.run('elevenlabs_model_id', elevenlabs_model_id);
   res.json({ ok: true });
 });
 
@@ -2226,7 +2289,11 @@ app.post('/api/settings/tts', auth, (req, res) => {
 app.get('/api/settings/tts', auth, (req, res) => {
   const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
   res.json({ minimax_voice_id: g('minimax_voice_id'), minimax_group_id: g('minimax_group_id'),
-             has_key: !!g('minimax_api_key') });
+             has_key: !!g('minimax_api_key'),
+             tts_provider: ttsProvider(),
+             elevenlabs_voice_id: g('elevenlabs_voice_id'),
+             elevenlabs_model_id: g('elevenlabs_model_id'),
+             has_elevenlabs_key: !!g('elevenlabs_api_key') });
 });
 
 // MiniMax 有两个互不通用的站，key 只在自己那站有效：
@@ -2248,6 +2315,20 @@ function minimaxUrl(host) {
 // 配置自检：不回显 key，只告诉她通没通、哪一步卡住
 app.post('/api/tts/test', auth, async (req, res) => {
   const g = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  // 想单独试 ElevenLabs 而不切过去：body 里带 {provider:'elevenlabs'}。
+  // 不带就按当前 tts_provider 走。
+  const which = req.body?.provider || ttsProvider();
+  if (which === 'elevenlabs') {
+    if (!g('elevenlabs_api_key')) return res.json({ ok: false, step: 'key', message: 'ElevenLabs 还没填 API Key' });
+    if (!g('elevenlabs_voice_id')) return res.json({ ok: false, step: 'voice', message: 'ElevenLabs 还没填 Voice ID' });
+    try {
+      const buf = await elevenSynth('在呢');
+      return res.json({ ok: true, message: '通了（ElevenLabs / ' + (g('elevenlabs_model_id') || 'eleven_multilingual_v2')
+        + '），试听音频 ' + Math.round(buf.length / 1024) + ' KB' });
+    } catch (e) {
+      return res.json({ ok: false, step: 'elevenlabs', message: String(e.message || e).slice(0, 400) });
+    }
+  }
   if (!g('minimax_api_key')) return res.json({ ok: false, step: 'key', message: '还没填 API Key' });
   if (!g('minimax_voice_id')) return res.json({ ok: false, step: 'voice', message: '还没填 Voice ID' });
   // 已记住的站排前面先试，省一个来回；没记住就按 MINIMAX_HOSTS 的顺序。
@@ -2352,10 +2433,12 @@ async function transcribeUpload(uploadId, durSec) {
 async function synthVoiceTags(text, res) {
   if (!text || text.indexOf('<voice>') === -1) return text;
   const _origText = text;
-  const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
-  const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
+  const _prov = ttsProvider();
+  const _elOk = !!(_sget('elevenlabs_api_key') && _sget('elevenlabs_voice_id'));
+  const _mmOk = !!(_sget('minimax_api_key') && _sget('minimax_voice_id'));
   // 没配好就把标签剥了当普通文字发 —— 宁可少个语音条，也不能让她收到一堆尖括号。
-  if (!apiKey || !voiceId) return text.replace(/<\/?voice>/g, '');
+  // 选了 ElevenLabs 但它没配好时，只要 MiniMax 还在就照样有声音（下面会兜）。
+  if (!_mmOk && !(_prov === 'elevenlabs' && _elOk)) return text.replace(/<\/?voice>/g, '');
 
   const re = /<voice>([\s\S]*?)<\/voice>/g;
   const jobs = [];
@@ -2364,14 +2447,40 @@ async function synthVoiceTags(text, res) {
 
   for (const j of jobs) {
     if (!j.said) { text = text.replace(j.tag, ''); continue; }
+    // ElevenLabs 分支：拿到的直接就是 mp3 二进制，没有 JSON 外壳。
+    // ⚠️ 这里**不 return、不吞异常到底** —— 合成失败就往下掉进 MiniMax 那段重合成一次。
+    //    她要的是「有声音」，不是「哪家的声音」。
+    if (_prov === 'elevenlabs' && _elOk) {
+      try {
+        const t0 = Date.now();
+        const buf = await elevenSynth(j.said);
+        logVoiceUsage('tts', j.said.length, Date.now() - t0);
+        const id = 'f_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const destPath = path.join(uploadDir, 'files', id + '.mp3');
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.writeFileSync(destPath, buf);
+        // 没有 audio_length 可用，只能按 128kbps 反推。
+        const secs = Math.max(1, Math.round(buf.length / EL_MP3_BYTES_PER_SEC));
+        const dur = Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+        db.prepare('INSERT INTO uploads (id, filename, path, size, transcript) VALUES (?,?,?,?,?)')
+          .run(id, 'voice-' + id + '.mp3', destPath, buf.length, j.said);
+        text = text.replace(j.tag, '[VOICE:' + id + '|' + dur + ']');
+        console.log('[tts] 他发了一条 ' + dur + ' 的语音（ElevenLabs）');
+        continue;
+      } catch (e) {
+        console.warn('[tts] ElevenLabs 语音条合成失败，' + (_mmOk ? '回落 MiniMax 再试: ' : '且 MiniMax 没配，只能发文字: ') + e.message);
+        if (!_mmOk) { text = text.replace(j.tag, j.said); continue; }
+        // 没 continue —— 故意掉进下面的 MiniMax 分支。
+      }
+    }
     try {
       const t0 = Date.now();
       const resp = await fetch(minimaxUrl(), {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': 'Bearer ' + _sget('minimax_api_key'), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'speech-2.8-hd', text: j.said, stream: false,
-          voice_setting: { voice_id: voiceId, speed: 1.0 },
+          voice_setting: { voice_id: _sget('minimax_voice_id'), speed: 1.0 },
           audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 }
         }),
         signal: AbortSignal.timeout(30000)
@@ -2655,6 +2764,18 @@ app.post('/api/tts', auth, async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: 'text required' });
     const _ttsT0 = Date.now();
+    if (ttsProvider() === 'elevenlabs') {
+      try {
+        const buf = await elevenSynth(text);
+        logVoiceUsage('tts', text.length, Date.now() - _ttsT0);
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Length', buf.length);
+        return res.send(buf);
+      } catch (e) {
+        // 一个字节都还没发出去，所以这里能干干净净地改走 MiniMax。
+        console.warn('[tts] ElevenLabs 失败，回落 MiniMax: ' + e.message);
+      }
+    }
     const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
     const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
     if (!apiKey || !voiceId) return res.status(400).json({ error: '请先配置 MiniMax API Key 和 Voice ID' });
@@ -2709,9 +2830,13 @@ app.post('/api/tts', auth, async (req, res) => {
 
 // MiniMax 流式 TTS——边生成边播放，零等待
 app.post('/api/tts/stream', auth, async (req, res) => {
-  const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'minimax_api_key'").get()?.value;
-  const voiceId = db.prepare("SELECT value FROM settings WHERE key = 'minimax_voice_id'").get()?.value;
-  if (!apiKey || !voiceId) { res.status(400).json({ error: '请先配置 MiniMax API Key 和 Voice ID' }); return; }
+  // ⚠️ 打电话这条**永远走 MiniMax，不看 tts_provider**（2026-09-13 定的）。
+  // ElevenLabs 那边最好听的 eleven_v3 根本跑不了低延迟流式，硬接上就是通话卡顿；
+  // 而能跑流式的 pcm 格式又要付费档。所以这条路干脆不给它开口子 ——
+  // 语音条用 ElevenLabs 的表现力，通话用 MiniMax 的实时性，各拿各的长处。
+  const apiKey = _sget('minimax_api_key');
+  const voiceId = _sget('minimax_voice_id');
+  if (!apiKey || !voiceId) { res.status(400).json({ error: '请先配置 MiniMax API Key 和 Voice ID（通话只走 MiniMax）' }); return; }
   const { text } = req.body;
   if (!text) { res.status(400).json({ error: 'text required' }); return; }
 
@@ -2728,15 +2853,16 @@ app.post('/api/tts/stream', auth, async (req, res) => {
   //    要等的是「客户端把连接断了」，那是 res 上的事件。
   res.on('close', () => { aborted = true; });
 
+
   try {
     const mmResp = await fetch(minimaxUrl(), {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + _sget('minimax_api_key'), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'speech-2.8-hd',
         text: text,
         stream: true,
-        voice_setting: { voice_id: voiceId, speed: 1.0 },
+        voice_setting: { voice_id: _sget('minimax_voice_id'), speed: 1.0 },
         audio_setting: { sample_rate: 24000, format: 'pcm', channel: 1 }
       }),
       signal: AbortSignal.timeout(60000)
@@ -10769,12 +10895,21 @@ async function handleGatewayChat(req, res, ctx) {
         let evt;
         try { evt = JSON.parse(line.slice(5)); } catch { continue; }
         if (evt.thinking) {
+          // 09-13：查「通话首字 8~11 秒」。首字那个探针只认 text delta，
+          // 他在想的那几秒是看不见的。这里补一刀：第一段思考什么时候到、到出字前想了多少字。
+          if (ctx.voiceT0 && !ctx._firstThinkAt) {
+            ctx._firstThinkAt = Date.now();
+            console.log('[延迟·后端] 网关第一段思考 +' + (ctx._firstThinkAt - ctx.voiceT0) + 'ms');
+          }
           gwThinking += evt.thinking;
           res.write('event: thinking\ndata: ' + JSON.stringify({ text: evt.thinking }) + '\n\n');
         } else if (evt.delta) {
           if (ctx.voiceT0 && !ctx._firstDeltaAt) {
             ctx._firstDeltaAt = Date.now();
-            console.log('[延迟·后端] 网关第一个字 +' + (ctx._firstDeltaAt - ctx.voiceT0) + 'ms');
+            console.log('[延迟·后端] 网关第一个字 +' + (ctx._firstDeltaAt - ctx.voiceT0) + 'ms' +
+              (ctx._firstThinkAt
+                ? '（想了 ' + (ctx._firstDeltaAt - ctx._firstThinkAt) + 'ms、' + gwThinking.length + ' 字）'
+                : '（这轮没思考）'));
           }
           assistantText += evt.delta;
           res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n');
@@ -13764,9 +13899,13 @@ wss.on('connection', (ws, req) => {
   // 先把 activeTurn 切过去（旧那轮后面的 delta 就不推了），等旧那轮跑完再接新的。
   // ⚠️ 不能两轮并发：会抢同一个 CLI 会话。旧那轮照样跑完、整段存库（09-05 的断线兜底不动）。
   let activeTurn;
+  // 网关里**真正在跑**的那一轮。跟 activeTurn 不是一回事：
+  // activeTurn 是「该不该把 delta 推给她」的哑音闸，她一排队就切到新轮；
+  // 真要叫停的是旧那轮，所以打断必须认这个。09-13：混用导致排过队之后打断永久失效。
+  let runningTurn;
   let pending = null;   // 忙着时她又说的话，攒成一句，最新的 turn 为准
   function runTurn(text, turn) {
-    busy = true; activeTurn = turn;
+    busy = true; activeTurn = turn; runningTurn = turn;
     (async () => {
       try {
         if (!convId) convId = _mainConvId();
@@ -13803,9 +13942,14 @@ wss.on('connection', (ws, req) => {
       }
       // 她打断了正在念的那一轮：只在它**真的还在跑**时叫停，别误伤已经排上的新一轮
       if (msg.type === 'interrupt') {
-        if (busy && activeTurn === msg.turn) {
+        if (busy && runningTurn === msg.turn) {
           console.log('[call] #' + connId + ' 她打断了 turn ' + msg.turn + '，叫停');
           interruptGatewayTurn(convId || _mainConvId());
+        } else {
+          // 09-13：没成立的原因要留痕 —— 实测两天里「叫停」一次都没打印过，
+          // 真相是她能听见声音时模型多半已经写完（busy=false），掐的只是 TTS。
+          console.log('[call] #' + connId + ' 打断没东西可叫停（busy=' + busy +
+            ' 在跑 turn=' + runningTurn + ' 她说的 turn=' + msg.turn + '）');
         }
         return;
       }
