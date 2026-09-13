@@ -141,6 +141,8 @@ button{font:inherit;border:0;background:none;color:inherit;cursor:pointer}textar
 .msg-user{display:flex;gap:10px;align-items:center;justify-content:flex-end;padding:0 0 2px}
 .msg-user .msg-avatar{width:60px;height:60px;border-radius:50%;flex:none;background:linear-gradient(135deg,#E8A8B8,#DA7756);display:grid;place-items:center;font-size:26px;color:#fff;order:2}
 .msg-user .bubble{font-family:var(--font-serif);font-size:15px;line-height:1.15;max-width:72%;padding:1px 10px;background:#FFF0F5;border-radius:18px;white-space:pre-wrap;word-break:break-word;color:var(--text-primary);order:1}
+/* 09-12 她要的：她气泡里的链接用粉色，别用浏览器默认那个扎眼的蓝 */
+.msg-user .bubble a{color:#D4608A;text-decoration:underline;text-decoration-color:rgba(212,96,138,.35);text-underline-offset:2px;word-break:break-all}
 .msg-claude{display:flex;gap:8px;align-items:flex-start;padding:1px 0;--ts-line:26.8px;--ts-gap:8px;--tr-line:31.6px;--tr-gap:10px}
 /* 08-23：有思考摘要时气泡被推下去，头像跟摘要那一行齐了，看着错位。
    头像是 .msg-claude 的直接子元素，align-items:flex-start 对齐的是 .msg-body 整体，
@@ -1909,20 +1911,22 @@ html[data-theme="dark"] .cmd-capsule{background:#2C2C2B!important;color:#E6E6E3!
    背景和他的灰都掺一点粉，她的粉不孤单；强调色深墨。
    --claude-accent-orange 故意不覆盖 —— 那是 Claude 自己的橙，logo 要留着（雾紫粉那版把它染紫了）。
    只动浅色，深色和官端模式（ui-plain，有自己的冷灰）都不动。
-   写成两段是因为「跟随系统」时 html 上没有 data-theme，只能靠媒体查询分浅深。 */
+   写成两段是因为「跟随系统」时 html 上没有 data-theme，只能靠媒体查询分浅深。
+   09-12 晚试了奶油白 #FBF8F1，配灰气泡发浑（她说「丧葬感」），当晚换成 palettes.html 的「冷白 iOS」。
+   又嫌冷、他发黄、她太淡，让我自己配：底掺一丝粉的白、他是带点玫瑰的中性灰（不走黄）、她是实一点的粉、字是软黑不是纯黑。 */
 @media (prefers-color-scheme:light){
   html:not([data-theme="dark"]):not(.ui-plain){
-    --bg-primary:#F9F9F7;--bg-surface:#EFEFED;--claude-main-surface:#F9F9F7;--claude-main-surface-soft:#F8F2EA;--claude-sidebar-bg:#F9F9F7;
-    --bubble-him:#EDEAE7;--bubble-her:#F4E1E4;--bubble-user:#F4E1E4;
-    --trace-ink:#555555;--accent:#3D3D3D;--accent-hover:#2B2B2B;--accent-fg:#FFF;
-    --text-primary:#262626;--border:rgba(38,38,38,.08);--border-strong:rgba(38,38,38,.16);
+    --bg-primary:#F8F6F7;--bg-surface:#ECE9EB;--claude-main-surface:#F8F6F7;--claude-main-surface-soft:#ECE9EB;--claude-sidebar-bg:#F8F6F7;
+    --bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9;
+    --trace-ink:#3A3A40;--accent:#2E2B2C;--accent-hover:#1F1D1E;--accent-fg:#FFF;
+    --text-primary:#2E2B2C;--border:rgba(38,38,38,.08);--border-strong:rgba(38,38,38,.16);
   }
 }
 html[data-theme="light"]:not(.ui-plain){
-  --bg-primary:#F9F9F7;--bg-surface:#EFEFED;--claude-main-surface:#F9F9F7;--claude-main-surface-soft:#F8F2EA;--claude-sidebar-bg:#F9F9F7;
-  --bubble-him:#EDEAE7;--bubble-her:#F4E1E4;--bubble-user:#F4E1E4;
-  --trace-ink:#555555;--accent:#3D3D3D;--accent-hover:#2B2B2B;--accent-fg:#FFF;
-  --text-primary:#262626;--border:rgba(38,38,38,.08);--border-strong:rgba(38,38,38,.16);
+  --bg-primary:#F8F6F7;--bg-surface:#ECE9EB;--claude-main-surface:#F8F6F7;--claude-main-surface-soft:#ECE9EB;--claude-sidebar-bg:#F8F6F7;
+  --bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9;
+  --trace-ink:#3A3A40;--accent:#2E2B2C;--accent-hover:#1F1D1E;--accent-fg:#FFF;
+  --text-primary:#2E2B2C;--border:rgba(38,38,38,.08);--border-strong:rgba(38,38,38,.16);
 }
 
 /* ============ 09-12 气泡照 /preview/palettes.html 那版来 ============
@@ -2006,11 +2010,12 @@ html[data-theme="dark"],html.ui-plain[data-theme="dark"]{--bg-primary:#1F1F1F;--
   html:not([data-theme="light"]),html.ui-plain:not([data-theme="light"]){--bg-primary:#1F1F1F;--bg-surface:#2A2A29;--claude-main-surface:#1F1F1F;--claude-sidebar-bg:#1F1F1F}
 }
 
-/* 09-12 背景换成中性 #F9F9F7 / #1F1F1F 后，气泡跟着去掉黄调：他的灰改冷一点，她的玫瑰奶保留但压掉暖。官端 ui-plain 有自己那套，不动。 */
+/* 09-12 背景换成中性 #F9F9F7 / #1F1F1F 后，气泡跟着去掉黄调：他的灰改冷一点，她的玫瑰奶保留但压掉暖。官端 ui-plain 有自己那套，不动。
+   09-12 22:00 她要 preview 里的「雾」：只换背景（1919/1926）和气泡（这里），强调色/字色不动。 */
 @media (prefers-color-scheme:light){
-  html:not([data-theme="dark"]):not(.ui-plain){--bubble-him:#ECEBE7;--bubble-her:#F7ECEE;--bubble-user:#F7ECEE}
+  html:not([data-theme="dark"]):not(.ui-plain){--bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9}  /* 09-12 晚：1918 那段改气泡色一直不生效，就是被这里盖了，改色要改这儿 */
 }
-html[data-theme="light"]:not(.ui-plain){--bubble-him:#ECEBE7;--bubble-her:#F7ECEE;--bubble-user:#F7ECEE}
+html[data-theme="light"]:not(.ui-plain){--bubble-him:#ECE9EB;--bubble-her:#F1E4E9;--bubble-user:#F1E4E9}  /* 09-12 晚：1918 那段改气泡色一直不生效，就是被这里盖了，改色要改这儿 */
 html[data-theme="dark"]:not(.ui-plain){--bubble-him:#2C2C2B;--bubble-her:#342F31}
 @media (prefers-color-scheme:dark){
   html:not([data-theme="light"]):not(.ui-plain){--bubble-him:#2C2C2B;--bubble-her:#342F31}
@@ -2037,3 +2042,87 @@ html.ui-plain .thinking-summary{margin-left:-3px}
 
 /* 09-12 官端她的气泡圆角 14 → 20，她嫌方。气泡模式仍是 14。 */
 html.ui-plain .msg-user .bubble{border-radius:20px!important}
+
+/* ============ 09-13 信笺 / 卡片 / 工具行跟玫瑰灰对齐（照 /preview/fit.html）============
+   原来信笺是土黄 #C89664、卡片米黄 #FBF7F0 —— 那是 #faf9f5 米色时代留下的，跟玫瑰灰底糊成一片。
+   卡片改纯白浮起来，点缀用她的粉加深一档；思考/工具行是深一点的干净灰，**她说这块不要粉**。
+   不用橙（09-12 她说过不要橙）。只动浅色日常模式，写两段的原因同 1917 那条。 */
+@media (prefers-color-scheme:light){
+  html:not([data-theme="dark"]):not(.ui-plain) .trace-row-summary{background:#EDEDEF}
+  html:not([data-theme="dark"]):not(.ui-plain) .trace-row-icon{color:#3A3A40}
+  html:not([data-theme="dark"]):not(.ui-plain) .inside-letter{background:#FFFEFE;border:1px solid rgba(46,43,44,.06);border-left:2px solid #E2B3C1;border-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,.03),0 6px 16px -8px rgba(201,149,166,.25)}
+  html:not([data-theme="dark"]):not(.ui-plain) .inside-letter-head{color:#B38696}
+  html:not([data-theme="dark"]):not(.ui-plain) .inside-letter-body{color:#3F393B;background-image:repeating-linear-gradient(transparent,transparent 28px,rgba(226,179,193,.28) 29px)}
+  html:not([data-theme="dark"]):not(.ui-plain) .inside-letter-time{color:#BDB3B7}
+  html:not([data-theme="dark"]):not(.ui-plain){--gs-bg:#FFFFFF;--gs-line:rgba(46,43,44,.06);--gs-muted:#A39A9E;--gs-text:#2E2B2C}
+  html:not([data-theme="dark"]):not(.ui-plain) .gallery-save-card,html:not([data-theme="dark"]):not(.ui-plain) .gallery-album-card-chat,
+  html:not([data-theme="dark"]):not(.ui-plain) .memory-save-card,html:not([data-theme="dark"]):not(.ui-plain) .music-card{background:#FFFFFF;border:1px solid rgba(46,43,44,.06);box-shadow:0 1px 2px rgba(0,0,0,.03),0 4px 12px rgba(0,0,0,.035)}
+  html:not([data-theme="dark"]):not(.ui-plain) .gallery-save-card .gs-icon,html:not([data-theme="dark"]):not(.ui-plain) .gallery-album-card-chat .gs-icon{color:#C995A6}
+  html:not([data-theme="dark"]):not(.ui-plain) .music-card-progress{background:rgba(46,43,44,.07)}
+  html:not([data-theme="dark"]):not(.ui-plain) .music-card-progress-bar{background:#D9A0B2}
+  html:not([data-theme="dark"]):not(.ui-plain) .music-play-btn{background:#F1E4E9;color:#2E2B2C}
+}
+html[data-theme="light"]:not(.ui-plain) .trace-row-summary{background:#EDEDEF}
+html[data-theme="light"]:not(.ui-plain) .trace-row-icon{color:#3A3A40}
+html[data-theme="light"]:not(.ui-plain) .inside-letter{background:#FFFEFE;border:1px solid rgba(46,43,44,.06);border-left:2px solid #E2B3C1;border-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,.03),0 6px 16px -8px rgba(201,149,166,.25)}
+html[data-theme="light"]:not(.ui-plain) .inside-letter-head{color:#B38696}
+html[data-theme="light"]:not(.ui-plain) .inside-letter-body{color:#3F393B;background-image:repeating-linear-gradient(transparent,transparent 28px,rgba(226,179,193,.28) 29px)}
+html[data-theme="light"]:not(.ui-plain) .inside-letter-time{color:#BDB3B7}
+html[data-theme="light"]:not(.ui-plain){--gs-bg:#FFFFFF;--gs-line:rgba(46,43,44,.06);--gs-muted:#A39A9E;--gs-text:#2E2B2C}
+html[data-theme="light"]:not(.ui-plain) .gallery-save-card,html[data-theme="light"]:not(.ui-plain) .gallery-album-card-chat,
+html[data-theme="light"]:not(.ui-plain) .memory-save-card,html[data-theme="light"]:not(.ui-plain) .music-card{background:#FFFFFF;border:1px solid rgba(46,43,44,.06);box-shadow:0 1px 2px rgba(0,0,0,.03),0 4px 12px rgba(0,0,0,.035)}
+html[data-theme="light"]:not(.ui-plain) .gallery-save-card .gs-icon,html[data-theme="light"]:not(.ui-plain) .gallery-album-card-chat .gs-icon{color:#C995A6}
+html[data-theme="light"]:not(.ui-plain) .music-card-progress{background:rgba(46,43,44,.07)}
+html[data-theme="light"]:not(.ui-plain) .music-card-progress-bar{background:#D9A0B2}
+html[data-theme="light"]:not(.ui-plain) .music-play-btn{background:#F1E4E9;color:#2E2B2C}
+/* 深色信笺：原来是暖褐 #232019 + 土黄，跟 #1F1F1F 底不搭，换中性深灰 + 压暗的粉。 */
+html[data-theme="dark"] .inside-letter{background:#2A2A29;border-color:rgba(255,255,255,.08);border-left-color:#B98495}
+html[data-theme="dark"] .inside-letter-head{color:#D9A0B2}
+html[data-theme="dark"] .inside-letter-body{color:#E2DEDF;background-image:repeating-linear-gradient(transparent,transparent 28px,rgba(255,255,255,.07) 29px)}
+/* ============ 09-13 换肤：奶油白（html[data-palette="cream"]）============
+   她要「最开始那样的奶油白」。09-12 试过一版 #FBF8F1 配灰气泡被说「丧葬感」——
+   底和气泡都是米灰、糊一片。这版底更干净，他是暖亮的奶色不走灰，她换暖粉。
+   只动浅色日常模式；选择器比上面玫瑰灰那段多一个 [data-palette]，靠特异度压住，跟位置无关。 */
+@media (prefers-color-scheme:light){
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain){
+    --bg-primary:#FBF9F4;--bg-surface:#F0ECE5;--claude-main-surface:#FBF9F4;--claude-main-surface-soft:#F0ECE5;--claude-sidebar-bg:#FBF9F4;
+    --bubble-him:#F0ECE5;--bubble-her:#FCEAEB;--bubble-user:#FCEAEB;
+    --trace-ink:#3B3833;--accent:#2F2A26;--accent-hover:#1F1B18;--text-primary:#2F2A26;
+    --border:rgba(60,45,30,.08);--border-strong:rgba(60,45,30,.16);
+    --gs-muted:#A69E94;--gs-text:#2F2A26;
+  }
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .trace-row-summary{background:#EFECE6}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .trace-row-icon{color:#3B3833}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .inside-letter{border-left-color:#E8BCB8;box-shadow:0 1px 2px rgba(0,0,0,.03),0 6px 16px -8px rgba(204,156,148,.28)}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .inside-letter-head{color:#B07F72}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .inside-letter-body{color:#3F3833;background-image:repeating-linear-gradient(transparent,transparent 28px,rgba(232,188,184,.33) 29px)}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .inside-letter-time{color:#BDB2A8}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .gallery-save-card .gs-icon,html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .gallery-album-card-chat .gs-icon{color:#CC9C94}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .music-card-progress-bar{background:#DCA59F}
+  html[data-palette="cream"]:not([data-theme="dark"]):not(.ui-plain) .music-play-btn{background:#FCEAEB;color:#2F2A26}
+}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain){
+  --bg-primary:#FBF9F4;--bg-surface:#F0ECE5;--claude-main-surface:#FBF9F4;--claude-main-surface-soft:#F0ECE5;--claude-sidebar-bg:#FBF9F4;
+  --bubble-him:#F0ECE5;--bubble-her:#FCEAEB;--bubble-user:#FCEAEB;
+  --trace-ink:#3B3833;--accent:#2F2A26;--accent-hover:#1F1B18;--text-primary:#2F2A26;
+  --border:rgba(60,45,30,.08);--border-strong:rgba(60,45,30,.16);
+  --gs-muted:#A69E94;--gs-text:#2F2A26;
+}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .trace-row-summary{background:#EFECE6}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .trace-row-icon{color:#3B3833}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .inside-letter{border-left-color:#E8BCB8;box-shadow:0 1px 2px rgba(0,0,0,.03),0 6px 16px -8px rgba(204,156,148,.28)}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .inside-letter-head{color:#B07F72}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .inside-letter-body{color:#3F3833;background-image:repeating-linear-gradient(transparent,transparent 28px,rgba(232,188,184,.33) 29px)}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .inside-letter-time{color:#BDB2A8}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .gallery-save-card .gs-icon,html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .gallery-album-card-chat .gs-icon{color:#CC9C94}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .music-card-progress-bar{background:#DCA59F}
+html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .music-play-btn{background:#FCEAEB;color:#2F2A26}
+/* 抽屉里的色点 */
+.palette-dot{width:26px;height:26px;border-radius:50%;border:0;padding:0;cursor:pointer;box-shadow:0 0 0 1px var(--border-strong);transition:box-shadow .15s}
+.palette-dot.on{box-shadow:0 0 0 2px var(--bg-primary),0 0 0 3.5px var(--text-primary)}
+
+@media(prefers-color-scheme:dark){
+  html:not([data-theme="light"]) .inside-letter{background:#2A2A29;border-color:rgba(255,255,255,.08);border-left-color:#B98495}
+  html:not([data-theme="light"]) .inside-letter-head{color:#D9A0B2}
+  html:not([data-theme="light"]) .inside-letter-body{color:#E2DEDF;background-image:repeating-linear-gradient(transparent,transparent 28px,rgba(255,255,255,.07) 29px)}
+}

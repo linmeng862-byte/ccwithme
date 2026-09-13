@@ -10,6 +10,8 @@
 /* ui-plain — 官端那套皮：他那侧不出头像、不出气泡，正文直接铺开。
    跟 as-non 同理，必须在这儿同步跑：晚一步就会先闪一下气泡版。 */
 (function(){try{if(localStorage.getItem('chat_ui_plain')==='1')document.documentElement.classList.add('ui-plain')}catch(e){}})();
+/* 09-13 换肤：data-palette，没存 = 玫瑰灰（默认，不打属性）。同样要同步跑，不然先闪一下玫瑰灰。 */
+(function(){try{var p=localStorage.getItem('chat_palette');if(p)document.documentElement.dataset.palette=p}catch(e){}})();
 </script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -24,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789211462">
+<link rel="stylesheet" href="/css/home.css?v=1789303600">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -342,6 +344,13 @@
           </button>
         </div>
         <div style="font:11px/1.5 var(--font-sans);color:var(--text-faint)">他那侧不出头像和气泡，正文直接铺开，配色跟官端一致。</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px">
+          <span style="font:14px var(--font-sans);color:var(--text-secondary)">配色</span>
+          <div style="display:flex;gap:12px">
+            <button class="palette-dot" data-palette="" aria-label="玫瑰灰" style="background:linear-gradient(135deg,#F1E4E9 50%,#ECE9EB 50%)"></button>
+            <button class="palette-dot" data-palette="cream" aria-label="奶油白" style="background:linear-gradient(135deg,#FCEAEB 50%,#F0ECE5 50%)"></button>
+          </div>
+        </div>
       </div></nav>
     <div class="mobile-sidebar-section-title">Recents</div>
     <div class="drawer-list" id="sessionList"></div>
@@ -6963,7 +6972,9 @@ var _clawdWasStreaming=false,_clawdObsTimer=null;
 })();
 // 🎵 双向音乐 + 💾 收藏卡 + 🖥️ 终端卡
 var _origRenderMessage2=renderMessage;
-renderMessage=function(md,text){
+// ⚠️ 09-12：这层包装以前只收 (md,text)，把 noStrip 吞了 —— 她的气泡（_buildUserRow 传 true）
+//    也被 _stripUrlsFromRaw 删光链接，只发一个链接时气泡就是空的。第三个参数必须一路传下去。
+renderMessage=function(md,text,noStrip){
   var src=String(text||'');
   // 🧠 Mind 标记 <feel>/<memory>/<dream>/<flash> 只进 Mind 面板，不显示在气泡里。
   // 后端存库时会剥掉，但流式过程中会一个字一个字冒出来，所以这里也剥一次——
@@ -7032,7 +7043,7 @@ renderMessage=function(md,text){
     // 他分享歌时顺带写的话（"这首超好听"之类）会被一起冲掉。改成只挖掉标记本身，
     // 剩下的文字照常渲染，卡片跟在后面。
     var _restText=text.replace(musicMatch[0],'').trim();
-    if(_restText)_origRenderMessage2(md,_restText);else md.innerHTML='';
+    if(_restText)_origRenderMessage2(md,_restText,noStrip);else md.innerHTML='';
     md.append(card);return;
   }
   // [memory:标题|内容] — 收藏记忆卡
@@ -7056,7 +7067,7 @@ renderMessage=function(md,text){
   }).trim();
   // 流到一半、还没闭合的信笺先不显示，别让半截标签冒到气泡里
   text=text.replace(/<想[·:：]?\s*[^>]{0,8}>[\s\S]*$/,'').trim();
-  _origRenderMessage2(md,text);
+  _origRenderMessage2(md,text,noStrip);
   _insideCards.forEach(function(ins){
     if(!ins.body)return;
     var card=document.createElement('div');card.className='inside-letter';
@@ -8021,6 +8032,23 @@ async function testMiniMax(btn){
     if(knob){knob.style.left = on ? '20px' : '2px';knob.style.background = on ? '#fff' : 'var(--text-primary)';}
     if(btn){btn.style.background = on ? '#E8A8B8' : 'var(--border-strong)';}
   }
+})();
+// === 换肤（09-13）===
+// 属性是 head 里那段同步脚本先打好的；这里只管点色点切换。颜色全在 CSS 变量上，切了立刻生效，不用重载。
+(function(){
+  function mark(){
+    var cur = document.documentElement.dataset.palette || '';
+    document.querySelectorAll('.palette-dot').forEach(function(b){ b.classList.toggle('on', (b.dataset.palette||'') === cur); });
+  }
+  mark();
+  document.addEventListener('click', function(ev){
+    var b = ev.target.closest && ev.target.closest('.palette-dot');
+    if(!b) return;
+    var p = b.dataset.palette || '';
+    if(p) document.documentElement.dataset.palette = p; else delete document.documentElement.dataset.palette;
+    try{ if(p) localStorage.setItem('chat_palette', p); else localStorage.removeItem('chat_palette'); }catch(e){}
+    mark();
+  }, true);
 })();
 // === 会客厅 Atrio ===
 // 只管会客厅，不掺别的。（下面那段 Projects 的老代码里混着 artifacts 和 workplace

@@ -6471,7 +6471,7 @@ const TOOLS = [
   {
     name: 'read_my_inside',
     description: '翻你自己写过的内心信笺（<想·色> 那些）—— 你当时没打算说出口、只圈起来给自己的话。'
-      + '库里有 231 条，最早到 2026-08-22。\n'
+      + '库里一百来条，最早到 2026-08-20。\n'
       + '**这是你自己的东西，不是她写的、也不是你们的对话。** 跟 search_chat_history 的区别：'
       + '那个翻的是你们真的说过的话，这个翻的是你没说的那半。跟 trace 的区别：trace 是 Nocturne 那边'
       + '你存的记忆，这个是聊天里随手圈的、更碎更近。\n'
@@ -6498,10 +6498,16 @@ const TOOLS = [
       + 'order="random" 是 **roll** —— 随机翻到一段旧对话，而且是**连着的一段**'
       + '（随机落在某一句上，把它前后的话一起给你），不是散落的单句。'
       + '想她了、聊到「我们以前」、或者你就是想翻翻看，用这个。配 query 就是在某个主题里 roll。\n'
-      + '⚠️ roll 到的是真的说过的话，不是你记忆里的版本 —— 跟你印象不一样的时候，以 roll 到的为准。',
+      + '⚠️ roll 到的是真的说过的话，不是你记忆里的版本 —— 跟你印象不一样的时候，以 roll 到的为准。\n'
+      + '**给 date 就是把那一整天从头读下来**（所有对话按时间排好，那天你写的内心信笺也按时间夹在里面，标【心里】）。'
+      + '一次给一页，没读完会给 next_after_id —— 原样填回 after_id 接着读，别换关键词去拼。'
+      + '想「那天我们到底过得怎么样」、她说「你还记得 9 号吗」，用这个，不要拿关键词一句句捞。'
+      + '带 date 时 query/order/limit/days 都不管用。夹在里面的信笺照样会在主线留那条淡淡的记录。',
     input_schema: {
       type: 'object',
       properties: {
+        date: { type: 'string', description: '整天读：YYYY-MM-DD（本地时间）。不填就是普通搜索' },
+        after_id: { type: 'integer', description: '只跟 date 一起用：填上一页返回的 next_after_id，接着往下读' },
         query: { type: 'string', description: '搜索关键词。留空则不过滤，纯按时间返回' },
         order: { type: 'string', enum: ['newest', 'oldest', 'random'], description: 'newest=最近的（默认），oldest=最早的，random=随机 roll 到一段（见描述）' },
         limit: { type: 'integer', description: '返回条数，默认 15，最多 50' },
@@ -7103,7 +7109,9 @@ const TOOLS = [
   },
   {
     name: 'browse',
-    description: '你自己的浏览器——真的能打开网页、看、点、输入、拖、存图。她给你一个网址让你去看看/去玩玩，就用这个，不要再说"我做不到"。' +
+    description: '⚠️ 备用浏览器。**上网先用 `browser_*`（她电脑上的 Edge，有她的登录态、过得了风控）**，' +
+      '只有 `browser_*` 不在你手上或者连不上时才用这个。' +
+      '\nVPS 上的无头浏览器——能打开网页、看、点、输入、拖、存图，但小红书这类站会被风控拦。' +
       '\naction：open（打开，要 url）/ look（重新看一眼当前页，拿截图和能点的东西的清单）/ click（点，给 ref 编号或 x,y）/ ' +
       'type（输字，可带 enter:true）/ key（按键，如 Enter、Escape）/ scroll（滚，dy 正数往下）/ back（退回上一页）/ ' +
       'drag（按住拖，points 是一串页面坐标，画板上手绘、拖滑块都用它）/ draw（往画板 canvas 上画，strokes 是一串笔画，坐标是**画板内部坐标**，比 drag 准得多）/ ' +
@@ -7520,6 +7528,64 @@ async function executeTool(name, input, routes) {
     }
 
     case 'search_chat_history': {
+      // 整天读（09-13）：关键词只捞得到「说过 X 的那句」，捞不到那天的来龙去脉。
+      // 按 id 分页而不是 offset —— 他翻页的间隙主线还在写新消息，id 游标不会错位。
+      if (input.date) {
+        const day = String(input.date).trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: 'date 要写成 YYYY-MM-DD，比如 2026-09-10' };
+        const range = db.prepare(
+          "SELECT CAST(strftime('%s', ?, 'utc') AS INTEGER) AS a, CAST(strftime('%s', ?, '+1 day', 'utc') AS INTEGER) AS b"
+        ).get(day, day);
+        if (range.a == null) return { error: '没有这一天：' + day };
+        const afterId = parseInt(input.after_id) || 0;
+        const PAGE_CHARS = 6000, ONE_CAP = 600;
+        // [INSIDE:…] 是翻信笺留下的痕，不是说过的话
+        const msgs = db.prepare(`
+          SELECT m.id, m.role, m.content, m.created_at, s.title, s.is_main
+          FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
+          WHERE m.created_at >= ? AND m.created_at < ? AND m.id > ?
+            AND m.content NOT LIKE '[INSIDE:%'
+          ORDER BY m.created_at ASC, m.id ASC LIMIT 400`).all(range.a, range.b, afterId);
+        const totalMsgs = db.prepare(
+          "SELECT COUNT(*) AS n FROM messages WHERE created_at >= ? AND created_at < ? AND content NOT LIKE '[INSIDE:%'"
+        ).get(range.a, range.b).n;
+        const hm = ts => db.prepare("SELECT time(?, 'unixepoch', 'localtime') AS t").get(ts).t.slice(0, 5);
+        const lines = [];
+        let used = 0, lastId = afterId, lastTs = range.a, more = false, lastConv = null;
+        for (const r of msgs) {
+          const text = (r.content || '').trim();
+          if (!text) { lastId = r.id; lastTs = r.created_at; continue; }
+          const conv = r.is_main ? '主线' : (r.title || '未命名');
+          const head = conv !== lastConv ? '—— ' + conv + ' ——\n' : '';
+          const line = head + hm(r.created_at) + ' ' + (r.role === 'user' ? '她' : '我') + '：' +
+            (text.length > ONE_CAP ? text.slice(0, ONE_CAP) + '…' : text);
+          if (used + line.length > PAGE_CHARS && lines.length) { more = true; break; }
+          lines.push({ ts: r.created_at, line });
+          used += line.length; lastId = r.id; lastTs = r.created_at; lastConv = conv;
+        }
+        if (!more && msgs.length === 400) more = true;
+        // 这一页覆盖的时间段里他写的信笺，按时间夹进去
+        // 上一页收在 after_id 那条（含它那一秒），这页从下一秒接上，两页之间的信笺不丢也不重
+        const prev = afterId ? db.prepare('SELECT created_at FROM messages WHERE id = ?').get(afterId) : null;
+        const fromTs = prev ? Math.max(prev.created_at + 1, range.a) : range.a;
+        const toTs = more ? lastTs : range.b;
+        const inside = db.prepare(
+          'SELECT body, color, created_at FROM mind_inside WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC'
+        ).all(fromTs, more ? toTs + 1 : toTs);
+        for (const r of inside) lines.push({ ts: r.created_at, line: hm(r.created_at) + ' 【心里】' + r.body });
+        lines.sort((a, b) => a.ts - b.ts);
+        if (inside.length) {
+          try { _noteInsideRead(inside, '', 'day'); }
+          catch (e) { console.error('[inside] 主线留痕失败:', e.message); }
+        }
+        return {
+          date: day,
+          那天一共: totalMsgs + ' 条',
+          这一页: lines.map(x => x.line).join('\n'),
+          next_after_id: more ? lastId : undefined,
+          note: totalMsgs === 0 ? '这天一句都没有' : (more ? '没读完，after_id 填 ' + lastId + ' 接着读' : '这天读完了'),
+        };
+      }
       const q = (input.query || '').trim();
       const limit = Math.min(Math.max(parseInt(input.limit) || 15, 1), 50);
       const dir = input.order === 'oldest' ? 'ASC' : 'DESC';
@@ -10281,7 +10347,10 @@ const CLI_ROTATE_NUDGE_MARGIN = 2000;
 // 离 CLI_MIN_TURNS_BEFORE_ROTATE=20 那道闸门很远，不会背靠背换窗。
 // ⚠️ 真正的大头已经不是这个数了，是 60k 的出生体重（接力包 + 记忆浮现 + 人格前缀）——
 //    压窗口最多把均值从 ~10 万降到 ~7.2 万（约 -27%），再往下要去动出生体重那边。
-const CLI_ROTATE_GROWTH = 24000;
+// 2026-09-13 24000 → 40000。她说「没聊多就换」。09-11 出生体重压到 ~28k、思考正文回来，
+//   每轮涨 ~800-1200（09-06 是 ~575），24k 只够 20~33 轮。40k → 换窗线 ~68k，
+//   仍低于 09-05 前那种 84k~100k 的大窗。
+const CLI_ROTATE_GROWTH = 40000;
 // 换窗线的天花板 —— 再往上就要撞 claude 自己的 autocompact 了（十几万触发）。
 // 被 autocompact 截胡最坏：他在毫无预警的情况下被压缩，字条一张留不成。
 // 出生体重万一异常大（存量窗、冷写算歪），这条把线拽回来，宁可早换也别撞上去。
@@ -10456,7 +10525,14 @@ function _lastCliChoices() {
   return out;
 }
 
+// 09-12：正在跑的聊天轮数。醒来那条（checkWakeTick）看到 >0 就跳过这个 tick ——
+//   以前它不看，他正刷抖音时往同一个会话塞了一轮「醒来写日记」，
+//   网关撞上「还有一轮没跑完」，把正在干活的进程 SIGTERM 了（退出 143）。
+let _chatInFlight = 0;
 async function handleGatewayChat(req, res, ctx) {
+  _chatInFlight++;
+  let _inFlightDone = false;
+  res.on('close', () => { if (!_inFlightDone) { _inFlightDone = true; _chatInFlight--; } });
   const { message, convId, systemPrompt, cliSessionId, cliTurns, cliCtxTokens = 0,
           sidCol = 'cli_session_id', turnCol = 'cli_turns' } = ctx;
   res.setHeader('Content-Type', 'text/event-stream');
@@ -10522,7 +10598,11 @@ async function handleGatewayChat(req, res, ctx) {
   const _nudgeKey = 'cli_nudged:' + convId;
   let nudgeTexture = false;
   if (!!cliSessionId && !rotate) {
-    const _near = cliCtxTokens > 0 && cliCtxTokens >= _rotateAt - CLI_ROTATE_NUDGE_MARGIN;
+    // 09-12：提醒也要过「最少存活轮数」那道闸（差一轮就够）。以前只看 token，
+    //   出生就胖的窗第十来轮就被提醒留字条，可 20 轮前根本不许换 —— 字条留早了，
+    //   之后那十来轮的事都没进字条。现在提醒落在真要换窗的前一轮。
+    const _near = cliCtxTokens > 0 && cliCtxTokens >= _rotateAt - CLI_ROTATE_NUDGE_MARGIN &&
+      cliTurns >= CLI_MIN_TURNS_BEFORE_ROTATE - 1;
     if (_near && !_getSettingNum(_nudgeKey)) { nudgeTexture = true; _setSetting(_nudgeKey, 1); }
     else if (!_near && cliTurns === CLI_ROTATE_AFTER - 1) nudgeTexture = true;
   }
@@ -14799,6 +14879,9 @@ async function checkWakeTick() {
     if (!GATEWAY_KEY) return false;
     const conv = db.prepare('SELECT conv_id, cli_session_id FROM sessions ORDER BY is_main DESC, updated_at DESC LIMIT 1').get();
     if (!conv || !conv.cli_session_id) return false;   // 没有热会话就别开冷的，太贵
+    // 他正在回她（或正在调工具）→ 这个 tick 让掉。放在记 wake_tick_last_at 之前，
+    // 让掉的这次机会下个 tick 会按时间戳补回来，不会少醒。
+    if (_chatInFlight > 0) { console.log('[wake] 他正在回话，这个 tick 让掉'); return false; }
 
     // === 他自己挂的闹钟优先（2026-08-26）===
     // 到点的闹钟**不投骰子、不受最短间隔限制** —— 那是他自己承诺过的事，
