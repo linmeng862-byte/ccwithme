@@ -4047,6 +4047,36 @@ function _stackifyClaudeImages(md){
     _mountPhotoStack(row,items,'left');
   }
 }
+/* 09-13 她说「看见网站了，但没办法一边看一边跟他说话」—— 小框在聊天流里，
+   一往下翻就跑掉了。钉住 = 浮在顶上不动，聊天在底下照常滚，输入框照常用。
+   ⚠️ **绝对不能把 iframe 搬到别的容器里**：iframe 一换父节点浏览器就重新加载，
+      全景会从头转回去，她刚拖到的方向就没了。所以只给卡片自己换定位（position:fixed），
+      节点原地不动，播放器不受任何影响。
+   ⚠️ 卡片浮走后原地会塌一块、聊天往上跳 —— 留一个等高的占位撑着。
+   ⚠️ 一次只钉一个。她钉第二站，第一站自动松开。 */
+function _walkUnpin(){
+  var cur=document.querySelector('.walk-card.walk-pinned');if(!cur)return;
+  cur.classList.remove('walk-pinned');
+  var ph=document.querySelector('.walk-placeholder');if(ph)ph.remove();
+  var btn=cur.querySelector('.walk-pin');if(btn){btn.textContent='钉住';btn.setAttribute('aria-pressed','false')}
+  document.documentElement.classList.remove('walk-has-pinned');
+}
+function _walkPin(card){
+  if(!card)return;
+  if(card.classList.contains('walk-pinned')){_walkUnpin();return}
+  _walkUnpin();
+  var ph=document.createElement('div');ph.className='walk-placeholder';
+  ph.style.height=card.offsetHeight+'px';
+  card.parentNode.insertBefore(ph,card);
+  card.classList.add('walk-pinned');
+  var btn=card.querySelector('.walk-pin');if(btn){btn.textContent='收起';btn.setAttribute('aria-pressed','true')}
+  document.documentElement.classList.add('walk-has-pinned');
+}
+document.addEventListener('click',function(e){
+  var b=e.target.closest&&e.target.closest('.walk-pin');
+  if(!b)return;e.preventDefault();e.stopPropagation();
+  _walkPin(b.closest('.walk-card'));
+});
 function _buildUserRow(text,timestamp='',attachments=[]){const row=document.createElement('div');row.className='msg-user';row.dataset.raw=text;row.dataset.timestamp=timestamp||'';
   row.innerHTML=_avatarUser;
   var _isImage=function(a){if(a.is_image!==undefined)return a.is_image;var n=a.name||a.filename||a.path||'';return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(n)};
@@ -4461,6 +4491,7 @@ function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripU
       '<iframe class="walk-frame" loading="lazy" allowfullscreen referrerpolicy="no-referrer" src="'+wsrc+'"></iframe>'+
       (wsay?'<div class="walk-say">'+escHtml(wsay)+'</div>':'')+
       '<div class="walk-meta"><span>'+escHtml(wll)+(whd?' · 朝 '+escHtml(whd)+'°':'')+'</span>'+
+      '<button type="button" class="walk-pin" aria-pressed="false">钉住</button>'+
       '<a href="https://www.mapillary.com/app/?focus=photo&pKey='+encodeURIComponent(wid)+'" target="_blank" rel="noopener noreferrer">放大看 \u2197</a></div>'+
       '</div>'}
   if(walkHtml){src=src.replace(walkRe,'')}
@@ -5627,6 +5658,10 @@ function beginClaude(userText,userAttachments=[]){document.querySelector('.strea
         currentToolRow.style.display='none';currentToolRow.classList.add('tr-collapsed');
         if(currentToolRow.parentNode)currentToolRow.parentNode.insertBefore(toolBtn,currentToolRow);
       }
+      // 09-13 她报「他给我发的网址不渲染」：正文里的裸链接被 _stripUrlsFromRaw 删了，
+      //   而来源条以前只收 WebSearch/WebFetch 的 tool_result → 他手打的网址两头都不落，整个消失。
+      //   这里补扫一遍正文原文（raw），跟搜索来源合进同一个 Set 去重。
+      _collectUrls(raw,_sources);
       _renderSources(row,_sources);
       // HTML 代码块预览——补一刀确保 streaming 结束后也扫描
       _addHtmlPreviews(md);
@@ -6185,8 +6220,9 @@ function _renderToolCardsFromTraces(traces,row){
 // 证据跟卡片一样还在 messages.traces 里，所以照 _renderToolCardsFromTraces 的路子补一遍。
 // ⚠️ 扫的范围要跟流式那段一致（搜 `_collectUrls(ct,_sources)`）：所有 tool_result 的
 //    content 全文，不只搜索工具 —— 两边不一致就会出现刷新前后来源条不一样。
-function _renderSourcesFromTraces(traces,row){
-  if(!traces||!traces.length||!row)return;
+function _renderSourcesFromTraces(traces,row,text){
+  if(!row)return;
+  if(!traces)traces=[];
   const bucket=new Set();
   const nameById={};
   traces.forEach(function(t){if(t&&t.type==='tool_use'&&t.id)nameById[t.id]=t.name});
@@ -6196,6 +6232,8 @@ function _renderSourcesFromTraces(traces,row){
     if(nm!=='WebSearch'&&nm!=='WebFetch')return;
     _collectUrls(typeof t.content==='string'?t.content:JSON.stringify(t.content),bucket);
   });
+  // 跟流式那边一致：正文里他手打的网址也要进来（见 `_collectUrls(raw,_sources)`）
+  if(text)_collectUrls(String(text),bucket);
   _renderSources(row,bucket);
 }
 function _renderMessagesIntoFragment(slice){
@@ -6219,7 +6257,7 @@ function _renderMessagesIntoFragment(slice){
       try{_renderArtifactCards(row)}catch(e){console.warn('[history] artifact card:',e)}
       try{_renderClawdLabel(row)}catch(e){console.warn('[history] clawd label:',e)}
       try{_renderToolCardsFromTraces(m.traces,row)}catch(e){console.warn('[history] tool card:',e)}
-      try{_renderSourcesFromTraces(m.traces,row)}catch(e){console.warn('[history] sources:',e)}
+      try{_renderSourcesFromTraces(m.traces,row,m.text)}catch(e){console.warn('[history] sources:',e)}
       // 官端 ui-plain 的用量挂在她那条上、样式也不同，历史里不补，只补带头像那套
       try{if(m.usage&&!document.documentElement.classList.contains('ui-plain'))_attachUsageStats(row,m.usage)}catch(e){console.warn('[history] usage:',e)}
     }
