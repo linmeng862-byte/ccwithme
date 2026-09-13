@@ -5293,12 +5293,115 @@ async function _mindEmbedBackfillTick() {
       total += rows.length;
     }
     if (total) { _mindVecInvalidate(); console.log('[mind-embed] backfilled ' + total + ' rows'); }
+    // Mind 表补完了才轮到聊天原文段 —— 浮起那边是她在等的，这边只是搜索用
+    if (!total) await _chatChunkTick();
   } catch(e) {
     console.warn('[mind-embed] backfill error:', e.message);
   } finally {
     _mindEmbedBusy = false;
   }
   return total;
+}
+
+// ============================================================
+// 🔎 聊天原文分段向量 chat_chunks（2026-09-13）—— 只给 search_chat_history 用
+// ------------------------------------------------------------
+// 病根：他搜「租房 租的房子 外面住」，LIKE 整串一条不中；拆开能中，但换个说法
+// （她说的是「搬出去」）照样捞不到。所以原文要有一路按意思找。
+// 为什么按段不按句：消息长度中位数 16 字，「嗯嗯」「好」单句算不出意思。
+// 连着的几句拼成一段（同一对话、间隔 <30 分钟、≤6 句或 ≤400 字）。
+// ⚠️ 这张表**不进浮起**（_mindVecRows 不收它）—— 原文不自己冒出来的规矩没变，
+//    见下面 mind_corpus 那段「为什么不收 messages 原文」。这里只是他伸手时的索引。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conv_id TEXT,
+    first_id INTEGER NOT NULL,
+    last_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,   -- 段首那句的时间
+    body TEXT NOT NULL,
+    embedding TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_chunks_last ON chat_chunks(last_id);
+`);
+const CHUNK_MAX_MSGS = 6, CHUNK_MAX_CHARS = 400, CHUNK_GAP_SEC = 1800;
+const CHUNK_SETTLE_SEC = 3600;     // 最后没凑满的那段，放一小时再封口（话可能还没说完）
+// 09-13 在 96 段上量的：「租房 外面住」→「老公我租好房子了」0.61、「一个人在新房子」0.485；
+// 不相干的噪音顶到 0.50 左右，「蟑螂」最高 0.37。对的和噪音在 0.45~0.5 重叠，
+// 所以不硬切，给到 0.45 并把「像」的分数带出去让他自己判断。回填完再量一次。
+const CHAT_CHUNK_SIM_MIN = 0.45;
+
+// 切新段：从已切到的最大 id 往后接。id 单调，所以按 id 游标就不会重也不会漏。
+function _chatChunkBuild() {
+  const lastDone = db.prepare('SELECT COALESCE(MAX(last_id), 0) AS m FROM chat_chunks').get().m;
+  const rows = db.prepare(`SELECT id, conv_id, role, content, created_at FROM messages
+    WHERE id > ? AND content NOT LIKE '[INSIDE:%' ORDER BY id ASC LIMIT 2000`).all(lastDone);
+  if (!rows.length) return 0;
+  // 按对话分组；每组内按 id 连着切
+  const byConv = new Map();
+  rows.forEach(r => { if (!byConv.has(r.conv_id)) byConv.set(r.conv_id, []); byConv.get(r.conv_id).push(r); });
+  const now = Math.floor(Date.now() / 1000);
+  const out = [];
+  // 某个对话最后没封口的段会挡住游标：MAX(last_id) 之后的都得等它。
+  // 所以一旦有段没封口，id 比它大的段这一拍都不写，下一拍一起重切。
+  let blockFrom = Infinity;
+  byConv.forEach(list => {
+    let cur = [];
+    const flush = () => { if (cur.length) out.push(cur); cur = []; };
+    list.forEach(r => {
+      const text = String(r.content || '').trim();
+      if (!text) return;
+      const line = (r.role === 'user' ? '她：' : '我：') + text.slice(0, 300);
+      const prev = cur[cur.length - 1];
+      const len = cur.reduce((s, x) => s + x.line.length, 0);
+      if (prev && (r.created_at - prev.created_at > CHUNK_GAP_SEC || cur.length >= CHUNK_MAX_MSGS || len + line.length > CHUNK_MAX_CHARS)) flush();
+      cur.push({ id: r.id, conv_id: r.conv_id, created_at: r.created_at, line });
+    });
+    // 这一批读满了 LIMIT，末尾那段可能被截在半路，也当没封口
+    if (cur.length && (rows.length === 2000 || now - cur[cur.length - 1].created_at < CHUNK_SETTLE_SEC)) blockFrom = Math.min(blockFrom, cur[0].id);
+    else flush();
+  });
+  // 两个对话穿插着聊时，一段被挡住，跨过它的别的段也得一起等 —— 否则游标跳过去，
+  // 被挡那段的前半截下一拍就再也读不到了。反复收紧直到不动。
+  for (let changed = true; changed; ) {
+    changed = false;
+    out.forEach(c => {
+      if (c[c.length - 1].id >= blockFrom && c[0].id < blockFrom) { blockFrom = c[0].id; changed = true; }
+    });
+  }
+  const ins = db.prepare('INSERT INTO chat_chunks (conv_id, first_id, last_id, created_at, body) VALUES (?, ?, ?, ?, ?)');
+  let n = 0;
+  db.transaction(() => {
+    out.filter(c => c[c.length - 1].id < blockFrom).sort((a, b) => a[0].id - b[0].id).forEach(c => {
+      ins.run(c[0].conv_id, c[0].id, c[c.length - 1].id, c[0].created_at, c.map(x => x.line).join('\n'));
+      n++;
+    });
+  })();
+  return n;
+}
+
+var _chatChunkVecCache = { at: 0, rows: [] };
+async function _chatChunkTick() {
+  try { _chatChunkBuild(); } catch(e) { console.warn('[chat-chunk] build:', e.message); return 0; }
+  const rows = db.prepare("SELECT id, body FROM chat_chunks WHERE embedding IS NULL ORDER BY id DESC LIMIT ?").all(MIND_EMBED_BATCH);
+  if (!rows.length) return 0;
+  const vecs = await _embedTexts(rows.map(r => r.body), MIND_EMBED_BACKFILL_TIMEOUT_MS);
+  if (!vecs) return 0;
+  const upd = db.prepare('UPDATE chat_chunks SET embedding = ? WHERE id = ?');
+  db.transaction(() => rows.forEach((r, i) => upd.run(_vecPack(vecs[i]), r.id)))();
+  _chatChunkVecCache.at = 0;
+  return rows.length;
+}
+function _chatChunkVecRows() {
+  if (_chatChunkVecCache.at && (Date.now() - _chatChunkVecCache.at) < MIND_VEC_TTL_MS) return _chatChunkVecCache.rows;
+  const out = [];
+  db.prepare('SELECT id, conv_id, created_at, body, embedding FROM chat_chunks WHERE embedding IS NOT NULL').all().forEach(r => {
+    const v = _vecUnpack(r.embedding);
+    if (!v) return;
+    r.vec = v; delete r.embedding; out.push(r);
+  });
+  _chatChunkVecCache = { at: Date.now(), rows: out };
+  return out;
 }
 
 // ============================================================
@@ -6818,7 +6921,7 @@ const TOOLS = [
       properties: {
         date: { type: 'string', description: '整天读：YYYY-MM-DD（本地时间）。不填就是普通搜索' },
         after_id: { type: 'integer', description: '只跟 date 一起用：填上一页返回的 next_after_id，接着往下读' },
-        query: { type: 'string', description: '搜索关键词。留空则不过滤，纯按时间返回' },
+        query: { type: 'string', description: '想找的事。可以空格隔开几个说法（「租房 搬出去 外面住」），中得越多排越前；另外会按意思再找几段连着的对话放在「按意思找到的」里，换了说法也捞得到。留空则纯按时间返回' },
         order: { type: 'string', enum: ['newest', 'oldest', 'random'], description: 'newest=最近的（默认），oldest=最早的，random=随机 roll 到一段（见描述）' },
         limit: { type: 'integer', description: '返回条数，默认 15，最多 50' },
         days: { type: 'integer', description: '只搜最近 N 天，不填则搜全部' }
@@ -7942,7 +8045,13 @@ async function executeTool(name, input, routes) {
       const dir = input.order === 'oldest' ? 'ASC' : 'DESC';
       const conds = [];
       const filterParams = [];
-      if (q) { conds.push('m.content LIKE ?'); filterParams.push('%' + q + '%'); }
+      // 09-13：以前是整串 LIKE —— 他习惯打「租房 租的房子 外面住」，原文里不可能连着出现，
+      // 次次 0 条。现在拆词，中任一个就算，下面按中了几个排。
+      const terms = q ? [...new Set(q.split(/[\s,，、;；|]+/).filter(Boolean))].slice(0, 8) : [];
+      if (terms.length) {
+        conds.push('(' + terms.map(() => 'm.content LIKE ?').join(' OR ') + ')');
+        terms.forEach(t => filterParams.push('%' + t + '%'));
+      }
       if (input.days) {
         conds.push("m.created_at >= strftime('%s','now','-' || ? || ' days')");
         filterParams.push(parseInt(input.days));
@@ -7980,20 +8089,68 @@ async function executeTool(name, input, routes) {
         };
       }
 
-      const rows = db.prepare(`
-        SELECT m.role, m.content, m.created_at, s.title, s.is_main
+      // 有词的时候多捞一些候选，按「中了几个词」重排再截 —— 同分的保持时间序
+      let rows = db.prepare(`
+        SELECT m.id, m.conv_id, m.role, m.content, m.created_at, s.title, s.is_main
         FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id
-        ${where} ORDER BY m.created_at ${dir}, m.id ${dir} LIMIT ?`).all(...filterParams, limit);
+        ${where} ORDER BY m.created_at ${dir}, m.id ${dir} LIMIT ?`).all(...filterParams, terms.length > 1 ? 1000 : limit);
+      if (terms.length > 1) {
+        const lower = terms.map(t => t.toLowerCase());
+        rows.forEach((r, i) => { const c = String(r.content || '').toLowerCase(); r._hit = lower.filter(t => c.includes(t)).length; r._i = i; });
+        rows.sort((a, b) => (b._hit - a._hit) || (a._i - b._i));
+        rows = rows.slice(0, limit);
+      }
       // 本地时间（VPS 时区 08-30 起为 Asia/Singapore，+08），别用 toISOString——那是 UTC，会差 8 小时
       const fmt = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') AS t").get(ts).t.slice(0, 16);
-      const results = rows.map(r => ({
-        when: fmt(r.created_at),
-        who: r.role === 'user' ? '她' : '我',
-        conversation: r.is_main ? '主线' : (r.title || '未命名'),
-        text: (r.content || '').length > 400 ? r.content.slice(0, 400) + '…' : r.content,
-      }));
+      const cut = (s, n) => { s = s || ''; return s.length > n ? s.slice(0, n) + '…' : s; };
+      const who = r => r.role === 'user' ? '她' : '我';
+      // 单句没有来龙去脉 —— 前 8 条各带上前后一句
+      const prevQ = db.prepare("SELECT role, content FROM messages WHERE conv_id = ? AND id < ? AND content NOT LIKE '[INSIDE:%' ORDER BY id DESC LIMIT 1");
+      const nextQ = db.prepare("SELECT role, content FROM messages WHERE conv_id = ? AND id > ? AND content NOT LIKE '[INSIDE:%' ORDER BY id ASC LIMIT 1");
+      const results = rows.map((r, i) => {
+        const o = {
+          when: fmt(r.created_at),
+          who: who(r),
+          conversation: r.is_main ? '主线' : (r.title || '未命名'),
+          text: cut(r.content, 400),
+        };
+        if (terms.length > 1) o.中了 = r._hit + '/' + terms.length;
+        if (q && i < 8) {
+          const p = prevQ.get(r.conv_id, r.id), n = nextQ.get(r.conv_id, r.id);
+          if (p) o.前一句 = who(p) + '：' + cut(p.content, 150);
+          if (n) o.后一句 = who(n) + '：' + cut(n.content, 150);
+        }
+        return o;
+      });
       const total = db.prepare(`SELECT COUNT(*) AS n FROM messages m ${where}`).get(...filterParams).n;
-      return { results, returned: results.length, total_matches: total, order: dir === 'ASC' ? 'oldest' : 'newest' };
+      const out = { results, returned: results.length, total_matches: total, order: dir === 'ASC' ? 'oldest' : 'newest' };
+      if (terms.length > 1) {
+        out.每个词 = terms.map(t => t + ' ' + db.prepare('SELECT COUNT(*) AS n FROM messages m WHERE m.content LIKE ?' +
+          (input.days ? " AND m.created_at >= strftime('%s','now','-' || ? || ' days')" : '')).get(...['%' + t + '%'].concat(input.days ? [parseInt(input.days)] : [])).n).join(' · ');
+      }
+      // 按意思找：原文分段的向量（chat_chunks）。字面换个说法就捞不到的，靠这一路。
+      // 服务不在 / 还没回填 → 这一路空着，字面结果照给。
+      if (q) {
+        const qv = await _embedTexts([q], 5000);
+        if (qv) {
+          const qvec = Float32Array.from(qv[0]);
+          const since = input.days ? Math.floor(Date.now() / 1000) - parseInt(input.days) * 86400 : 0;
+          const hitIds = rows.map(r => r.id);
+          const sem = _chatChunkVecRows()
+            .filter(c => c.created_at >= since && !hitIds.some(id => id >= c.first_id && id <= c.last_id))
+            .map(c => ({ c, sim: _vecDot(qvec, c.vec) }))
+            .filter(x => x.sim >= CHAT_CHUNK_SIM_MIN)
+            .sort((a, b) => b.sim - a.sim).slice(0, 5);
+          if (sem.length) {
+            const convQ = db.prepare('SELECT title, is_main FROM sessions WHERE conv_id = ?');
+            out.按意思找到的 = sem.map(x => {
+              const s = convQ.get(x.c.conv_id) || {};
+              return { when: fmt(x.c.created_at), conversation: s.is_main ? '主线' : (s.title || '未命名'), 像: Math.round(x.sim * 100) / 100, 这一段: x.c.body };
+            });
+          }
+        }
+      }
+      return out;
     }
     // Nocturne 代理：只暴露这两个，不把 Core 的 50 个工具（8.8k token）全接进来
     case 'trace': {
