@@ -4448,7 +4448,23 @@ function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripU
   //   ⚠️ 不搬 DOM —— 把图挪到气泡外面就要在 `_splitMessages` 的 cloneNode 那串清理里再加一条，
   //   那颗雷（整条消息的元素被复印进每一片）已经炸过四回了。打标 + :has 不动结构。
   //   ⚠️ 流式渲染时 md 还是游离节点，closest('.bubble') 拿不到，所以标只能打在 md 自己身上。
-  if(imgsHtml){src=src.replace(imgRe,'');md.innerHTML=imgsHtml+(src.trim()?'':'');_fixImgSrcs(md);_stackifyClaudeImages(md);if(!src.trim()){md.dataset.imagesOnly='1';return}delete md.dataset.imagesOnly}else{delete md.dataset.imagesOnly}var cmdRe=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var cmdHtml='',cmdMatch;cmdRe.lastIndex=0;while((cmdMatch=cmdRe.exec(src))!==null){var cid=cmdMatch[1],ctype=cmdMatch[2],ctitle=cmdMatch[3];var cmdIcon=_cmdIconSvg(ctype);cmdHtml+='<div class="cmd-capsule" data-cmd-id="'+cid+'" data-cmd-type="'+ctype+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer" onclick="openCmdCapsule(\''+cid+'\')"><span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span></div>'}if(cmdHtml){src=src.replace(cmdRe,'')}if(window.marked){try{var markedResult=marked.parse(src,{breaks:true,gfm:true});md.innerHTML=(imgsHtml||'')+(cmdHtml||'')+markedResult.trimEnd();md.querySelectorAll('a[href]').forEach(function(a){var h=a.getAttribute('href');if(h&&/^https?:\/\//.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});
+  if(imgsHtml){src=src.replace(imgRe,'');md.innerHTML=imgsHtml+(src.trim()?'':'');_fixImgSrcs(md);_stackifyClaudeImages(md);if(!src.trim()){md.dataset.imagesOnly='1';return}delete md.dataset.imagesOnly}else{delete md.dataset.imagesOnly}/* 09-13 她要的「实景带我走」：`[WALK:影像id|朝向|纬度,经度|这一站的话]`
+     → 一个能拖能转的全景小框。图**不经过他** —— iframe 直接从 Mapillary 拉，
+     他只发坐标（工具在 lib/walk.js）。他截图给她看那条路走不通，理由写在那个文件开头。
+     ⚠️ 播放器 embed 不带 token，密钥只活在服务端，别往这儿搬。
+     ⚠️ iframe 懒加载：一条消息里可能有好几站，全部同时开等于同时拉几个全景。 */
+  var walkRe=/\[WALK:([^|\]]*)\|([^|\]]*)\|([^|\]]*)\|([^\]]*)\]/g;var walkHtml='',walkMatch;walkRe.lastIndex=0;
+  while((walkMatch=walkRe.exec(src))!==null){var wid=walkMatch[1].trim(),whd=walkMatch[2].trim(),wll=walkMatch[3].trim(),wsay=walkMatch[4].trim();
+    if(!/^[A-Za-z0-9_-]+$/.test(wid))continue;
+    var wsrc='https://www.mapillary.com/embed?image_key='+encodeURIComponent(wid)+'&style=photo';
+    walkHtml+='<div class="walk-card">'+
+      '<iframe class="walk-frame" loading="lazy" allowfullscreen referrerpolicy="no-referrer" src="'+wsrc+'"></iframe>'+
+      (wsay?'<div class="walk-say">'+escHtml(wsay)+'</div>':'')+
+      '<div class="walk-meta"><span>'+escHtml(wll)+(whd?' · 朝 '+escHtml(whd)+'°':'')+'</span>'+
+      '<a href="https://www.mapillary.com/app/?focus=photo&pKey='+encodeURIComponent(wid)+'" target="_blank" rel="noopener noreferrer">放大看 \u2197</a></div>'+
+      '</div>'}
+  if(walkHtml){src=src.replace(walkRe,'')}
+  var cmdRe=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var cmdHtml='',cmdMatch;cmdRe.lastIndex=0;while((cmdMatch=cmdRe.exec(src))!==null){var cid=cmdMatch[1],ctype=cmdMatch[2],ctitle=cmdMatch[3];var cmdIcon=_cmdIconSvg(ctype);cmdHtml+='<div class="cmd-capsule" data-cmd-id="'+cid+'" data-cmd-type="'+ctype+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer" onclick="openCmdCapsule(\''+cid+'\')"><span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span></div>'}if(cmdHtml){src=src.replace(cmdRe,'')}if(walkHtml&&!src.trim()){md.innerHTML=(imgsHtml||'')+walkHtml;md.dataset.imagesOnly='1';return}if(window.marked){try{var markedResult=marked.parse(src,{breaks:true,gfm:true});md.innerHTML=(imgsHtml||'')+(walkHtml||'')+(cmdHtml||'')+markedResult.trimEnd();md.querySelectorAll('a[href]').forEach(function(a){var h=a.getAttribute('href');if(h&&/^https?:\/\//.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});
   // ── Journey Cards: 检测 <journey> 标签 ──
   if(/<journey>/.test(src)&&typeof _JC!=='undefined'&&_JC.parseJourneyTags){var jcParts=_JC.parseJourneyTags(src);if(jcParts.length>1||jcParts[0].type==='journey'){(function(){var html='';jcParts.forEach(function(p){if(p.type==='text'&&p.text.trim()){try{var m=marked.parse(p.text,{breaks:true,gfm:true});html+=m.trimEnd()}catch(e){html+='<p>'+_jcEscape(p.text)+'</p>'}}else if(p.type==='journey'){html+=_JC.renderCard({id:p.id,title:'...',stops:[]})}});md.innerHTML=html||md.innerHTML;
       // 异步加载真实 journey 数据替换占位卡片

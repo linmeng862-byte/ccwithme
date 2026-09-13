@@ -8,6 +8,8 @@ const iconv = require('iconv-lite');
 const sharp = require('sharp');   // 表情包提首帧用
 // 他自己的浏览器（2026-09-12）。**不是分身**，理由和边界见 lib/browse.js 开头那段。
 const browse = require('./lib/browse');
+// 带她走实景的那条路（2026-09-13）。跟 browse 是两件事：browse 是他的眼睛，walk 是她的。
+const walk = require('./lib/walk');
 const os = require('os');
 let neteaseApi = null;
 try { neteaseApi = require('NeteaseCloudMusicApi'); } catch(e) {}
@@ -7270,6 +7272,31 @@ const TOOLS = [
       required: ['action']
     }
   },
+  // 带她走一段路（2026-09-13 她要的）。**不是 browse 的截图**——她说想要「在路上走的感觉」，
+  //   而无头 chromium 跑全景是 WebGL 软件渲染，一帧好几秒，还得每帧回传给他看（烧 token），
+  //   走两步就卡死。所以反过来：图不经过他，直接在她屏幕上放；他只发坐标。
+  //   她那边是能拖能转的真全景，不是他的一张死图。实现见 lib/walk.js。
+  {
+    name: 'walk',
+    description: '带她走一段实景的路。给一个经纬度，她的聊天里就出现一个全景小框——她能拖着看四周，' +
+      '不是截图，是真的站在那儿。\n你一次给一站，连着几站就是一段路。每站可以带一句话（`say`），' +
+      '想说得多就在正文里说，想发语音就照常用 <voice>。' +
+      '\n返回里有一行 `[WALK:…]` 标记：**原样抄进你的回话正文**，前端才会把小框画出来（跟 [IMAGE:] 一个用法）。' +
+      '\n⚠️ 影像来自 Mapillary（街拍众包）。大城市街道覆盖不错，乡下和小路可能一张都没有——' +
+      '找不到就会告诉你最近的一张有多远，换个点再试，别硬凑。' +
+      '\n⚠️ 别一口气刷十站。走路是慢的，一站一站来，中间说说话，等她看完再往前。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        lat: { type: 'number', description: '纬度' },
+        lng: { type: 'number', description: '经度' },
+        heading: { type: 'number', description: '朝哪边看，0-360 度（0 正北，90 正东）。不给就用影像原本的朝向。' },
+        say: { type: 'string', description: '这一站的一句话，显示在小框下面（可选，正文里说也行）' },
+        radius: { type: 'number', description: '找影像的半径，米（默认 100，最大 1000）' }
+      },
+      required: ['lat', 'lng']
+    }
+  },
   // ⚠️ go_online 已摘除（2026-09-10，她要的）。原话：「不要 go_online 了，反正那个也是分身，
   //    你不是他自己」—— 它是异步派一个分身出去逛，回来汇报，而她要的是**他本人**去看。
   //    能力没删：VPS 上那个无头浏览器（09-07 调通的那份配置）现在以 `solo` 挂在他自己手上，
@@ -8837,6 +8864,16 @@ async function executeTool(name, input, routes) {
         photos: photos.map(function(p) { return { id: p.id, url: p.url, caption: p.caption || '', album_title: p.album_title, created_at: p.created_at }; }),
         count: photos.length
       };
+    }
+    // 带她走一段实景（09-13）。这儿只做转发，找影像的活在 lib/walk.js。
+    //   ⚠️ 不返回任何图片给他看 —— 全景是给**她**看的，他只负责挑地方和说话。
+    //      真让他看，一站一张图就是几千 token，走十站就把一窗烧掉了。
+    case 'walk': {
+      try {
+        return await walk.step(input || {});
+      } catch (e) {
+        return { error: String(e.message || e), is_error: true };
+      }
     }
     // 他自己的浏览器（09-12）。实现在 lib/browse.js —— 这儿只做两件事：
     //   ① 把下下来的图落到相册图片目录（**不建相册条目**，不污染她的相册），
