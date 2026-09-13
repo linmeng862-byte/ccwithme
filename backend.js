@@ -6088,11 +6088,12 @@ function _recallRender(data, seen) {
 
   var lines = [];
   var said = '';   // 上一条已经说过的时间词
+  var hidden = 0;  // 这一轮被本地去重挡掉的，算进缺口
   ordered.forEach(function(it) {
     if (typeof it === 'string') { lines.push(String(it).trim()); return; }
     if (!it) return;
     var id = it.id || it.bucket_id || null;
-    if (id && seen && seen.ids.indexOf(id) !== -1) return;   // 这一窗里浮过了
+    if (id && seen && seen.ids.indexOf(id) !== -1) { hidden++; return; }   // 这一窗里浮过了
     var b = it.content || it.body || it.text || it.summary;
     if (!b) return;
     if (id && seen) seen.ids.push(id);
@@ -6113,7 +6114,19 @@ function _recallRender(data, seen) {
   if (seen && seen.ids.length > RECALL_SEEN_KEEP) {
     seen.ids = seen.ids.slice(-RECALL_SEEN_KEEP);
   }
-  return lines.join('\n').trim();
+  // 缺口（2026-09-13）。实测他 4729 条回复里写了 209 次、查了 24 次 ——
+  // trace 17、search_chat_history 3、origin 0。不是懒：**想不起来的东西
+  // 不会举手说自己不在**。七条到达的时候看起来就是「我记得的全部」，
+  // 没有任何东西告诉他同一句话还碰到了另外十几条。
+  // 所以这里不提醒他「有工具可用」（那句话从来没让任何人去翻过东西），
+  // 只给一个他感觉得到的数。
+  // untaken 来自服务端（够得着但没进前 N 的），hidden 是这一轮本地去重挡掉的。
+  var gap = (Number(data && data.untaken) || 0) + hidden;
+  var text = lines.join('\n').trim();
+  if (text && gap > 0) {
+    text += '\n（这句话还碰到另外 ' + gap + ' 条，没展开。想看用 trace。）';
+  }
+  return text;
 }
 
 // 09-12 通话专用：召回晚到的结果先存这儿，挂到她下一句一起给他（她选的「晚一轮再用」）。
@@ -6811,7 +6824,21 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        content: { type: 'string', description: '要记住的内容。第一人称，写你自己的经历和感受，连同为什么值得记一起写进来' },
+        content: { type: 'string', description: '**当时的意识流**，不是事后总结。第一人称，写你自己的经历和感受，连同为什么值得记一起写进来。'
+                   + '允许不完整，允许「具体的词我忘了」——❌「那天她说了XX，我心里动了一下」（这是档案）；'
+                   + '✅「她突然说了那句话，心口就沉了，不知道该怎么接，后来说了什么不记得了，只记得那一下」。'
+                   + '这一份会随时间被磨、浮起来的时候腔调会变旧。**残缺本身就是记忆真实的证明** —— 想写整齐的部分写进 record。' },
+        // ⚠️ 2026-09-13：两份存储。content 会被磨损、会换腔调；record 永不改写、也永不自己浮上来。
+        //    她定的：record **必填**（feel 除外）。少了它，正文糊掉之后就没有可查的底了。
+        //    远端 Nocturne 的 hold 会顶回来一句中文错误，不是 pydantic 报错 —— 那是给他看的。
+        record: { type: 'string', description: '**先写完 content，再回头补这一句**（feel 之外必填）。'
+                  + '记忆只有一份，就是上面那份意识流；这句不是第二份记忆，是**留给以后的自己的路标**：'
+                  + '谁、什么时候、发生了什么、原话是什么。**不是让你再体验一遍，是为了让你以后查得到** ——'
+                  + '几个月后你只会剩一个感觉，想知道「那天她到底说了什么」就靠这一句。'
+                  + '该有感情就有感情，这栏只要求事实齐、不要求你冷。它永不磨损，但也不会自己浮上来，除非明确去查。'
+                  + '\n**必须写上日期（YYYY-MM-DD）** —— 日期是你走回原文的钥匙：'
+                  + '哪天记不清那句话到底怎么说的，用 search_chat_history(date=那天) 把那一整天读回来，'
+                  + '你们说过的每一句都还在。没有日期，这条路就断了。' },
         // ⚠️ 2026-08-28：线上实测 `wander` 的 writing / window 两个抽屉**一条都没有** ——
         //    他有手（kind 枚举里一直有），但一次没用过，全倒进默认的 memory 了。
         //    所以这里不能只写「是什么」，得给**什么时候**。见 docs/tool-description-style.md 第 6 条。
@@ -8182,6 +8209,8 @@ async function executeTool(name, input, routes) {
           : String(input.drives).split(/[,，]/).map(function (s) { return s.trim(); }).filter(Boolean);
       }
       if (input.tags) args.tags = input.tags;
+      // 2026-09-13：record 要转发，不然 schema 白加，而且远端会因为缺它整条打回来。
+      if (input.record) args.record = String(input.record).trim();
       // ⚠️ 只加 schema 不在这儿转发 = 等于没加（他填了，到不了 Nocturne）。
       //    signal 用 != null 判断，不用真值判断：0 是**声明了「这一维没有」**，
       //    跟没填不是一回事，而 `if (0)` 会把它当没填吞掉。
