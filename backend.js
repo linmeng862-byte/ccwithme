@@ -2977,30 +2977,45 @@ app.post('/api/call/attach-voice', auth, (req, res) => {
   if (!convId || !/^[a-zA-Z0-9_]+$/.test(fileId) || !text) {
     return res.status(400).json({ error: 'bad request' });
   }
-  // ⚠️ 只认最近 12 条里内容一模一样、且还没挂过音频的那条。
-  //    按 role 取「最后一条」不行：TTS 上传是异步的，慢一拍回来时后面
-  //    可能已经又说了一句，会挂错人。
+  _attachCallVoice(convId, role, fileId, dur, text, res, 0);
+});
+
+// ⚠️ 只认最近 12 条里内容一模一样、且还没挂过音频的那条。
+//    按 role 取「最后一条」不行：TTS 上传是异步的，慢一拍回来时后面
+//    可能已经又说了一句，会挂错人。
+// 09-13：以前对不上就立刻兜底，兜底又拿 text 去**覆盖** content ——
+//    把她真正说的那句从库里抹掉了（#9182「不不不不这个声音是你给我的…」
+//    被改写成了 "Prom"），而本该点亮的那条一辈子是纯文字。现在两处都改：
+//    ① 对不上先等一等再找（她排队的那一轮慢一拍才落库，这是最常见的原因）；
+//    ② 真要兜底也只**加壳不改字**，并且窗口从 3 分钟收到 20 秒。
+function _attachCallVoice(convId, role, fileId, dur, text, res, tries) {
   const recent = db.prepare(
     'SELECT id, content, created_at FROM messages WHERE conv_id = ? AND role = ?' +
     ' ORDER BY id DESC LIMIT 12'
   ).all(convId, role);
+  const attached = c => c.indexOf('[VOICEC:') === 0;
   let row = recent.find(r => r.content === text);
-  // 兜底：内容对不上（前后端清洗差一点点就会这样），退而求其次取「最近 3 分钟内、
-  // 还没挂过音频的最后一条」。宁可挂到相邻那条，也不要整句没有语音。
   if (!row) {
-    row = recent.find(r => r.content.indexOf('[VOICEC:') !== 0 &&
+    // 那句可能还没写进库：排队的那一轮要等上一轮跑完才落。等一等比兜底准得多。
+    if (tries < 4) {
+      setTimeout(() => _attachCallVoice(convId, role, fileId, dur, text, res, tries + 1), 1200);
+      return;
+    }
+    row = recent.find(r => !attached(r.content) &&
       r.content.indexOf('[CALL') !== 0 &&
-      (Date.now() / 1000 - r.created_at) < 180);
-    if (row) console.log('[call] 语音条按时间兜底挂到 #' + row.id + '（内容没精确对上）');
+      (Date.now() / 1000 - r.created_at) < 20);
+    if (row) console.log('[call] 语音条按时间兜底挂到 #' + row.id + '（内容没精确对上，原文保留）');
   }
   if (!row) {
     console.log('[call] 语音条没挂上：' + role + ' 找不到对应消息 ' + JSON.stringify(text.slice(0, 40)));
     return res.json({ ok: false, reason: 'no match' });
   }
+  // ⚠️ 兜底时留 row 自己的原文，别拿 text 覆盖 —— 覆盖等于把她说过的话删了。
+  const body = row.content === text ? text : row.content;
   db.prepare('UPDATE messages SET content = ? WHERE id = ?')
-    .run('[VOICEC:' + fileId + '|' + (dur || '0:01') + ']' + text, row.id);
+    .run('[VOICEC:' + fileId + '|' + (dur || '0:01') + ']' + body, row.id);
   res.json({ ok: true, id: row.id });
-});
+}
 
 // 挂断的事实要在**下一轮**递给他。
 // ⚠️ 库里那条 [CALL:...] 他永远读不到：网关模式下递进去的只有她这一轮说的话，

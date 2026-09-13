@@ -3032,8 +3032,14 @@ function _onVadLevel(rms){
 }
 function _vadSpeechStart(){
   _vadSpeaking=true;_vadSpeechMin=1;_vadLastHotAt=Date.now();_vadSilenceSince=0;
-  if(!_segRec)_startSeg();          // 语音条从她真开口那一刻起录
+  // ⚠️ 09-13：这行以前没判 _callSpeaking（旁边 rec.onspeechstart 判了，这儿漏了）。
+  //    他念着的时候 VAD 被回音顶热 → 在这儿新开一段录音，而 _pauseSeg 早在他开口
+  //    那一刻就调过了，新段的 _segPausedAt 是 0 —— 他后面念的十几秒全算进她那条，
+  //    「只说了 5 秒标 11 秒」「亲亲我 0:33」就是这么来的。他没念完就不起录。
+  // ⚠️ 打断要先判：_bargeIn 会把 _callSpeaking 落回 false，这样她真打断时
+  //    下面那行照常起录（顺序反过来的话，打断的那句就没有语音条了）。
   if(_callSpeaking)_bargeIn();
+  if(!_segRec&&!_callSpeaking)_startSeg();   // 语音条从她真开口那一刻起录
 }
 function _vadSpeechEnd(){
   _vmEnd=Date.now();   // 分段延迟：她嘴停的那一刻
