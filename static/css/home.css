@@ -1503,6 +1503,14 @@ html.as-non .msg-claude.streaming .claude-trail-logo{align-self:flex-end;margin:
    `padding:9px 15px!important` 盖掉 —— 背景和圆角脱了，13px 内边距还在，
    Playwright 量出来是 `7px 13px`。任何要脱壳的 .bubble 变体都得带 !important。 */
 .msg-user .bubble.sticker-only,.msg-claude .bubble.sticker-only{padding:0!important;margin:0!important}
+/* 09-13 他从网页发回来的图（browse 的 save_shot → [IMAGE:]）：整条只有图的时候
+   同样脱壳，图裸着挂在那儿，不是气泡里的一张插图。脱壳变体一律要 !important，
+   理由见上面那段。图片自己的 max-width 在 index.html 里已经改成 min(320px,100%)。 */
+.msg-claude .bubble:has(.md[data-images-only]),
+.msg-user .bubble:has(.md[data-images-only]){
+  background:none!important;padding:0!important;border:none!important;
+  box-shadow:none!important;max-width:none!important;border-radius:0!important;
+}
 
 /* 🚨 她发图那条消息里，文字气泡被压成一竖条（08-22 Playwright 拍下来的）：
    有图片时前端会包一层 .msg-user-col，图片和气泡竖着排在里面。
