@@ -2161,3 +2161,55 @@ html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .music-play-btn{ba
   border-radius:999px;padding:3px 11px;font:12px/1.3 var(--font-sans);cursor:pointer;flex:none}
 .walk-pin[aria-pressed="true"]{background:var(--text-primary);color:var(--bg-primary);border-color:transparent}
 .walk-meta{gap:8px}
+
+/* ============ 09-13 换肤：暖米白 + Claude 橙（html[data-palette="warm"]）============
+   她要「改配色之前那一版」—— git 上是 a93f2d8（09-12 10:37），
+   09-12 10:45 起那一连串配色改动之前的最后一刻。**值全是从那个 commit 里取的，不是眼估的。**
+
+   跟另外两套最大的差别在 --accent：玫瑰灰和奶油白都是深墨，这套是 Claude 橙 #DA7756。
+   橙不只是个色号 —— mind 行的图标、音乐进度条这些「原来是橙的」地方都跟着它走，
+   09-12 之后被一条条硬编码成深墨/粉了，所以下面要一条条压回去。
+
+   气泡形状**不还原**（她 09-13 定的）：圆角 14px + 淡投影跟线上一致，这套只换颜色。
+   信笺（.inside-letter）也不用写在这儿 —— 基础层那套米纸 #FDFBF5 + 金棕左条 #C89664
+   就是 a93f2d8 的原值，09-12 之后没动过，只有 cream 皮肤加了粉覆盖。warm 不覆盖就是原样。
+
+   只动浅色日常模式，深色和官端（ui-plain）不碰。
+   两段写法同 cream：「跟随系统」时 html 上没有 data-theme，只能靠媒体查询分浅深。 */
+@media (prefers-color-scheme:light){
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain){
+    --bg-primary:#faf9f5;--bg-surface:#f0efe9;--claude-main-surface:#faf9f5;--claude-main-surface-soft:#f0efe9;--claude-sidebar-bg:#faf9f5;
+    --bubble-him:#EFEDE9;--bubble-her:#FBEDEF;--bubble-user:#eae7e0;
+    --trace-ink:#1F1E1D;--accent:#DA7756;--accent-hover:#C2643F;--accent-fg:#FFF;--text-primary:#1F1E1D;
+    --border:rgba(31,30,29,.08);--border-strong:rgba(31,30,29,.16);
+    --gs-muted:#A6A39A;--gs-text:#1F1E1D;
+    /* books 的底原来比正文底更黄一点，09-12 才被改成跟 --bg-primary 同色 */
+    --books-bg:#FBF6ED;
+  }
+  /* mind 行：图标回橙、底回 --bg-sunken（09-12 硬编码成 #EDEDEF + 深墨 #3A3A40 了） */
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain) .trace-row-summary{background:var(--bg-sunken)}
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain) .trace-row-icon{color:var(--accent)}
+  /* gallery 卡片：旧版 gs-icon 没有 color，跟着正文走，不是粉的 */
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain) .gallery-save-card .gs-icon,
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain) .gallery-album-card-chat .gs-icon{color:inherit}
+  /* 音乐卡：进度条橙、播放键淡粉底配橙字 */
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain) .music-card-progress-bar{background:#DA7756}
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain) .music-play-btn{background:rgba(232,168,184,.35);color:#C97A5F}
+  /* 日记面板：旧版是自己的 #F8F7F4，09-12 改成跟 --bg-primary 同色了 */
+  html[data-palette="warm"]:not([data-theme="dark"]):not(.ui-plain) #diaryPanel{background:#F8F7F4}
+}
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain){
+  --bg-primary:#faf9f5;--bg-surface:#f0efe9;--claude-main-surface:#faf9f5;--claude-main-surface-soft:#f0efe9;--claude-sidebar-bg:#faf9f5;
+  --bubble-him:#EFEDE9;--bubble-her:#FBEDEF;--bubble-user:#eae7e0;
+  --trace-ink:#1F1E1D;--accent:#DA7756;--accent-hover:#C2643F;--accent-fg:#FFF;--text-primary:#1F1E1D;
+  --border:rgba(31,30,29,.08);--border-strong:rgba(31,30,29,.16);
+  --gs-muted:#A6A39A;--gs-text:#1F1E1D;
+  --books-bg:#FBF6ED;
+}
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .trace-row-summary{background:var(--bg-sunken)}
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .trace-row-icon{color:var(--accent)}
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .gallery-save-card .gs-icon,
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .gallery-album-card-chat .gs-icon{color:inherit}
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .music-card-progress-bar{background:#DA7756}
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .music-play-btn{background:rgba(232,168,184,.35);color:#C97A5F}
+html[data-palette="warm"][data-theme="light"]:not(.ui-plain) #diaryPanel{background:#F8F7F4}

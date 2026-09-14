@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789310000">
+<link rel="stylesheet" href="/css/home.css?v=1789653100">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -349,6 +349,8 @@
           <div style="display:flex;gap:12px">
             <button class="palette-dot" data-palette="" aria-label="玫瑰灰" style="background:linear-gradient(135deg,#F1E4E9 50%,#ECE9EB 50%)"></button>
             <button class="palette-dot" data-palette="cream" aria-label="奶油白" style="background:linear-gradient(135deg,#FCEAEB 50%,#F0ECE5 50%)"></button>
+            <!-- 09-13：改配色之前那一版（git a93f2d8，09-12 10:37）。暖米白底 + Claude 橙强调，圆角 20px 无投影。 -->
+            <button class="palette-dot" data-palette="warm" aria-label="暖米白" style="background:linear-gradient(135deg,#FBEDEF 50%,#EFEDE9 50%)"></button>
           </div>
         </div>
       </div></nav>
@@ -3387,8 +3389,8 @@ function _norm(x){return (x||'').replace(/\s+/g,'')}
 // 前端得自己来一遍——两边规则要一致，改一边记得改另一边。
 function _speakableFront(x){
   return (x||'')
-    .replace(/<(feel|memory|dream|flash)>[\s\S]*?<\/\1>/g,'')
-    .replace(/<(feel|memory|dream|flash)>[\s\S]*$/g,'')          // 未闭合的中间态（后端也这么做）
+    .replace(/<(feel|memory|dream|flash|hold)>[\s\S]*?<\/\1>/g,'')
+    .replace(/<(feel|memory|dream|flash|hold)>[\s\S]*$/g,'')          // 未闭合的中间态（后端也这么做）
     .replace(/```[\s\S]*?```/g,'（这段代码我发到聊天框里了）')
     .replace(/<想[·:][^>]*>([\s\S]*?)<\/想>/g,'$1')
     .replace(/\[clawd:[^\]]*\]/g,'')
@@ -3408,7 +3410,7 @@ function _speakableFront(x){
 // 手里这段还不能动的三种情况：标签开了没关、方括号开了没关、尖括号开了没关。
 // 这时候清洗会把后面的内容整片吃掉，必须等它闭合。
 function _bufHeld(b){
-  if(/<(feel|memory|dream|flash)>(?![\s\S]*<\/\1>)/.test(b))return true;
+  if(/<(feel|memory|dream|flash|hold)>(?![\s\S]*<\/\1>)/.test(b))return true;
   if(/<[^>]*$/.test(b))return true;
   if(/\[[^\]]*$/.test(b))return true;
   if(/```[\s\S]*$/.test(b)&&(b.split('```').length-1)%2===1)return true;
@@ -7067,8 +7069,8 @@ renderMessage=function(md,text,noStrip){
   // 🧠 Mind 标记 <feel>/<memory>/<dream>/<flash> 只进 Mind 面板，不显示在气泡里。
   // 后端存库时会剥掉，但流式过程中会一个字一个字冒出来，所以这里也剥一次——
   // 第二个正则处理「标签开了还没闭合」的中间状态（流到一半）。
-  var mindRe=/<(feel|memory|dream|flash)>[\s\S]*?<\/\1>/gi;
-  var mindOpenRe=/<(feel|memory|dream|flash)>[\s\S]*$/i;
+  var mindRe=/<(feel|memory|dream|flash|hold)>[\s\S]*?<\/\1>/gi;
+  var mindOpenRe=/<(feel|memory|dream|flash|hold)>[\s\S]*$/i;
   src=src.replace(mindRe,'').replace(mindOpenRe,'').trim();
   text=String(text||'').replace(mindRe,'').replace(mindOpenRe,'').trim();
   // 🦀 [clawd:emotion] / [clawd:emotion|bubble] 文本标记 fallback（DeepSeek 可能不走 tool_use）

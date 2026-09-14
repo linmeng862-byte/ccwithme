@@ -14937,8 +14937,8 @@ async function _callAI(text, convId, onDelta) {
 // 这里是那个兜底。
 function _speakable(s) {
   return (s || '')
-    .replace(/<(feel|memory|dream|flash)>[\s\S]*?<\/\1>/g, '')
-    .replace(/<(feel|memory|dream|flash)>[\s\S]*$/g, '')   // 未闭合的中间态
+    .replace(/<(feel|memory|dream|flash|hold)>[\s\S]*?<\/\1>/g, '')
+    .replace(/<(feel|memory|dream|flash|hold)>[\s\S]*$/g, '')   // 未闭合的中间态
     .replace(/<想[·:][^>]*>([\s\S]*?)<\/想>/g, '$1')       // 信笺内容照念，标签去掉
     .replace(/\[clawd:[^\]]*\]/g, '')
     .replace(/\[music:[^\]]*\]/g, '')
