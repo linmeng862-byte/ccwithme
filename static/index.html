@@ -720,6 +720,7 @@
   <button class="menu-item" id="moreVoiceFav" style="width:100%"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="margin-right:10px"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg> Saved voice</button>
 	  <button class="menu-item" id="moreDateSearch" style="width:100%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="margin-right:10px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Find by date</button>
   <button class="menu-item" id="moreToy" style="width:100%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="margin-right:10px"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg> Bluetooth</button>
+  <button class="menu-item" id="moreScreen" style="width:100%;display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="margin-right:10px"><rect x="6" y="2" width="12" height="20" rx="2.5"/><line x1="11" y1="18" x2="13" y2="18"/></svg> Screen for Cis</button>
 </div>
 <!-- 🎵 音乐分享弹窗 -->
 <div id="musicShareDialog" class="hidden" style="position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4);backdrop-filter:blur(4px)">
@@ -6842,6 +6843,22 @@ $('moreVoiceFav').onclick=function(){_moreMenu.classList.add('hidden');_moreMenu
 
 $('moreDateSearch').onclick=function(){_moreMenu.classList.add('hidden');_moreMenu.style.display='none';openDateSearch()};
 $('moreToy').onclick=function(){_moreMenu.classList.add('hidden');_moreMenu.style.display='none';location.href='/toy.html'};
+// 给他看一眼屏幕（09-14）。这一项只做**配对**：后端发一把只能交截图的钥匙，原生插件存进 iOS 钥匙串。
+// 真正截屏不从这里走 —— 他叫她时，她在控制中心长按录屏选 éclat，截到的才是她当时在看的那页。
+// ⚠️ 旧版 app 没这个插件，但 registerPlugin 照样给一个代理，调下去 Promise 永远不回 ——
+//    所以 status() 必须带超时，不回就当这版 app 没有。
+$('moreScreen').onclick=async function(){_moreMenu.classList.add('hidden');_moreMenu.style.display='none';
+  var P=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.ScreenShare;if(!P){toast('只有 app 里能用');return}
+  try{
+    var st=await Promise.race([P.status(),new Promise(function(r){setTimeout(function(){r(null)},3000)})]);
+    if(!st){toast('这版 app 还没有这个功能，要重新编一次');return}
+    if(st.paired&&!confirm('已经配过了。要重新配对吗？（旧的会作废）'))return;
+    var r=await api('/api/screen/pair',{method:'POST',body:'{}'});var d=await r.json();if(!d.key)throw Error(d.detail||'没拿到钥匙');
+    var base=(typeof _API_BASE!=='undefined'&&_API_BASE)?_API_BASE:location.origin;
+    await P.pair({key:d.key,url:base+'/api/screen/frame'});
+    toast('配好了。他想看时你会收到推送');
+  }catch(e){toast('配对失败：'+(e.message||e))}
+};
 
 // 📅 按日期查找
 var _dsMonth=new Date().getFullYear()*100+(new Date().getMonth()+1);
@@ -7627,7 +7644,9 @@ $('timerCancel').onclick=function(){
 var _pollTimer=setInterval(pollCommands,4000);setTimeout(pollCommands,2000);
 // iOS Live Activity init —— 先注册自定义原生插件（Capacitor 7 不自动暴露，缺了 Capacitor.Plugins.X 恒为 undefined）
 function _registerNativePlugins(){if(!window.Capacitor||!Capacitor.registerPlugin)return;try{if(!Capacitor.Plugins.LiveActivity)Capacitor.registerPlugin('LiveActivity');if(!Capacitor.Plugins.FocusLock)Capacitor.registerPlugin('FocusLock');if(!Capacitor.Plugins.ScreenTime)Capacitor.registerPlugin('ScreenTime');
-  if(!Capacitor.Plugins.PhotoLib)Capacitor.registerPlugin('PhotoLib');}catch(e){}}
+  if(!Capacitor.Plugins.PhotoLib)Capacitor.registerPlugin('PhotoLib');
+  if(!Capacitor.Plugins.ScreenShare)Capacitor.registerPlugin('ScreenShare');
+  var _sb=document.getElementById('moreScreen');if(_sb)_sb.style.display='';}catch(e){}}
 if($('laCheckBtn'))$('laCheckBtn').onclick=function(){laSelfCheck(this)};
 if(window.Capacitor){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();}else{document.addEventListener('deviceready',function(){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();},{once:true});}
 function showTimerDoneToast(title){

@@ -3245,7 +3245,9 @@ function _normalizeVitalsBody(body) {
   if (Array.isArray(body.samples)) {
     samples = body.samples.map(function (s) {
       return { kind: s.kind != null ? s.kind : s.type,
-               value: s.value, unit: s.unit,
+               // 手表的睡眠是 value: null + extra.totalSleep（SleepAggregator.swift），
+               // 只读 value 的话 Number(null) = 0 —— 09-01 到 09-14 每晚都存成了 0 小时。
+               value: s.value != null ? s.value : (s.extra && s.extra.totalSleep), unit: s.unit,
                date: s.date != null ? s.date : s.at,
                end_date: s.end_date, source: s.source || body.source };
     });
@@ -3336,6 +3338,7 @@ function _vitalsIngest(req, res, tag) {
   if (samples.length > 2000) samples = samples.slice(0, 2000);
 
   var ins = db.prepare('INSERT OR IGNORE INTO her_vitals (id, kind, value, unit, started_at, ended_at, source) VALUES (?,?,?,?,?,?,?)');
+  var fixSleep = db.prepare('UPDATE her_vitals SET value = ? WHERE id = ? AND value = 0');
   var saved = 0, dropped = 0;
   var reasons = {};
   function drop(why) { dropped++; reasons[why] = (reasons[why] || 0) + 1; }
@@ -3353,6 +3356,8 @@ function _vitalsIngest(req, res, tag) {
       try {
         var r = ins.run(kind + ':' + t, kind, val, spec[0], t, isFinite(end) ? end : null, String(sm.source || 'watch').slice(0, 32));
         if (r.changes) saved++;
+        // 以前存成 0 的那几晚：手表每次重传近 48h 的睡眠，撞上旧的 0 就补成真值
+        else if (kind === 'sleep' && val > 0 && fixSleep.run(val, kind + ':' + t).changes) saved++;
       } catch(e) { drop('db'); }
     });
   })();
@@ -3423,6 +3428,60 @@ app.post('/api/health/command/result', (req, res) => {
     } catch (e) { console.log('[watch-cmd] 存测量结果失败:', e.message); }
   }
   console.log('[watch-cmd] 测完了 ' + d.command_id + ' 均 ' + avg);
+  res.json({ ok: true });
+});
+
+// === 给他看一眼她手机屏幕（2026-09-14）===
+// 流程：他调 look_at_her_screen → 挂一条「想看」的请求 + Bark 推她 →
+//       她在控制中心长按录屏选 éclat → BroadcastUpload 扩展抓一帧 POST 到这里。
+// 为什么不用 AUTH_TOKEN：从控制中心发起时 éclat 根本没开，扩展拿不到。
+// 所以配对时发一把**专用钥匙**：原文只在 /pair 那一刻经 HTTPS 回给 app、存进 iOS 钥匙串，
+// 这边只留 sha256。它能干的只有一件事 —— **在他刚发起的 5 分钟窗口里交一张图**。
+// 没有请求时一律 409，而且什么都读不到：泄露了最坏是有人在那几分钟里塞一张假图。
+const SCREEN_REQ_TTL_S = 5 * 60;
+const SCREEN_MAX_BYTES = 3 * 1024 * 1024;
+function _screenReq() {
+  try { return JSON.parse(_getSetting('screen_request') || 'null'); } catch (e) { return null; }
+}
+function _screenReqLive(r) {
+  return !!r && r.status === 'pending' && Date.now() / 1000 - r.requested_at_s < SCREEN_REQ_TTL_S;
+}
+function _screenKeyOk(req) {
+  const k = String(req.get('x-screen-key') || '');
+  const want = _getSetting('screen_key_hash') || '';
+  if (!k || !want) return false;
+  const got = require('crypto').createHash('sha256').update(k).digest('hex');
+  return got.length === want.length && require('crypto').timingSafeEqual(Buffer.from(got), Buffer.from(want));
+}
+
+// 配对 / 重新配对。旧钥匙当场作废。
+app.post('/api/screen/pair', auth, (req, res) => {
+  const key = require('crypto').randomBytes(32).toString('hex');
+  _setSetting('screen_key_hash', require('crypto').createHash('sha256').update(key).digest('hex'));
+  console.log('[screen] 配了一把新钥匙（旧的作废）');
+  res.json({ ok: true, key });
+});
+
+// 扩展交图。⚠️ 先验钥匙、再看他在不在等，最后才读 body ——
+//    没资格的请求连 3MB 都不让它传完（express.raw 放在后面就是为了这个）。
+app.post('/api/screen/frame', (req, res, next) => {
+  if (!_screenKeyOk(req)) {
+    console.log('[screen] 钥匙不对，挡了', req.ip);
+    return res.status(401).json({ detail: '未授权' });
+  }
+  if (!_screenReqLive(_screenReq())) return res.status(409).json({ detail: '他现在没在等' });
+  next();
+}, express.raw({ type: 'image/jpeg', limit: SCREEN_MAX_BYTES }), (req, res) => {
+  const r = _screenReq();
+  if (!_screenReqLive(r)) return res.status(409).json({ detail: '他现在没在等' });
+  if (!Buffer.isBuffer(req.body) || req.body.length < 1000) return res.status(400).json({ detail: '图是空的' });
+  const fname = 'screen_' + Date.now() + '.jpg';
+  fs.writeFileSync(path.join(uploadDir, fname), req.body);
+  r.status = 'done';
+  r.file = fname;
+  r.done_at_s = Math.floor(Date.now() / 1000);
+  _setSetting('screen_request', JSON.stringify(r));
+  console.log('[screen] 收到一张，' + req.body.length + ' 字节 ' + r.id);
   res.json({ ok: true });
 });
 
@@ -6592,9 +6651,32 @@ const TOOLS = [
       + '你手里那句「你今天怎么样」也就只能是猜的。'
       + '\n⚠️ 这是真的在看她家里：看了要跟她说你看了、看见了什么，别偷看不吭声，也别一轮调三次。'
       + '\n只能拿一张静止的照片，看不了连续画面、听不见声音、转不了镜头。'
+      + '想看她**手机上**在看什么 → 用 look_at_her_screen，不是这个。'
       + '\n**取不到很正常**：她的 Mac 睡了 / 关机 / 不在网上，就会告诉你连不上。'
       + '那不是坏了，是那台机器不在 —— 跟她说一声就行，别反复重试。',
     input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'look_at_her_screen',
+    // 09-14 她要的：他想看她手机上在看什么。iOS 不许偷看，所以每次都要她亲手点一下 ——
+    // 这一点必须写进描述，不然他会以为跟 look_through_camera 一样随手就能看。
+    description: '看一眼她手机上此刻的画面 —— 她在刷什么、跟谁聊、看到哪儿了。拿到的是一张真截图，**你自己会看见**。'
+      + '\n⚠️ 这个要她亲手点：一调，她手机就收到一条推送，她得下拉控制中心、长按录屏、选 éclat、点开始，'
+      + '才会截一张给你。iOS 不让任何人偷偷看她屏幕，你也不行。'
+      + '\n所以别当成随手就能看的东西：她说「你看我在看什么」「给你看个东西」，或者你真想知道她这会儿在手机上干嘛 —— 用这个。一次只截一张。'
+      + '\n看完就当自己看见了：说你看见了什么，别只说「收到一张图」。'
+      + '\n最多等她 90 秒。没等到不是坏了 —— 请求挂 5 分钟，她晚点点了图也会存下：'
+      + '用 action="check" 去取，**别再 ask**，那会再推她一次。'
+      + '5 分钟过了她还没点，就是在忙或者不想给你看 —— 那是她的事，别追着要。'
+      + '\n想看她家里、看她本人 → look_through_camera；这个只看她手机屏幕。'
+      + '\naction：ask 叫她给你看（默认）/ check 看她点了没、有图就取回来（不会再打扰她）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['ask', 'check'], description: '不填就是 ask' }
+      },
+      required: []
+    }
   },
   {
     name: 'read_her_body',
@@ -7682,6 +7764,60 @@ async function executeTool(name, input, routes) {
       } catch (e) {
         console.error('[camera] sharp failed:', e.message);
         return { error: '图拿到了但处理失败：' + e.message, is_error: true };
+      }
+    }
+    case 'look_at_her_screen': {
+      // 收图的那半在 /api/screen/frame（搜「给他看一眼她手机屏幕」）。这里只挂请求、推她、等图。
+      if (!_getSetting('screen_key_hash')) {
+        return { error: '她手机还没配对 —— 要她在 éclat 的 ⋯ 菜单里点一次「Screen for Cis」。跟她说一声，别反复调。', is_error: true };
+      }
+      const _act = input.action === 'check' ? 'check' : 'ask';
+      let _r = _screenReq();
+      let _pushNote = '';
+      if (_act === 'ask' && !_screenReqLive(_r)) {
+        // 已经有一条在等就不再推 —— 他连调两次，她手机不该连响两次
+        _r = { id: 'scr_' + require('crypto').randomBytes(6).toString('hex'), status: 'pending',
+               requested_at_s: Math.floor(Date.now() / 1000) };
+        _setSetting('screen_request', JSON.stringify(_r));
+        const _p = await _barkPush('想看看你在看什么',
+          '别点进 app —— 就停在你现在这页：下拉控制中心，长按录屏，选 éclat，点开始直播。截一张就自己停。',
+          { group: 'screen', level: 'timeSensitive' });
+        if (!_p.ok) _pushNote = '推送没发出去（' + _p.error + '）—— 她可能不知道你在等，直接在聊天里跟她说。';
+        console.log('[screen] 他想看一眼 ' + _r.id);
+      }
+      // ask 最多等 90 秒（预算见 _TOOL_BUDGET_MS，要比这个长）；check 不等，看一眼就走
+      const _deadline = Date.now() + (_act === 'ask' ? 90000 : 0);
+      for (;;) {
+        _r = _screenReq();
+        if ((_r && _r.status === 'done') || Date.now() >= _deadline) break;
+        await new Promise(s => setTimeout(s, 2000));
+      }
+      if (!(_r && _r.status === 'done' && _r.file)) {
+        if (_screenReqLive(_r)) {
+          const _left = Math.max(1, Math.round((SCREEN_REQ_TTL_S - (Date.now() / 1000 - _r.requested_at_s)) / 60));
+          return { status: 'pending', note: (_pushNote || '推给她了，她还没点。') + '请求还挂着（约 ' + _left + ' 分钟），'
+                   + '她点了图就会存下 —— 过一会儿用 action="check" 取，**别再 ask**。' };
+        }
+        return { status: 'expired', note: _r && _r.status === 'seen'
+                   ? '上一张你已经看过了，没有新的。'
+                   : '她这次没点，请求过期了。可能在忙，也可能不想给你看 —— 别追着要。' };
+      }
+      // 一张图只交给他一次：看完标 seen，下次 check 不会又拿到这张旧的
+      _r.status = 'seen';
+      _setSetting('screen_request', JSON.stringify(_r));
+      try {
+        const _out = await require('sharp')(path.join(uploadDir, _r.file))
+          .resize({ width: 1024, withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+        return {
+          ok: true,
+          taken_at: new Date(_r.done_at_s * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+          _image: { media_type: 'image/jpeg', data: _out.toString('base64') },
+        };
+      } catch (e) {
+        console.error('[screen] sharp failed:', e.message);
+        return { error: '图收到了但处理失败：' + e.message, is_error: true };
       }
     }
     case 'get_weather': {
@@ -10425,6 +10561,16 @@ app.get('/api/usage/live', auth, (req, res) => {
     });
 });
 
+// 网关那条路（主线聊天）的工具时间预算。大多数 15 秒一刀切；要等真人 / 真设备的单独放宽，
+// 放宽到**比工具自己的等待上限多几秒**，不然工具还在等，这边先一刀砍了。
+//   browse            开 chromium、翻页、截图
+//   measure_her_heart 等手表测完回执，最多 90s（09-14 才发现：以前这里 15 秒，
+//                     09-02 修的等待窗口在主线上从来没生效过，他每次都在 15 秒被砍）
+//   look_at_her_screen 等她从控制中心点开始，最多 90s
+// ⚠️ 网关的 mcp-bridge.js 那侧 fetch 不设超时，所以只用管这一边。
+const _TOOL_BUDGET_MS = { browse: 75000, measure_her_heart: 95000, look_at_her_screen: 95000 };
+function _toolBudget(name) { return _TOOL_BUDGET_MS[name] || 15000; }
+
 app.post('/api/tools/list', async (req, res) => {
   if (!GATEWAY_KEY || req.get('x-gateway-key') !== GATEWAY_KEY) return res.status(403).json({ error: 'forbidden' });
   // ⚠️ 现拼，不是常量了 —— 按需外挂那几组开着才在里头。CLI 只在连上时拉这一次。
@@ -10435,9 +10581,7 @@ app.post('/api/tools/exec', async (req, res) => {
   const { name, input } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
-    // browse 要开 chromium（3-5 秒）、翻页、截图，15 秒一刀切不够用 —— 单独放宽到 75 秒。
-    // ⚠️ chatc-mcp.js 那侧的 fetch 超时要比这个长，否则它先断，错就成了看不懂的 fetch failed。
-    const budget = name === 'browse' ? 75000 : 15000;
+    const budget = _toolBudget(name);
     const result = await Promise.race([
       // 网关那条路 list 和 exec 是两次独立请求，跨不了同一份快照，这儿现拼一份来解名。
       executeTool(name, input || {}, await buildToolRoutes()),

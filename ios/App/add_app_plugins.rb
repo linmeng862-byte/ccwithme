@@ -25,6 +25,8 @@ PLUGIN_SOURCES = %w[
   BleBridgePlugin.m
   PhotoLibraryPlugin.swift
   PhotoLibraryPlugin.m
+  ScreenSharePlugin.swift
+  ScreenSharePlugin.m
 ]
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
@@ -70,7 +72,7 @@ puts "Done. #{added} plugin files added to App target."
 require 'json'
 
 CONFIG_PATH = File.join(__dir__, 'App', 'capacitor.config.json')
-PLUGIN_CLASSES = %w[LiveActivityPlugin FocusLockPlugin ScreenTimePlugin BleBridgePlugin PhotoLibraryPlugin]
+PLUGIN_CLASSES = %w[LiveActivityPlugin FocusLockPlugin ScreenTimePlugin BleBridgePlugin PhotoLibraryPlugin ScreenSharePlugin]
 
 if File.exist?(CONFIG_PATH)
   cfg = JSON.parse(File.read(CONFIG_PATH))
