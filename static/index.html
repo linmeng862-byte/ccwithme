@@ -7645,8 +7645,11 @@ var _pollTimer=setInterval(pollCommands,4000);setTimeout(pollCommands,2000);
 // iOS Live Activity init —— 先注册自定义原生插件（Capacitor 7 不自动暴露，缺了 Capacitor.Plugins.X 恒为 undefined）
 function _registerNativePlugins(){if(!window.Capacitor||!Capacitor.registerPlugin)return;try{if(!Capacitor.Plugins.LiveActivity)Capacitor.registerPlugin('LiveActivity');if(!Capacitor.Plugins.FocusLock)Capacitor.registerPlugin('FocusLock');if(!Capacitor.Plugins.ScreenTime)Capacitor.registerPlugin('ScreenTime');
   if(!Capacitor.Plugins.PhotoLib)Capacitor.registerPlugin('PhotoLib');
-  if(!Capacitor.Plugins.ScreenShare)Capacitor.registerPlugin('ScreenShare');
-  var _sb=document.getElementById('moreScreen');if(_sb)_sb.style.display='';}catch(e){}}
+  if(!Capacitor.Plugins.ScreenShare)Capacitor.registerPlugin('ScreenShare');}catch(e){}}
+// Screen for Cis 那一项：只要在 app 里就露出来。⚠️ 别塞回上面那个 try 里 ——
+// 09-14 第一版就是放在 try 末尾，前面哪个 registerPlugin 一抛，这行被跳过，她菜单里就是没有。
+// 插件真不在也没关系：点下去 status() 超时会说「这版 app 还没有这个功能」。
+if(window.Capacitor&&$('moreScreen'))$('moreScreen').style.display='';
 if($('laCheckBtn'))$('laCheckBtn').onclick=function(){laSelfCheck(this)};
 if(window.Capacitor){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();}else{document.addEventListener('deviceready',function(){_registerNativePlugins();initLiveActivity();initFocusLock();initScreenTime();},{once:true});}
 function showTimerDoneToast(title){
