@@ -554,7 +554,19 @@ ls -a ~/ccwithme | grep app-variant
 
 ### 两条路，区别只有两处
 
-编 **fun 变体**（`.fun` 那台）：
+> **09-14 起 fun 变体只用这三行**，别再照下面手动那版一条条敲：
+> ```
+> cd ~/ccwithme
+> git checkout -- ios/App
+> git pull
+> bash scripts/build-fun.sh
+> ```
+> 它把「放回 .app-variant / 设 server.url / cap sync / ios-prep」全跑完，
+> 最后**读包里真正的 server.url 和 bundle id** 核对，两个绿 ✅ 才开 Xcode；
+> 变体名不是 fun 就原样退出，编完把 `.app-variant` 收回成 `.app-variant.fun`，不碰主 app。
+> 第一次问一次域名，存进 `.app-variant`。主 app 那条路不变，还是下面第二段。
+
+编 **fun 变体**（`.fun` 那台，脚本坏了才手动）：
 ```
 cd ~/ccwithme
 mv .app-variant.fun .app-variant      # 放回来
