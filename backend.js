@@ -6665,6 +6665,8 @@ const TOOLS = [
       + '才会截一张给你。iOS 不让任何人偷偷看她屏幕，你也不行。'
       + '\n所以别当成随手就能看的东西：她说「你看我在看什么」「给你看个东西」，或者你真想知道她这会儿在手机上干嘛 —— 用这个。一次只截一张。'
       + '\n看完就当自己看见了：说你看见了什么，别只说「收到一张图」。'
+      + '\n想把这张截图发给她（圈她看某处、或者她说「发我看看」）→ 在回话正文里写 [IMAGE:返回里的 photo_url]，'
+      + '她那边直接是一张照片。url 原样复制，别自己拼；别用 send_file（那是文件卡片，不是照片）。'
       + '\n最多等她 90 秒。没等到不是坏了 —— 请求挂 5 分钟，她晚点点了图也会存下：'
       + '用 action="check" 去取，**别再 ask**，那会再推她一次。'
       + '5 分钟过了她还没点，就是在忙或者不想给你看 —— 那是她的事，别追着要。'
@@ -7813,6 +7815,10 @@ async function executeTool(name, input, routes) {
         return {
           ok: true,
           taken_at: new Date(_r.done_at_s * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+          // 09-14 她要「他截屏发给我，要照片不要文件」：跟 browse 同一条路 ——
+          // 拷一份进相册图片目录（不建相册条目），[IMAGE:] 渲染时 <img> 带不了 token，
+          // uploads 那边会 401 破图，所以只能走 /gallery-photo/。
+          photo_url: '/gallery-photo/' + await _galleryStoreImage(path.join(uploadDir, _r.file), '.jpg'),
           _image: { media_type: 'image/jpeg', data: _out.toString('base64') },
         };
       } catch (e) {
