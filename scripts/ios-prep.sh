@@ -344,11 +344,16 @@ ruby "$ROOT/ios/App/add_app_plugins.rb"                # ← 必须最后
 # 打错服务器是「界面全在、数据全不对」，装到手机上才发现，白编一次。
 echo ""
 echo "———— 这个包编出来会连哪儿 ————"
-HOSTS="$(grep -oE 'zhou-and-claude\.[a-z]+' "$PUBLIC/index.html" 2>/dev/null | sort -u | tr '\n' ' ')"
-if [ -z "${HOSTS}" ]; then
-  echo "   后端：同源（没有绝对地址 —— capacitor.config.json 里设了 server.url 才对）"
+# ⚠️ 09-14 以前这里 grep 的是 public/index.html 里的域名 —— 那只是 _API_BASE 的兜底。
+#    app 实际连哪台**只看 server.url**（远程加载，一打开就去那台拿网页）。
+#    那天 set-server-url.sh 报错失败，server.url 还停在上次那台，这里却照样报 .fun，
+#    她看了这行才去编的，装上连错了。体检对着错的东西打勾，比没有体检还坑。
+#    读 ios/App/App/ 下那份：cap sync 拷进去的那份，才是真正打进包的。
+SURL="$(grep -oE '"url"[[:space:]]*:[[:space:]]*"[^"]+"' "$ROOT/ios/App/App/capacitor.config.json" 2>/dev/null | head -1 | sed -E 's/.*"(https?:[^"]+)"$/\1/')"
+if [ -z "${SURL}" ]; then
+  echo "   后端：❌ 没有 server.url —— 先跑 set-server-url.sh，再 npx cap sync ios，再跑这个"
 else
-  echo "   后端：${HOSTS}"
+  echo "   后端：${SURL}"
 fi
 echo "   bundle：$(grep -oE 'com\.zzclaude\.eclat[.a-z]*' "$ROOT/ios/App/App/capacitor.config.json" 2>/dev/null | head -1)"
 echo "   ⚠️ 上面这两行不是你要的，就是变体没生效 —— 别编，先查。"

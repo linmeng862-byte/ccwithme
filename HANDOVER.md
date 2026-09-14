@@ -558,10 +558,14 @@ ls -a ~/ccwithme | grep app-variant
 ```
 cd ~/ccwithme
 mv .app-variant.fun .app-variant      # 放回来
-bash scripts/set-server-url.sh        # 自己从 .app-variant 的 api= 读
+APP_API_HOST=<这台的域名> bash scripts/set-server-url.sh
 npx cap sync ios
 bash scripts/ios-prep.sh              # 变体名也从 .app-variant 读
 ```
+⚠️ **域名要显式带上**（09-14 改）。她 Mac 上那份 `.app-variant` **没有 `api=` 行**，
+不带域名 `set-server-url.sh` 会报错失败，`server.url` 就停在上次编的那台 ——
+而以前 `ios-prep.sh` 的体检读的是 `index.html` 里的域名，照样显示 `.fun`，她照着编、连错了。
+体检现在改成直接读 `server.url`。
 
 编 **主 app**（`.online` 那台）：
 ```
