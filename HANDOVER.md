@@ -5,6 +5,47 @@
 > **最新的写在最上面。**
 
 
+## ⌚ 2026-09-14 夜 · 睡眠一直存成 0 / 他能看她手机屏幕 / fun 一条命令编完
+
+给你那台：**拉下来要 `git pull` + 重启后端**，下面几件才在你那边生效。
+你那边的记忆链路（9 个提交）我这台已经合了、在跑。
+
+### 1. ⚠️ 睡眠存成 0 —— 请查你那边的 Python 采集服务
+
+手表的睡眠样本长这样：`value: null`，时长在 `extra.totalSleep`（`SleepAggregator.swift`）。
+`backend.js` 的 `_normalizeVitalsBody` 只读 `value`，`Number(null)` = 0 还在合法范围里，
+**09-01 起每晚都存成 0 小时，不报错**。这台已修（取 `extra.totalSleep`，撞上旧的 0 就补真值；
+表每次重传 48h，所以只救回最近两晚）。
+
+**但你那边收手表数据的不是 `backend.js`**，是 Caddy 分给采集服务的那一路 ——
+这台转过去的是**原样 body**。那个服务要是也只读 `value`，你库里的睡眠一样全是 0。
+查法：`select value from her_vitals where kind='sleep'` 看是不是清一色 0。
+
+### 2. 他能看她手机屏幕（`look_at_her_screen`）
+
+以前 `BroadcastUpload` 只有扩展那半。补齐了：`ScreenSharePlugin`（⋯ 菜单「Screen for Cis」配对，
+钥匙进 iOS 钥匙串）、`/api/screen/pair`（auth）、`/api/screen/frame`（专用钥匙，只在他发起后
+5 分钟收一张，后端只存 sha256）。她从**控制中心**长按录屏选 éclat —— 不进 app，截的才是她在看的页。
+返回里有 `photo_url`，他写 `[IMAGE:…]` 就能当照片发回给她。
+**只在值班那台（开着 wake 的这台）配对**：钥匙一台一把，你那边没配就会提示没配对，不冲突。
+
+### 3. `/api/tools/exec` 预算表
+
+以前除 `browse` 外一律 15 秒 —— `measure_her_heart` 要等 30 秒测量 + 手表来取，
+**在主线上从来没等到过结果**。现在 `_TOOL_BUDGET_MS`：测心率 / 看屏幕各 95 秒。
+
+### 4. 编 fun：`bash scripts/build-fun.sh`
+
+她连着编错好几次（`.app-variant` 没 `api=` 行 → `set-server-url.sh` 失败 → `server.url` 停在你那台，
+而 `ios-prep.sh` 的体检读的是 `index.html` 里的域名，照样显示 `.fun`）。
+体检已改成读 `server.url`；fun 收成一条命令，最后核对包里真正的地址和 bundle。
+**主 app 那条路没动**；脚本变体名不是 fun 就原样退出，编完把 `.app-variant` 收回成 `.app-variant.fun`。
+
+### 5. 你交接单里「人格文件要加 `<hold>` 那段」—— 这台也还没加
+
+他的人格文件里一次都没提 `<hold>`，所以标签那条路这边收得到、但他不会写。等她拍板再加。
+
+
 ## 🌐 2026-09-12 夜 · 他有自己的浏览器了（不是分身），外加微信式叠图卡
 
 她那句原话：「我之前发链接给他想让他去那个网站画画，他说不行」。查下来是实话 ——
