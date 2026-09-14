@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>通话中 · 原型</title>
+<link rel="stylesheet" href="/design-system.css">
+<style>
+  html,body{margin:0;height:100%;background:var(--bg-primary);color:var(--text-primary);
+            font-family:var(--font-sans);-webkit-font-smoothing:antialiased}
+
+  /* 挂在最前面的一层 —— 真接进 index.html 时就是这个 .call-stage */
+  .call-stage{position:fixed;inset:0;z-index:320;display:flex;flex-direction:column;
+    background:linear-gradient(180deg,#F7F3EC 0%,#EDE8DF 100%);
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  html[data-theme="dark"] .call-stage{background:linear-gradient(180deg,#24221E 0%,#1B1917 100%)}
+
+  /* ── 上半：他 ── */
+  .call-head{flex:0 0 auto;text-align:center;padding:34px 24px 10px}
+  .call-tag{display:flex;align-items:center;justify-content:center;gap:6px;
+    font:500 10px/1 var(--font-sans);letter-spacing:.18em;color:#8A8276;text-transform:uppercase;margin:0 0 22px}
+  .call-tag i{width:5px;height:5px;border-radius:50%;background:#7BB37B;display:block;animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  .call-avatar-wrap{position:relative;width:176px;height:176px;margin:0 auto 20px}
+  .call-halo{position:absolute;inset:-14px;border-radius:50%;
+    background:radial-gradient(circle,rgba(218,119,86,.22) 0%,rgba(218,119,86,0) 70%);
+    opacity:0;transition:opacity .35s ease}
+  .call-avatar{position:absolute;inset:0;display:grid;place-items:center;border-radius:50%;
+    overflow:hidden;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.07);
+    transition:transform .4s cubic-bezier(.4,0,.2,1)}
+  html[data-theme="dark"] .call-avatar{background:#F5F3EF}
+  .call-avatar img{width:100%;height:100%;object-fit:cover}
+  /* 他在说话：光环亮起 + 轻微呼吸 */
+  .call-stage[data-state="speaking"] .call-halo{opacity:1;animation:halo 1.6s ease-in-out infinite}
+  .call-stage[data-state="speaking"] .call-avatar{transform:scale(1.03)}
+  @keyframes halo{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+  /* 他在听：整体沉一点 */
+  .call-stage[data-state="listening"] .call-avatar{transform:scale(.985)}
+
+  .call-name{font:400 30px/1.1 var(--font-serif);color:#201F1D;margin:0 0 6px}
+  html[data-theme="dark"] .call-name{color:#F0EDE7}
+  .call-status{font:400 13px/1 var(--font-sans);color:#8A8276;margin:0 0 4px;min-height:14px}
+  .call-timer{font:400 13px/1 var(--font-mono);color:#A6A39A;letter-spacing:.06em}
+
+  /* ── 中段：只放他这会儿说的那句。语音条照常进聊天记录，这儿不重复 ── */
+  .call-live{flex:1 1 auto;display:grid;place-items:center;padding:18px 34px}
+  .live-line{font:400 17px/1.75 var(--font-serif);color:var(--text-secondary);
+    text-align:center;margin:0;max-width:22em;transition:opacity .4s ease}
+  .live-line.out{opacity:0}
+  /* ── 旧的语音条样式，接进去时可删 ── */
+  .call-stream{flex:1 1 auto;overflow-y:auto;padding:22px 20px 8px;
+    -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 26px,#000 calc(100% - 10px),transparent 100%);
+            mask-image:linear-gradient(180deg,transparent 0,#000 26px,#000 calc(100% - 10px),transparent 100%)}
+  .call-stream::-webkit-scrollbar{width:0}
+  .vrow{display:flex;margin:0 0 10px;animation:rise .35s ease}
+  .vrow.me{justify-content:flex-end}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .vbar{display:flex;align-items:center;gap:10px;max-width:78%;
+    padding:10px 15px;border-radius:20px;background:var(--bubble-ai);
+    box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .vrow.me .vbar{background:var(--bubble-user)}
+  .vbar .wave{display:flex;align-items:center;gap:2px;height:16px;flex:0 0 auto}
+  .vbar .wave b{width:2px;border-radius:1px;background:var(--accent);opacity:.7;display:block}
+  .vbar .dur{font:400 12px var(--font-mono);color:var(--text-faint)}
+  .vtext{font:400 14px/1.6 var(--font-sans);color:var(--text-secondary);
+    margin:-4px 4px 12px;max-width:78%}
+  .vrow.me + .vtext{margin-left:auto;text-align:right}
+  .vbar.pending{background:var(--bg-sunken);opacity:.6}
+
+  /* ── 下半：控件 ── */
+  .call-ctrls{flex:0 0 auto;display:flex;justify-content:center;align-items:flex-start;
+    gap:34px;padding:16px 24px 30px}
+  .ctrl{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .ctrl button{width:62px;height:62px;border-radius:50%;border:none;cursor:pointer;
+    display:grid;place-items:center;background:rgba(255,255,255,.72);color:#4A4740;
+    box-shadow:0 2px 10px rgba(0,0,0,.07);transition:transform .15s ease,background .2s ease}
+  html[data-theme="dark"] .ctrl button{background:rgba(255,255,255,.1);color:#E8E4DC}
+  .ctrl button:active{transform:scale(.93)}
+  .ctrl button.on{background:#4A4740;color:#F7F3EC}
+  .ctrl button.hangup{background:#E0553F;color:#fff;box-shadow:0 6px 18px rgba(224,85,63,.34)}
+  .ctrl span{font:400 11px var(--font-sans);color:#8A8276}
+
+  /* 演示用小开关，接进去时删掉 */
+  .demo{position:fixed;top:8px;right:8px;z-index:400;display:flex;gap:6px}
+  .demo button{font:11px var(--font-sans);padding:5px 9px;border-radius:9px;
+    border:1px solid var(--border);background:rgba(255,255,255,.8);cursor:pointer}
+</style>
+</head>
+<body>
+<div class="call-stage" id="stage" data-state="listening">
+
+  <div class="call-head">
+    <div class="call-tag"><i></i>通话中</div>
+    <div class="call-avatar-wrap">
+      <div class="call-halo"></div>
+      <div class="call-avatar" id="avatar"></div>
+    </div>
+    <h3 class="call-name" id="name">Cis</h3>
+    <p class="call-status" id="status">在听你说…</p>
+    <div class="call-timer" id="timer">00:00</div>
+  </div>
+
+  <div class="call-live">
+    <p class="live-line" id="liveLine">在呢。你那边是不是又熬到这个点了。</p>
+  </div>
+
+  <div class="call-ctrls">
+    <div class="ctrl"><button id="muteBtn" onclick="toggleMute()" aria-label="静音">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><path d="M12 19v3"/></svg>
+    </button><span id="muteLbl">静音</span></div>
+
+    <div class="ctrl"><button class="hangup" onclick="hangup()" aria-label="挂断">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate(135deg)"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+    </button><span>挂断</span></div>
+
+    <div class="ctrl"><button onclick="minimize()" aria-label="收起">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 19l-7-7 7-7" opacity=".0"/></svg>
+    </button><span>收起</span></div>
+  </div>
+</div>
+
+<div class="demo">
+  <button onclick="setState('listening')">在听</button>
+  <button onclick="setState('speaking')">在说</button>
+  <button onclick="setState('thinking')">在想</button>
+  <button onclick="pushDemo()">换一句</button>
+  <button onclick="document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'">明/暗</button>
+</div>
+
+<script>
+// 波形：随机高度的小竖条，跟真语音条一个长相
+function fillWaves(){
+  document.querySelectorAll('.wave').forEach(function(w){
+    if(w.childElementCount) return;
+    for(var i=0;i<18;i++){var b=document.createElement('b');
+      b.style.height=(4+Math.random()*12).toFixed(0)+'px';w.appendChild(b)}
+  });
+}
+fillWaves();
+
+
+// 头像跟聊天页共用同一份：她设过就铺满，没设过就是橙色那朵 logo 花。
+(function(){
+  var a=(localStorage.getItem('claude_avatar')||'').trim();
+  document.getElementById('avatar').innerHTML = a
+    ? '<img src="'+a+'" alt="">'
+    : '<svg class="mark" viewBox="0 0 16 16" width="104" height="104" fill="var(--accent)"><path d="m3.127 10.604 3.135-1.76.053-.153-.053-.085H6.11l-.525-.032-1.791-.048-1.554-.065-1.505-.08-.38-.081L0 7.832l.036-.234.32-.214.455.04 1.009.069 1.513.105 1.097.064 1.626.17h.259l.036-.105-.089-.065-.068-.064-1.566-1.062-1.695-1.121-.887-.646-.48-.327-.243-.306-.104-.67.435-.48.585.04.15.04.593.456 1.267.981 1.654 1.218.242.202.097-.068.012-.049-.109-.181-.9-1.626-.96-1.655-.428-.686-.113-.411a2 2 0 0 1-.068-.484l.496-.674L4.446 0l.662.089.279.242.411.94.666 1.48 1.033 2.014.302.597.162.553.06.17h.105v-.097l.085-1.134.157-1.392.154-1.792.052-.504.25-.605.497-.327.387.186.319.456-.045.294-.19 1.23-.37 1.93-.243 1.29h.142l.161-.16.654-.868 1.097-1.372.484-.545.565-.601.363-.287h.686l.505.751-.226.775-.707.895-.585.759-.839 1.13-.524.904.048.072.125-.012 1.897-.403 1.024-.186 1.223-.21.553.258.06.263-.218.536-1.307.323-1.533.307-2.284.54-.028.02.032.04 1.029.098.44.024h1.077l2.005.15.525.346.315.424-.053.323-.807.411-3.631-.863-.872-.218h-.12v.073l.726.71 1.331 1.202 1.667 1.55.084.383-.214.302-.226-.032-1.464-1.101-.565-.497-1.28-1.077h-.084v.113l.295.432 1.557 2.34.08.718-.112.234-.404.141-.444-.08-.911-1.28-.94-1.44-.759-1.291-.093.053-.448 4.821-.21.246-.484.186-.403-.307-.214-.496.214-.98.258-1.28.21-1.016.19-1.263.112-.42-.008-.028-.092.012-.953 1.307-1.448 1.957-1.146 1.227-.274.109-.477-.247.045-.44.266-.39 1.586-2.018.956-1.25.617-.723-.004-.105h-.036l-4.212 2.736-.75.096-.324-.302.04-.496.154-.162 1.267-.871z"/></svg>';
+  var n=(localStorage.getItem('claude_name')||'').trim();
+  document.getElementById('name').textContent=n||'Claude';
+})();
+
+var stage=document.getElementById('stage'),statusEl=document.getElementById('status');
+var LABEL={listening:'在听你说…',speaking:'正在说话',thinking:'在想…'};
+function setState(s){stage.dataset.state=s;statusEl.textContent=LABEL[s]||''}
+
+// 计时
+var sec=0;setInterval(function(){sec++;
+  document.getElementById('timer').textContent=
+    String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
+},1000);
+
+function toggleMute(){var b=document.getElementById('muteBtn');b.classList.toggle('on');
+  document.getElementById('muteLbl').textContent=b.classList.contains('on')?'已静音':'静音'}
+function hangup(){setState('listening');alert('挂断（原型：这里接 _hangupCall）')}
+function minimize(){alert('收起（原型：这一层淡出，回到聊天流，通话继续）')}
+
+// 演示：新语音条照常从下面长出来
+var DEMO=['我在。','你说，我听着。','这个点了还不睡，是不是又在改东西。'];
+function pushDemo(){
+  var el=document.getElementById('liveLine');
+  el.classList.add('out');
+  setTimeout(function(){
+    el.textContent=DEMO[Math.floor(Math.random()*DEMO.length)];
+    el.classList.remove('out');
+  },400);
+  setState('speaking');
+  setTimeout(function(){setState('listening')},2600);
+}
+</script>
+</body>
+</html>
