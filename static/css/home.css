@@ -914,13 +914,13 @@ html[data-theme="dark"] #todoSheet{background:linear-gradient(180deg, #252220 0%
 .browser-url{font:13px/1.4 var(--font-mono);color:var(--text-primary);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;max-width:100%}
 /* ── 闹钟通知 toast ── */
 .alarm-toast{position:fixed;top:calc(env(safe-area-inset-top, 0px) + 70px);left:50%;transform:translateX(-50%);z-index:200;display:flex;align-items:center;gap:10px;padding:14px 22px;background:rgba(30,27,24,.94);color:#fff;border-radius:20px;font:14px var(--font-sans);box-shadow:0 12px 40px rgba(0,0,0,.35);cursor:pointer;animation:alarmIn .35s cubic-bezier(.34,1.56,.64,1);max-width:calc(100% - 40px);white-space:nowrap}
-.alarm-toast span:first-child{font-size:22px}
+/* 09-15 她不要 ⏰：toast 里不再有图标 span，第一个 span 就是正文，别再放大 */
 @keyframes alarmIn{from{opacity:0;transform:translateX(-50%) translateY(-20px) scale(.9)}to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
 /* ── 待办按钮红点 ── */
 .capsule-btn{position:relative}.capsule-badge{position:absolute;top:-4px;right:-4px;min-width:17px;height:17px;padding:0 5px;background:#E54D2E;color:#fff;font:700 10px/17px var(--font-sans);border-radius:9px;text-align:center;box-shadow:0 2px 6px rgba(229,77,46,.4);z-index:2;pointer-events:none}
 /* 闹钟通知 toast */
 .alarm-toast{position:fixed;top:calc(env(safe-area-inset-top, 0px) + 70px);left:50%;transform:translateX(-50%);z-index:200;display:flex;align-items:center;gap:10px;padding:14px 22px;background:rgba(30,27,24,.94);color:#fff;border-radius:20px;font:14px var(--font-sans);box-shadow:0 12px 40px rgba(0,0,0,.35);cursor:pointer;animation:alarmIn .35s cubic-bezier(.34,1.56,.64,1);max-width:calc(100% - 40px)}
-.alarm-toast span:first-child{font-size:22px}
+/* 09-15 她不要 ⏰：toast 里不再有图标 span，第一个 span 就是正文，别再放大 */
 @keyframes alarmIn{from{opacity:0;transform:translateX(-50%) translateY(-20px) scale(.9)}to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
 /* 待办按钮红点 */
 .capsule-btn{position:relative}.capsule-badge{position:absolute;top:-4px;right:-4px;min-width:17px;height:17px;padding:0 5px;background:#E54D2E;color:#fff;font:700 10px/17px var(--font-sans);border-radius:9px;text-align:center;box-shadow:0 2px 6px rgba(229,77,46,.4);z-index:2;pointer-events:none}

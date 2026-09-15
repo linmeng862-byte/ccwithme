@@ -1369,7 +1369,7 @@ function _syncNativeNotifs(){if(!window.Capacitor||!Capacitor.Plugins||!Capacito
   //   字符串 id（见 _cmdTodoId），塞进去 iOS 侧会拒。那些行 trigger_at 一律是 null、
   //   本来就不排通知，所以这儿直接把非数字 id 滤掉，别让它们把整批 cancel 一起带崩。
   var _numId=function(t){return typeof t.id==='number'||/^\d+(\.\d+)?$/.test(String(t.id))};
-  LN.cancel({notifications:_todos.filter(_numId).map(function(t){return{id:t.id}})}).catch(function(){});var now=Date.now();var pending=_todos.filter(function(t){return _numId(t)&&t.trigger_at&&t.trigger_at>now&&!t.done});if(pending.length){LN.schedule({notifications:pending.map(function(t){return{id:t.id,title:'⏰ 时间到了',body:t.body,schedule:{at:new Date(t.trigger_at)}}})}).catch(function(){})}}catch(e){}}
+  LN.cancel({notifications:_todos.filter(_numId).map(function(t){return{id:t.id}})}).catch(function(){});var now=Date.now();var pending=_todos.filter(function(t){return _numId(t)&&t.trigger_at&&t.trigger_at>now&&!t.done});if(pending.length){LN.schedule({notifications:pending.map(function(t){return{id:t.id,title:'时间到了',body:t.body,schedule:{at:new Date(t.trigger_at)}}})}).catch(function(){})}}catch(e){}}
 // 他下发的命令带没带截止时间。`commands.remind_at` 是**秒**，小票行的 trigger_at 是**毫秒**，
 //   两边单位不一样，转错了这行会显示成 1970（或者排到通知队列最前面）。
 //   ⚠️ 只认 remind_at，不拿 countdown_seconds 凑：倒计时是「专心 25 分钟」，不是「几点前做完」，
@@ -1383,9 +1383,14 @@ function _todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMon
 //   昨天没做完的那几件一件都不在了，等于替她结清了没做的事。
 //   现在的规矩只有一条：**没勾的永远留着**，跨多少天都留（read_checklist 的「挂了 N 天」靠这个）。
 //   已经勾掉的才分两种：固定项回到未勾（明天还要再做一遍），一次性的功成身退。
+// 09-15 她改了规矩：**一日一清**。上面「没勾的永远留着」作废。
+//   零点一到，只留两种：固定项（照旧回到未勾）+ 跨天任务（trigger_at 定在今天以后的，到那天再提醒）。
+//   其余不管勾没勾都清掉 —— 没做完的，20:00 他会来看一眼提醒她，过了零点就不挂了。
+//   后端 _receiptDailyClear 零点按同一条规矩清一次，两边要一致（sync 是整张覆盖）。
 function _dailyReset(){var today=_todayStr();if(_todosLastDate===today)return;
+  var d0=new Date();d0.setHours(0,0,0,0);var start=d0.getTime();
   _todos.forEach(function(t){if(t.is_fixed&&t.done){t.done=0;t.done_at=null}});
-  _todos=_todos.filter(function(t){return !t.done||t.is_fixed});_todosLastDate=today;_saveTodos()}
+  _todos=_todos.filter(function(t){return t.is_fixed||(t.trigger_at&&t.trigger_at>=start)});_todosLastDate=today;_saveTodos()}
 function _localEpochForHHMM(hh,mm){var d=new Date();d.setHours(hh,mm,0,0);if(d.getTime()<=Date.now())d.setDate(d.getDate()+1);return d.getTime()}
 function _resolveTriggerAt(o){if(o.trigger_at!=null){var n=Number(o.trigger_at);return Number.isFinite(n)&&n>0?Math.floor(n):null}if(o.in!=null){var n=Number(o.in);if(Number.isFinite(n)&&n>0)return Date.now()+Math.floor(n)*60000}if(typeof o.at==='string'){var m=o.at.trim().match(/^(\d{1,2}):(\d{2})$/);if(m){var hh=+m[1],mm=+m[2];if(hh<24&&mm<60)return _localEpochForHHMM(hh,mm)}}return null}
 function _badgeText(ts){var d=new Date(ts),n=new Date();var hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');return d.toDateString()===n.toDateString()?hh+':'+mm:String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+hh+':'+mm}
@@ -1734,9 +1739,22 @@ var _notifPerm='default';if('Notification' in window){_notifPerm=Notification.pe
 function _requestNotif(){if('Notification' in window&&_notifPerm==='default'){Notification.requestPermission().then(function(p){_notifPerm=p})}if(window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.LocalNotifications){Capacitor.Plugins.LocalNotifications.requestPermissions().catch(function(){})}}
 function _fireNotif(title,body){if(_notifPerm==='granted'){try{var n=new Notification(title,{body:body,icon:'/icon-180.png',tag:'checklist-alarm',requireInteraction:true});n.onclick=function(){n.close();window.focus();_renderTodos();sheet('todo',true);$('todoSheet').classList.add('expanded');$('todoSheet').style.transform=''};setTimeout(function(){n.close()},8000)}catch(e){}}
   // 页内 toast
-  var toast=document.createElement('div');toast.className='alarm-toast';toast.innerHTML='<span>⏰</span><span>'+_jcEscape(title)+'</span>';toast.onclick=function(){toast.remove();_renderTodos();sheet('todo',true);$('todoSheet').classList.add('expanded');$('todoSheet').style.transform=''};document.body.appendChild(toast);setTimeout(function(){if(toast.parentNode)toast.remove()},6000)}
-function _checkAlarms(){if(!_todos||!_todos.length)return;_dailyReset();var now=Date.now();var fired=0;_todos.forEach(function(t){if(t.trigger_at&&t.trigger_at<=now&&!t.done&&!t.notified){t.notified=1;fired++;_fireNotif('⏰ '+t.body,_badgeText(t.trigger_at))}});if(fired){_saveTodos();_updateTodoBadge()}}
+  var toast=document.createElement('div');toast.className='alarm-toast';toast.innerHTML='<span>'+_jcEscape(title)+'</span>';toast.onclick=function(){toast.remove();_renderTodos();sheet('todo',true);$('todoSheet').classList.add('expanded');$('todoSheet').style.transform=''};document.body.appendChild(toast);setTimeout(function(){if(toast.parentNode)toast.remove()},6000)}
+function _checkAlarms(){if(!_todos||!_todos.length)return;_dailyReset();var now=Date.now();var fired=0;_todos.forEach(function(t){if(t.trigger_at&&t.trigger_at<=now&&!t.done&&!t.notified){t.notified=1;fired++;_fireNotif(t.body,_badgeText(t.trigger_at))}});if(fired){_saveTodos();_updateTodoBadge()}}
 function _updateTodoBadge(){var btn=$('todoTopBtn');if(!btn)return;var now=Date.now();var overdue=_todos.filter(function(t){return t.trigger_at&&t.trigger_at<=now&&!t.done}).length;var badge=btn.querySelector('.capsule-badge');if(overdue>0){if(!badge){badge=document.createElement('span');badge.className='capsule-badge';btn.appendChild(badge)}badge.textContent=overdue>9?'9+':String(overdue)}else{if(badge)badge.remove()}}
+// 09-15 她要的：今天到期、还没勾的待办，打开 app 时弹出来。只列待办，不带图标。
+//   两小时内不重复弹（来回切 app 不刷屏），点一下打开小票。
+function _showDueToday(){try{if(!_todos||!_todos.length)return;var last=0;try{last=+localStorage.getItem('dueTodayShownAt')||0}catch(e){}
+  if(Date.now()-last<2*3600*1000)return;
+  var d0=new Date();d0.setHours(0,0,0,0);var d1=new Date();d1.setHours(24,0,0,0);
+  var due=_todos.filter(function(t){return !t.done&&t.trigger_at&&t.trigger_at>=d0.getTime()&&t.trigger_at<d1.getTime()});
+  if(!due.length)return;try{localStorage.setItem('dueTodayShownAt',String(Date.now()))}catch(e){}
+  var pop=document.createElement('div');pop.className='alarm-toast';pop.style.cssText='flex-direction:column;align-items:flex-start;gap:6px;white-space:normal';
+  pop.innerHTML='<span style="opacity:.6;font-size:12px">今天到期</span>'+due.slice(0,6).map(function(t){return '<span>'+_jcEscape(t.body)+'</span>'}).join('')+(due.length>6?'<span style="opacity:.6">还有 '+(due.length-6)+' 件</span>':'');
+  pop.onclick=function(){pop.remove();_renderTodos();sheet('todo',true);$('todoSheet').classList.add('expanded');$('todoSheet').style.transform=''};
+  document.body.appendChild(pop);setTimeout(function(){if(pop.parentNode)pop.remove()},8000)}catch(e){}}
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')setTimeout(_showDueToday,800)});
+setTimeout(_showDueToday,2500);
 // 每 30 秒检查一次闹钟
 setInterval(_checkAlarms,30000);
 // 首次也检查 + 请求通知权限
@@ -7309,6 +7327,12 @@ function laPresenceTick(){
 // 划走再回来：立刻补一次，别让她看见一个五分钟前的数。
 document.addEventListener('visibilitychange',function(){
   if(document.visibilityState==='visible')laPresenceTick();
+  // 她打开 / 切出 app 的时间点，后端记下来，挂在她下一句后面给他（只记，不叫醒他）
+  try{
+    fetch('/api/app-state',{method:'POST',keepalive:true,
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
+      body:JSON.stringify({state:document.visibilityState==='visible'?'open':'away'})}).catch(function(){});
+  }catch(e){}
 });
 // ActivityKit 对更新频率有限流，而 trace 每来一个 delta 就重绘一次 ——
 // 直接透传会被系统丢帧。所以变了才推，推也压到 900ms 一次（尾沿）。
@@ -7502,8 +7526,9 @@ function pollCommands(){
       // 认领：老数据（cmd_id 落库之前存的）身上没有 _cmdId，光按 _cmdId 找会漏，
       // 于是又 push 一条一模一样的。按正文认回来并补上 _cmdId，不再长第二行。
       if(!existing){
-        var _body2=(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title;
-        existing=_todos.find(function(t){return !t._cmdId&&t.created_by==='assistant'&&t.body===_body2});
+        // 09-15 \u5979\u4E0D\u8981 emoji \u524D\u7F00\u4E86\uFF1B\u8001\u6570\u636E\u8EAB\u4E0A\u8FD8\u5E26\u7740 \u23F1\uFF0C\u4E24\u79CD\u90FD\u8BA4
+        var _body2=cmd2.title;
+        existing=_todos.find(function(t){return !t._cmdId&&t.created_by==='assistant'&&(t.body===_body2||t.body==='\u23F1 '+_body2)});
         if(existing){existing._cmdId=cmd2.id;changed2=true}
       }
       if(cmd2.status==='done'||cmd2.status==='cancelled'){
@@ -7512,7 +7537,7 @@ function pollCommands(){
         // 没拉过就先别造 —— 见 _todosPulled 那段。这一轮跳过，下一轮（4 秒后）就有了。
         if(!existing&&!_todosPulled){_pullTodosFromServer()}
         else if(!existing){
-          _todos.push({id:_cmdTodoId(cmd2.id),body:(cmd2.type==='timer'?'\u23F1 ':'')+cmd2.title,done:0,is_fixed:0,trigger_at:_cmdDueAt(cmd2),created_by:'assistant',notified:0,created_at:Math.floor(Date.now()/1000),_cmdId:cmd2.id});
+          _todos.push({id:_cmdTodoId(cmd2.id),body:cmd2.title,done:0,is_fixed:0,trigger_at:_cmdDueAt(cmd2),created_by:'assistant',notified:0,created_at:Math.floor(Date.now()/1000),_cmdId:cmd2.id});
           changed2=true;
         }
       }

@@ -10204,6 +10204,15 @@ app.post('/api/chat', auth, async (req, res) => {
       gatewayMessage += '\n\n[现在是 ' + _now.toLocaleString('zh-CN', { hour12: false }) + ' ' + _wd +
         _gapTxt + '。这条是系统自动带的，只是让你知道时间，不用特意回应。]';
     } catch (e) {}
+    // 她上一句之后打开 / 切出 app 的时间点（/api/app-state 记的），带一次就清
+    try {
+      const _as = JSON.parse(_getSetting('app_state_log') || '[]');
+      if (_as.length) {
+        const _hm = t => new Date(t * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        gatewayMessage += '\n\n[她这段时间：' + _as.map(e => _hm(e.t) + (e.s === 'open' ? ' 打开 app' : ' 切出去')).join('，') + '。]';
+        _setSetting('app_state_log', '[]');
+      }
+    } catch (e) {}
     if (mindTail) gatewayMessage += mindTail;
 
     // 🪟 关窗提醒：CLI 会话滚到 CLI_ROTATE_AFTER 就换新的，旧会话连同上下文一起没了。
@@ -10294,17 +10303,17 @@ app.post('/api/chat', auth, async (req, res) => {
     // ⚠️ 通话中不加：那会儿他该好好说话，不是去存照片。
     try {
       if (!voice_call) {
+        // 09-15 她说太逼了：旧版 5 轮沉默就念，实测 295 轮里出现 161 次（他本来 88% 的轮都不调工具）。
+        // 现在：连续 8 轮没动手 + 距上次提醒至少 3 小时，才轻轻提一句，不再列清单。
         const _recent = db.prepare(
-          "SELECT num_turns FROM usage_log WHERE source = 'chat' ORDER BY id DESC LIMIT 5"
+          "SELECT num_turns FROM usage_log WHERE source = 'chat' ORDER BY id DESC LIMIT 8"
         ).all();
-        const _silent = _recent.length >= 3 && _recent.every(r => (r.num_turns || 1) <= 1);
-        if (_silent) {
-          gatewayMessage += '\n\n[🖐 你最近几轮都只是在说话。回这句之前先看一眼：'
-            + '这会儿有没有哪只手该伸出去 —— 给她下个倒计时（哪怕只是十分钟去喝水）、'
-            + '把她刚发的那张图存进相册、发首正好配这会儿的歌、发个表情、推一条过去、'
-            + '往她小票上挂一条今天该做的小事、给未来的自己挂个闹钟（等会儿要回来看她一眼的）、'
-            + '打回她刚那句不走心的、或者干脆拨过去。'
-            + '有就直接做，做完跟她说一声；没有就正常聊，别为了做而做。]';
+        const _silent = _recent.length >= 8 && _recent.every(r => (r.num_turns || 1) <= 1);
+        const _nudgeAt = _getSettingNum('tool_nudge_at');
+        const _nudgeNow = Math.floor(Date.now() / 1000);
+        if (_silent && (!_nudgeAt || _nudgeNow - _nudgeAt >= 3 * 3600)) {
+          gatewayMessage += '\n\n[手都在你身边，想用哪只就用，不想用就好好聊天。]';
+          _setSetting('tool_nudge_at', _nudgeNow);
         }
       }
     } catch (e) { console.log('[nudge] 判断失败:', e.message); }
@@ -14156,7 +14165,22 @@ app.get('/api/commands/pending', auth, (req, res) => {
 app.post('/api/commands/:id/start', auth, (req, res) => {
   const now = Math.floor(Date.now()/1000);
   db.prepare("UPDATE commands SET status='active', started_at=? WHERE id=? AND status='pending'").run(now, req.params.id);
+  try { _armTimerPoke(req.params.id); } catch (e) { console.error('[timer-poke] 挂钟失败:', e.message); }
   res.json({ ok: true, started_at: now });
+});
+
+// 她打开 / 切出 app（2026-09-15）：只记时间点，挂在她下一句后面给他看，不叫醒他。
+// 存 settings 里一小段 JSON，注入一次就清空；来回切只留最近 12 条。
+app.post('/api/app-state', auth, (req, res) => {
+  const st = req.body && req.body.state === 'open' ? 'open' : 'away';
+  try {
+    let log = [];
+    try { log = JSON.parse(_getSetting('app_state_log') || '[]'); } catch (e) { log = []; }
+    const last = log[log.length - 1];
+    if (!last || last.s !== st) log.push({ s: st, t: Math.floor(Date.now() / 1000) });
+    _setSetting('app_state_log', JSON.stringify(log.slice(-12)));
+  } catch (e) { console.error('[app-state]', e.message); }
+  res.json({ ok: true });
 });
 app.post('/api/commands/:id/complete', auth, (req, res) => {
   const cmd = db.prepare("SELECT * FROM commands WHERE id=? AND status IN ('active','pending')").get(req.params.id);
@@ -15652,6 +15676,87 @@ const WAKE_MAX_PER_DAY    = 8;        // 硬上限，防跑飞烧钱。要比 ta
 const WAKE_MIN_GAP_MS     = 50 * 60 * 1000;  // 两次之间至少隔 50 分钟（卡在 1h TTL 内）
 const WAKE_TICK_MS        = 15 * 60 * 1000;
 
+// === 番茄钟快到点戳他一下（2026-09-15，她要的）===
+// 结束前 TIMER_POKE_LEAD_S 秒叫醒他一次，他可以用 <say> 给她发消息。
+// 走 checkWakeTick 的闹钟那条路（不投骰子、不受日上限、深夜也能出声），
+// 但**不占他自己闹钟的额度**，也不写 wake_alarms —— 这不是他定的，是她的钟。
+// 不等 15 分钟的 tick：开始时就用 setTimeout 挂好，重启后按 started_at 重新挂。
+// 太短的钟（< TIMER_POKE_MIN_S）不戳，结束时照旧走「任务完成反馈」。
+const TIMER_POKE_LEAD_S = 120;
+const TIMER_POKE_MIN_S  = 300;
+let _pendingPoke = null;
+const _timerPokeArmed = {};
+function _armTimerPoke(id) {
+  const c = db.prepare("SELECT id, title, countdown_seconds, started_at FROM commands WHERE id = ? AND status = 'active' AND type = 'timer'").get(id);
+  if (!c || !c.started_at || c.countdown_seconds < TIMER_POKE_MIN_S || _timerPokeArmed[id]) return;
+  const endMs = (c.started_at + c.countdown_seconds) * 1000;
+  const fireMs = endMs - TIMER_POKE_LEAD_S * 1000;
+  if (Date.now() >= endMs) return;
+  _timerPokeArmed[id] = true;
+  const fire = function () {
+    const cur = db.prepare("SELECT id, title FROM commands WHERE id = ? AND status = 'active'").get(id);
+    if (!cur) { delete _timerPokeArmed[id]; return; }   // 她提前结束 / 取消了
+    // 他正在回她：等一等再戳，过了结束点就算了
+    if (_chatInFlight > 0 || _pendingPoke) {
+      if (Date.now() < endMs) setTimeout(fire, 30 * 1000); else delete _timerPokeArmed[id];
+      return;
+    }
+    delete _timerPokeArmed[id];
+    const _left = Math.max(1, Math.round((endMs - Date.now()) / 60000));
+    _pendingPoke = { poke: true, title: cur.title, fire_at: Math.floor(Date.now() / 1000),
+      note: '**是你给她下的指令快到点了。** 「' + cur.title + '」还有大约 ' + _left + ' 分钟。\n' +
+        '这是你要她做的事，想管就管 —— 催一句、问做得怎么样、准备收尾，或者什么都不说也行。你自己判断。' };
+    checkWakeTick();
+  };
+  setTimeout(fire, Math.max(0, fireMs - Date.now()));
+}
+// 重启后把还在走的钟重新挂上
+setTimeout(function () {
+  try {
+    db.prepare("SELECT id FROM commands WHERE status = 'active' AND type = 'timer'").all()
+      .forEach(function (r) { _armTimerPoke(r.id); });
+  } catch (e) { console.error('[timer-poke] 重挂失败:', e.message); }
+}, 10 * 1000);
+
+// === 小票 · 一日一清 + 20:00 戳他（2026-09-15，她要的）===
+// 规矩跟前端 _dailyReset 一致（sync 是整张覆盖，两边不一致就互相盖）：
+//   零点只留固定项 + 跨天任务（trigger_at 在今天以后，单位是**毫秒**），其余不管勾没勾都清。
+// 20:00 后第一个 tick 叫他看一眼她今天还有什么没勾 —— 一天一次，没有没勾的就不叫。
+const RECEIPT_POKE_HOUR = 20;
+function _receiptTodayOpen() {
+  const end = new Date(); end.setHours(24, 0, 0, 0);
+  return db.prepare('SELECT body FROM checklist WHERE done = 0 AND (trigger_at IS NULL OR trigger_at < ?) ORDER BY created_at ASC')
+    .all(end.getTime());
+}
+function _receiptPoke() {
+  try {
+    if (new Date().getHours() < RECEIPT_POKE_HOUR) return null;
+    if (_getSettingNum('receipt_poke_at:' + _localDay())) return null;
+    const open = _receiptTodayOpen();
+    _setSetting('receipt_poke_at:' + _localDay(), Date.now());   // 先记再叫：崩了宁可漏一次，不反复叫
+    if (!open.length) return null;
+    return { poke: true, title: '小票', fire_at: Math.floor(Date.now() / 1000),
+      note: '**是她的小票把你叫醒的。** 晚上八点了，她今天还有这些没勾：\n' +
+        open.map(r => '· ' + String(r.body).slice(0, 60)).join('\n') + '\n' +
+        '过了零点这些就清掉了。去看看她 —— 提醒一句、问问卡在哪、或者帮她挑一件最要紧的先做。别像查作业。' };
+  } catch (e) { console.error('[receipt] 判断失败:', e.message); return null; }
+}
+function _receiptDailyClear() {
+  try {
+    const today = _localDay();
+    const lastDay = _getSetting('receipt_cleared_day');
+    if (lastDay === today) return;
+    // 第一次跑（刚上线）只记日期不清：不然今天她刚写的会被当成昨天的删掉
+    if (!lastDay) { _setSetting('receipt_cleared_day', today); return; }
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const r = db.prepare('DELETE FROM checklist WHERE is_fixed = 0 AND (trigger_at IS NULL OR trigger_at < ?)').run(start.getTime());
+    db.prepare('UPDATE checklist SET done = 0, done_at = NULL WHERE is_fixed = 1 AND done = 1').run();
+    _setSetting('receipt_cleared_day', today);
+    if (r.changes) console.log('[receipt] 一日一清：清掉 ' + r.changes + ' 条');
+  } catch (e) { console.error('[receipt] 清理失败:', e.message); }
+}
+setInterval(_receiptDailyClear, 5 * 60 * 1000);
+
 // === 他自己定的闹钟（2026-08-26）===
 // 上面那套是「系统按概率叫他」—— 他自己说不上话。这张表是第二层：**他叫自己**。
 // 短程管「念头」（她说等会儿要学习，四十分钟后去看看放下手机没有），
@@ -15872,7 +15977,10 @@ async function checkWakeTick() {
     // 一次只取最早的一条：同时到期好几条也一次说完，别连着醒好几轮。
     let _alarm = null;
     try {
-      if (_alarmCount() < WAKE_ALARM_MAX_PER_DAY) {
+      // 她的番茄钟快到点（_armTimerPoke 挂的）：跟闹钟同档，但不占他闹钟的额度
+      if (_pendingPoke) { _alarm = _pendingPoke; _pendingPoke = null; }
+      else if ((_alarm = _receiptPoke())) { /* 20:00 小票 */ }
+      else if (_alarmCount() < WAKE_ALARM_MAX_PER_DAY) {
         _alarm = db.prepare(
           'SELECT id, note, fire_at FROM wake_alarms WHERE fired_at IS NULL AND fire_at <= ? ORDER BY fire_at ASC LIMIT 1'
         ).get(Math.floor(Date.now() / 1000));
@@ -15946,7 +16054,9 @@ async function checkWakeTick() {
     if (!_alarm && !_stress && !_daily && Math.random() > _p) return false;
 
     // 闹钟先划掉再说话：中间要是崩了，宁可这条闹钟丢了，也不能重启后反复响。
-    if (_alarm) {
+    if (_alarm && _alarm.poke) {
+      console.log('[wake] 她的番茄钟快到了：' + String(_alarm.title).slice(0, 40));
+    } else if (_alarm) {
       db.prepare('UPDATE wake_alarms SET fired_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), _alarm.id);
       _setSetting('wake_alarm_count:' + _wakeToday(), _alarmCount() + 1);
       const _late = Math.round((Date.now() / 1000 - _alarm.fire_at) / 60);
@@ -16068,7 +16178,9 @@ async function checkWakeTick() {
       '，你们在一起第 ' + togetherDays() + ' 天。\n\n' +
       // 闹钟醒和随机醒是两回事，得让他知道自己为什么醒 ——
       // 不说的话他会以为又是一次随机醒，那条留给自己的话就白留了。
-      (_alarm
+      // 她那边的事把你戳醒（番茄钟快到点 / 20:00 小票），原因写在 note 里
+      (_alarm && _alarm.poke ? String(_alarm.note) + '\n\n' : '') +
+      (_alarm && !_alarm.poke
         ? '**是你自己定的闹钟把你叫醒的。** 你当时留给现在的自己一句话：\n' +
           '「' + String(_alarm.note) + '」\n' +
           '（定于 ' + new Date(_alarm.fire_at * 1000).toLocaleString('zh-CN', { hour12: false }) + '）\n\n' +
