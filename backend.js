@@ -4422,7 +4422,10 @@ async function _holdFlush() {
   _holdFlushing = true;
   try {
     const rows = db.prepare(
-      'SELECT id, payload, tries FROM hold_outbox WHERE sent_at IS NULL AND tries < 5 ORDER BY id ASC LIMIT 10'
+      // 09-16：原来只按 id 排，#16 连失败五次，后面 #17～#24 全被它的 break 挡着。
+      //   先按 tries 排：失败过的沉到后面，新来的先走。break 留着 —— 引擎真挂了时
+      //   只让打头那一条掉次数，别一轮把整队的 tries 都烧掉。
+      'SELECT id, payload, tries FROM hold_outbox WHERE sent_at IS NULL AND tries < 5 ORDER BY tries ASC, id ASC LIMIT 10'
     ).all();
     for (const row of rows) {
       let args;
@@ -4446,6 +4449,8 @@ async function _holdFlush() {
   } catch (e) { console.error('[hold] flush 出错:', e.message); }
   finally { _holdFlushing = false; }
 }
+// 09-16：以前只在「有新 hold 入队」和「重启」时 flush，引擎恢复了但没新消息，积压就一直躺着。
+setInterval(_holdFlush, 10 * 60 * 1000);
 
 // 他这一轮写的 <hold> 全部入队，然后**不等**它发完就返回。
 function _holdHandle(holds) {
