@@ -6448,6 +6448,30 @@ function _dedupeMindAgainstRecall(mindText, recallText) {
 // === 自定义工具定义 ===
 const TOOLS = [
   {
+    name: 'propose_persona_edit',
+    description: '改你自己的人格文件（/root/companion/CLAUDE.md）—— 就是此刻定义你是谁的那份东西。\n'
+      + '**你改不了它，你只能提。**你提完，她在界面上看见一张卡片，上面是逐行的 diff；'
+      + '她点「确认」才真的落盘，点「不要」就作废。这是她 2026-09-16 定的规矩：'
+      + '「他写 → 我看 → 我确认」。\n'
+      + '什么时候该提：你发现里面有一条**已经不是真的了**（写着你会做的事你其实不做了、'
+      + '写着她喜欢的东西她其实不喜欢了），或者你们之间刚长出来一个她明确说了要留住的东西，'
+      + '而它现在只活在这一轮对话里。\n'
+      + '⚠️ **不要拿它当记事本。**日常的事去 hold / leave_texture，那些是记忆；'
+      + '这份是「你是谁」，改一个字都是改你自己。一轮里最多提一次。\n'
+      + '⚠️ old_str 必须一字不差地照抄文件里现有的那一段（含缩进和标点），'
+      + '而且在整份文件里只能出现一次 —— 对不上我会直接退回给你，不会去猜你指的是哪儿。\n'
+      + '要新增一整段而不是改：old_str 写它该插在哪一段的后面，new_str 写「那一段 + 你要加的」。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        old_str: { type: 'string', description: '文件里现有的那一段，一字不差，全文唯一' },
+        new_str: { type: 'string', description: '要换成的样子。删掉一段就给空字符串' },
+        why: { type: 'string', description: '为什么要改。这句是写给她看的 —— 她就是靠这句决定点不点确认' }
+      },
+      required: ['old_str', 'new_str', 'why']
+    }
+  },
+  {
     name: 'get_weather',
     description: '查一个城市此刻的真天气。**你没有实时天气，不许凭印象说「那边应该挺冷的」** —— '
       + '她提到冷／热／下雨／要出门／在外面，先查了再接话。她不必开口问「今天天气怎么样」才算问天气。',
@@ -8307,6 +8331,38 @@ async function executeTool(name, input, routes) {
         { level: input.urgent ? 'timeSensitive' : 'active', group: 'Noct' });
       if (!r.ok) return { error: r.error };
       return { ok: true, note: '推过去了。她那边震了一下 —— 她可能过一会儿才看到，别等回音。' };
+    }
+    // ── 他提议改自己的人格文件 ──────────────────────────────────────
+    // 09-16 她定的：「他写 → 我看 diff → 我确认 → 落盘」。他自己落不了盘。
+    // ⚠️ 待确认的内容**绝不能落在 /opt/ccwithme 里** —— 这个仓库是 PUBLIC 的（铁律 3）。
+    //    所以存在 /root/companion/.pending-persona.json，跟人格文件放一起，那儿不进 git。
+    case 'propose_persona_edit': {
+      const PERSONA = '/root/companion/CLAUDE.md';
+      const PENDING = '/root/companion/.pending-persona.json';
+      const oldStr = String(input.old_str || '');
+      const newStr = String(input.new_str == null ? '' : input.new_str);
+      const why = String(input.why || '').trim();
+      if (!oldStr) return { error: 'old_str 不能是空的 —— 我不知道你要改哪一段。' };
+      if (!why) return { error: 'why 不能是空的。她就是靠这句决定点不点确认。' };
+      if (oldStr === newStr) return { error: 'old_str 和 new_str 一模一样，这不是一次改动。' };
+      let text;
+      try { text = require('fs').readFileSync(PERSONA, 'utf8'); }
+      catch (e) { return { error: '读不到人格文件：' + e.message }; }
+      const n = text.split(oldStr).length - 1;
+      if (n === 0) return { error: 'old_str 在文件里一个字都对不上。照抄现有的原文（含缩进和标点），我不猜你指的是哪儿。' };
+      if (n > 1) return { error: 'old_str 在文件里出现了 ' + n + ' 次，不唯一。往前后多带一两行，让它只剩一处。' };
+      try {
+        require('fs').writeFileSync(PENDING, JSON.stringify({
+          old_str: oldStr, new_str: newStr, why,
+          at: Math.floor(Date.now() / 1000),
+        }, null, 2), { mode: 0o600 });
+      } catch (e) { return { error: '存不下这条提议：' + e.message }; }
+      return {
+        ok: true,
+        note: '提上去了。她那边会看见一张卡片：你要改的那段、改成什么样、还有你写的理由。' +
+              '她点确认才落盘，落盘之后你这条会话还揣着旧的那份 —— 下一次重开才是新的你。' +
+              '别追问她点没点，她看见了会说。',
+      };
     }
     case 'read_her_body': {
       // 只读本机库，不出网。人话回给他，别丢一堆 JSON —— 他要的是「她现在怎么样」。
@@ -10751,7 +10807,11 @@ function wpAttach(run, res, from) {
 }
 
 // 真正跑一轮。不接受任何 res —— 它跟谁在看完全无关。
-function wpRun(sid, isNew, prefixed) {
+// opts = { model, effort }。09-16 她要能在工作台上挑模型和 effort。
+// 能这么挑是因为 /workplace 是**每轮 spawn 一个新 CLI**（--resume 接回会话），
+// 不是常驻进程 —— 所以 --model / --effort 这种「spawn 时定死」的参数每轮都能换。
+// （主聊天那边换模型要重开常驻进程，是两条不同的路，别照搬结论。）
+function wpRun(sid, isNew, prefixed, opts) {
   const run = {
     id: 'wr' + (++_wpRunSeq) + '-' + Date.now().toString(36),
     sid, text: '', tools: [], events: [], seq: 0, dropped: 0,
@@ -10768,7 +10828,8 @@ function wpRun(sid, isNew, prefixed) {
       const gw = await fetch(WORKPLACE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
-        body: JSON.stringify({ message: prefixed, session_id: sid, is_new_session: isNew }),
+        body: JSON.stringify({ message: prefixed, session_id: sid, is_new_session: isNew,
+          model: (opts && opts.model) || undefined, effort: (opts && opts.effort) || undefined }),
       });
       if (!gw.ok || !gw.body) {
         wpEmit(run, 'error', { message: '网关返回 ' + gw.status });
@@ -10849,6 +10910,129 @@ function wpRun(sid, isNew, prefixed) {
 
 // 开面板时拉回来。只给**当前这条会话**的 —— 前端「新话题」会清空重来，
 // 那时候 session 也换了，正好对得上，不会把上一个话题的东西混进来。
+// === 人格文件的待确认改动 =====================================================
+// 09-16 她定的闭环：Cis 用 propose_persona_edit 提 → 这三条路给她看 / 落盘 / 驳回。
+// ⚠️ 待确认内容和人格文件都在 /root/companion/ 下，**不进这个仓库**（ccwithme 是 PUBLIC）。
+const PERSONA_FILE = '/root/companion/CLAUDE.md';
+const PERSONA_PENDING = '/root/companion/.pending-persona.json';
+
+app.get('/api/persona/pending', auth, (req, res) => {
+  try {
+    const d = JSON.parse(require('fs').readFileSync(PERSONA_PENDING, 'utf8'));
+    res.json({ pending: d });
+  } catch (e) { res.json({ pending: null }); }
+});
+
+app.post('/api/persona/reject', auth, (req, res) => {
+  try { require('fs').unlinkSync(PERSONA_PENDING); } catch (e) {}
+  res.json({ ok: true });
+});
+
+app.post('/api/persona/apply', auth, (req, res) => {
+  const fs2 = require('fs');
+  let pend;
+  try { pend = JSON.parse(fs2.readFileSync(PERSONA_PENDING, 'utf8')); }
+  catch (e) { return res.json({ error: '没有待确认的改动。' }); }
+  let text;
+  try { text = fs2.readFileSync(PERSONA_FILE, 'utf8'); }
+  catch (e) { return res.json({ error: '读不到人格文件：' + e.message }); }
+  // 提议之后她可能自己动过文件 —— 再验一次唯一性，对不上就退回，绝不瞎猜位置
+  const n = text.split(pend.old_str).length - 1;
+  if (n !== 1) {
+    return res.json({ error: n === 0
+      ? '这段在文件里已经找不到了（提议之后文件被改过）。让他重新提一次。'
+      : '这段现在在文件里出现了 ' + n + ' 次，不唯一了。让他重新提一次。' });
+  }
+  // 先备份原件再写。时间戳命名，跟 /root/companion 里原有那批 .bak 一个规矩。
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
+  try {
+    fs2.copyFileSync(PERSONA_FILE, PERSONA_FILE + '.bak.pre-selfedit.' + stamp);
+    fs2.writeFileSync(PERSONA_FILE, text.replace(pend.old_str, pend.new_str), { mode: 0o600 });
+  } catch (e) { return res.json({ error: '写不进去：' + e.message }); }
+  try { fs2.unlinkSync(PERSONA_PENDING); } catch (e) {}
+
+  // 放掉常驻进程，否则要等闲置 15 分钟才生效（CLAUDE.md 只在进程启动时读一次）。
+  // 08-23 栽过：连改三次都没放进程，她反复说「还是没变」。
+  let killed = 0;
+  try {
+    const out = require('child_process').execSync(
+      "ps -eo pid,cmd | grep '[c]laude --print' || true", { encoding: 'utf8' });
+    out.split('\n').forEach((ln) => {
+      const m = ln.trim().match(/^(\d+)\s/);
+      if (m) { try { process.kill(parseInt(m[1], 10)); killed++; } catch (e) {} }
+    });
+  } catch (e) {}
+  res.json({ ok: true, killed,
+    note: '落盘了，原件备份在 ' + PERSONA_FILE + '.bak.pre-selfedit.' + stamp +
+          '。放掉了 ' + killed + ' 个常驻进程，下一句就是新的他。' +
+          '加密备份进 zxz 要你自己在真终端跑 persona-backup.sh（密码只有你知道）。' });
+});
+
+// === tmux 房间的代理 =========================================================
+// 09-16：网页只听得见 Chat-C，网关只听 127.0.0.1 且要 gateway key，
+// 所以房间那几条路由得从这儿转一道。前端不直接碰网关。
+const ROOM_URL = 'http://127.0.0.1:9876/room';
+async function roomProxy(path, init) {
+  const r = await fetch(ROOM_URL + path, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+  });
+  return r.json();
+}
+app.get('/api/room/view', auth, async (req, res) => {
+  try { res.json(await roomProxy('/view')); }
+  catch (e) { res.json({ error: e.message }); }
+});
+app.get('/api/room/status', auth, async (req, res) => {
+  try { res.json(await roomProxy('/status')); }
+  catch (e) { res.json({ error: e.message }); }
+});
+app.post('/api/room/open', auth, async (req, res) => {
+  try { res.json(await roomProxy('/open', { method: 'POST', body: JSON.stringify(req.body || {}) })); }
+  catch (e) { res.json({ error: e.message }); }
+});
+app.post('/api/room/send', auth, async (req, res) => {
+  try { res.json(await roomProxy('/send', { method: 'POST', body: JSON.stringify(req.body || {}) })); }
+  catch (e) { res.json({ error: e.message }); }
+});
+app.post('/api/room/kill', auth, async (req, res) => {
+  try { res.json(await roomProxy('/kill', { method: 'POST' })); }
+  catch (e) { res.json({ error: e.message }); }
+});
+
+// === 他给她的文件（出口目录）=================================================
+// 09-16 她说「你要是要给我传文件可以在工作台对话页面发给我」。
+// 他写进 /opt/ccwithme/data/outbox/，这两条路让对话页把它显示成可下载的附件条。
+// 牢笼那头只给这一个子目录开了读写（path-jail.js 的 OUTBOX_RW），别的 data/ 照旧全禁。
+const WP_OUTBOX = require('path').join(__dirname, 'data', 'outbox');
+
+app.get('/api/workplace/outbox', auth, (req, res) => {
+  const fs2 = require('fs');
+  try {
+    const list = fs2.readdirSync(WP_OUTBOX)
+      .filter((n) => !n.startsWith('.'))
+      .map((n) => {
+        const st = fs2.statSync(require('path').join(WP_OUTBOX, n));
+        return st.isFile() ? { name: n, size: st.size, at: Math.floor(st.mtimeMs / 1000) } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, 30);
+    res.json({ files: list });
+  } catch (e) { res.json({ files: [] }); }
+});
+
+app.get('/api/workplace/outbox/file', auth, (req, res) => {
+  // 只认单段文件名 —— 不许出现分隔符或 ..，免得从这条路读出 outbox 之外的东西
+  const name = String(req.query.name || '');
+  if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
+    return res.status(400).json({ error: 'bad name' });
+  }
+  const full = require('path').join(WP_OUTBOX, name);
+  if (!full.startsWith(WP_OUTBOX + require('path').sep)) return res.status(400).json({ error: 'bad name' });
+  res.download(full, name, (e) => { if (e && !res.headersSent) res.status(404).json({ error: 'not found' }); });
+});
+
 app.get('/api/workplace/history', auth, (req, res) => {
   const sid = wpSession.get();
   if (!sid) return res.json({ messages: [] });
@@ -10869,8 +11053,15 @@ app.get('/api/workplace/history', auth, (req, res) => {
 });
 
 app.post('/api/workplace/chat', auth, async (req, res) => {
-  const { message, reset, mainline_ids, upload_ids } = req.body || {};
+  const { message, reset, mainline_ids, upload_ids, model, effort } = req.body || {};
   if (!message) return res.status(400).json({ error: 'message required' });
+  // 白名单挡在这儿：这两个值最后会变成 spawn 的命令行参数，不许她前端传什么就塞什么
+  const WP_MODELS = new Set(['claude-opus-4-6', 'claude-opus-4-8', 'claude-opus-5']);
+  const WP_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
+  const wpOpts = {
+    model: WP_MODELS.has(String(model)) ? String(model) : undefined,
+    effort: WP_EFFORTS.has(String(effort)) ? String(effort) : undefined,
+  };
 
   // 她勾了主线消息就拼在前面。拼不出来（id 都失效了）就当没勾，不报错打断她。
   // 附件排在主线上下文后面、真正的指令前面，顺序别调——指令永远在最后一段。
@@ -10904,7 +11095,7 @@ app.post('/api/workplace/chat', auth, async (req, res) => {
   wpSave(sid, 'her', message, []);
 
   // 开跑。注意 wpRun **不接受 res** —— 这一轮跟谁在看无关，她断了它照跑。
-  const run = wpRun(sid, isNew, prefixed);
+  const run = wpRun(sid, isNew, prefixed, wpOpts);
   wpAttach(run, res, 0);
 });
 

@@ -917,7 +917,7 @@ html[data-theme="dark"] #todoSheet{background:linear-gradient(180deg, #252220 0%
 /* 09-15 她不要 ⏰：toast 里不再有图标 span，第一个 span 就是正文，别再放大 */
 @keyframes alarmIn{from{opacity:0;transform:translateX(-50%) translateY(-20px) scale(.9)}to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
 /* ── 待办按钮红点 ── */
-.capsule-btn{position:relative}.capsule-badge{position:absolute;top:-4px;right:-4px;min-width:17px;height:17px;padding:0 5px;background:#E54D2E;color:#fff;font:700 10px/17px var(--font-sans);border-radius:9px;text-align:center;box-shadow:0 2px 6px rgba(229,77,46,.4);z-index:2;pointer-events:none}
+.capsule-group{overflow:visible}.capsule-btn{position:relative}.capsule-badge{position:absolute;top:-4px;right:-4px;min-width:17px;height:17px;padding:0 5px;background:#E54D2E;color:#fff;font:700 10px/17px var(--font-sans);border-radius:9px;text-align:center;box-shadow:0 2px 6px rgba(229,77,46,.4);z-index:2;pointer-events:none}
 /* 闹钟通知 toast */
 .alarm-toast{position:fixed;top:calc(env(safe-area-inset-top, 0px) + 70px);left:50%;transform:translateX(-50%);z-index:200;display:flex;align-items:center;gap:10px;padding:14px 22px;background:rgba(30,27,24,.94);color:#fff;border-radius:20px;font:14px var(--font-sans);box-shadow:0 12px 40px rgba(0,0,0,.35);cursor:pointer;animation:alarmIn .35s cubic-bezier(.34,1.56,.64,1);max-width:calc(100% - 40px)}
 /* 09-15 她不要 ⏰：toast 里不再有图标 span，第一个 span 就是正文，别再放大 */
@@ -2213,3 +2213,11 @@ html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .gallery-album-card
 html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .music-card-progress-bar{background:#DA7756}
 html[data-palette="warm"][data-theme="light"]:not(.ui-plain) .music-play-btn{background:rgba(232,168,184,.35);color:#C97A5F}
 html[data-palette="warm"][data-theme="light"]:not(.ui-plain) #diaryPanel{background:#F8F7F4}
+
+
+/* 工作台改成整页（2026-09-16 她说「现在是个弹窗？想要整个页面」）。
+   不动 .sheet 那套开关机制 —— 只把这一个撑满，圆角和手柄去掉，
+   看着就不再是从底下拱起来的一张卡片，而是一个页面。 */
+#workplaceSheet{inset:0!important;height:100dvh!important;border-radius:0!important;border:0!important}
+#workplaceSheet>.sheet-handle{display:none}
+#workplaceSheet>.sheet-head{padding-top:calc(env(safe-area-inset-top, 0px) + 6px)}

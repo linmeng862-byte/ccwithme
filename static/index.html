@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789653100">
+<link rel="stylesheet" href="/css/home.css?v=1789530636">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -42,7 +42,7 @@
 <script src="/js/cinema.js?v=19"></script>
 <script src="/js/mcp.js?v=1"></script>
 <script src="/js/journey.js?v=1"></script>
-<script src="/js/workplace.js?v=11"></script>
+<script src="/js/persona-pending.js?v=1" defer></script><script src="/js/workplace.js?v=62"></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -8393,8 +8393,10 @@ $('artifactsBtn')?.addEventListener('click', () => {
   $('workplaceSheet').classList.add('expanded');
   $('workplaceSheet').style.transform='';
 });
-$('closeWorkplace')?.addEventListener('click', () => sheet('workplace',false));
-$('workplaceOverlay')?.addEventListener('click', () => sheet('workplace',false));
+// 关工作台时把房间那条轮询也停掉（09-16）——不停的话 1.5 秒一次会一直跑在后台
+const _closeWp = () => { try { window.wpRoomStop?.(); } catch (e) {} sheet('workplace', false); };
+$('closeWorkplace')?.addEventListener('click', _closeWp);
+$('workplaceOverlay')?.addEventListener('click', _closeWp);
 
 let currentProjectId = null;
 
