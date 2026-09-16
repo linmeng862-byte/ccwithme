@@ -1331,7 +1331,11 @@ function _syncTodosToServer(){if(!state.token)return;try{api('/api/checklist/syn
 //   紧接着 _saveTodos 整份覆盖服务器，把原来那几行连同 `done` 一起抹掉。
 //   拉完再造，本来就有的那几行才认得回来。
 var _todosPulled=false;
-function _pullTodosFromServer(){if(!state.token)return;api('/api/checklist').then(function(r){return r.json()}).then(function(data){_todosPulled=true;if(!data.items||!data.items.length)return;var serverMap={};data.items.forEach(function(t){if(t.cmd_id)t._cmdId=t.cmd_id;serverMap[t.id]=t});var localMap={};_todos.forEach(function(t){localMap[t.id]=t});var merged=[];for(var id in serverMap){var sv=serverMap[id];if(!sv._cmdId&&localMap[id]&&localMap[id]._cmdId)sv._cmdId=localMap[id]._cmdId;merged.push(sv)}for(var id in localMap){if(!serverMap[id])merged.push(localMap[id])}merged.sort(function(a,b){return(a.created_at||0)-(b.created_at||0)});merged=_dedupeTodos(merged);
+// 09-16：她手加的行 id 是 Date.now()（数字），better-sqlite3 把数字按 REAL 绑进 TEXT 列，
+//   存下来变成 "1789538566272.0"；拉回来按 id 合并时跟本地的 1789538566272 对不上，
+//   同一件事留两行 —— 小票每条显示两遍。合并前统一成同一种写法。
+function _todoKey(id){var n=Number(id);return Number.isFinite(n)?String(n):String(id)}
+function _pullTodosFromServer(){if(!state.token)return;api('/api/checklist').then(function(r){return r.json()}).then(function(data){_todosPulled=true;if(!data.items||!data.items.length)return;var serverMap={};data.items.forEach(function(t){if(t.cmd_id)t._cmdId=t.cmd_id;serverMap[_todoKey(t.id)]=t});var localMap={};_todos.forEach(function(t){localMap[_todoKey(t.id)]=t});var merged=[];for(var id in serverMap){var sv=serverMap[id];if(!sv._cmdId&&localMap[id]&&localMap[id]._cmdId)sv._cmdId=localMap[id]._cmdId;merged.push(sv)}for(var id in localMap){if(!serverMap[id])merged.push(localMap[id])}merged.sort(function(a,b){return(a.created_at||0)-(b.created_at||0)});merged=_dedupeTodos(merged);
   // 09-10：这个函数原来只在开页 2 秒后跑一次，现在 pollCommands 每轮都会叫它
   //   （他有了 settle_checklist，能在她那边勾掉一条 —— 不定期拉就得重开 app 才看得见）。
   //   所以必须先看「拉回来的跟手上这份到底一样不一样」：
