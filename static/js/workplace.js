@@ -450,7 +450,8 @@
       ta.value = v;
       doSend();
     }
-    function wsSendClick() { wsSend(); wsIn.focus(); }
+    function wsSendClick() { wsSend(); }
+    wsEnter.addEventListener('pointerdown', function (e) { e.preventDefault(); });
     wsEnter.onclick = wsSendClick;
     wsIn.addEventListener('input', function () { if (roomOn) paintTail(); });
     wsIn.onkeydown = function (e) {
@@ -509,13 +510,11 @@
     // 规矩没变：每个键都是真的。符号键就是往输入框里插那个字符。
     var ctrlOn = false;
     function setCaret(d) {
-      wsIn.focus();
       var i2 = wsIn.selectionStart == null ? wsIn.value.length : wsIn.selectionStart;
       var n = Math.max(0, Math.min(wsIn.value.length, i2 + d));
       wsIn.setSelectionRange(n, n);
     }
     function insert(ch) {
-      wsIn.focus();
       var a = wsIn.selectionStart == null ? wsIn.value.length : wsIn.selectionStart;
       var b = wsIn.selectionEnd == null ? a : wsIn.selectionEnd;
       wsIn.value = wsIn.value.slice(0, a) + ch + wsIn.value.slice(b);
@@ -531,7 +530,11 @@
       var b = h('button', 'flex:' + (grow || '1') + ';min-width:0;padding:7px 0;border:1px solid var(--wt-shell-line);' +
         'border-radius:6px;background:var(--wt-shell-key);color:var(--wt-shell-txt);font:11px ' + MONO +
         ';cursor:pointer;-webkit-tap-highlight-color:transparent', label);
-      b.onclick = function () { fn(); wsIn.focus(); };
+      // ⚠️ **不要 focus 输入框**（09-16 她要的）：按辅助键会把 iOS 键盘顶上来，
+      //   而这排键本来就是替代键盘用的。preventDefault 挡住按下时的焦点转移，
+      //   这样焦点留在原处，键盘不弹。想打字她自己点输入框。
+      b.addEventListener('pointerdown', function (e) { e.preventDefault(); });
+      b.onclick = function () { fn(); };
       return b;
     }
     var wsKeys = h('div', 'display:flex;flex-direction:column;gap:5px;padding:0 8px calc(env(safe-area-inset-bottom) + 8px)');
@@ -547,7 +550,13 @@
       return function () { if (roomOn) roomSend('', [name]); else if (local) local(); };
     }
     row1.append(
-      keyBtn('ESC', key('Escape', function () { wsIn.value = ''; })),
+      // ESC：在 Claude Code 里是「打断正在跑的那一轮」，**不清输入**（09-16 实测）。
+      // 所以这颗按钮两件事一起做：清掉我们这边的输入框 + 送真 Escape 进房间，
+      // 再补一个 C-u 把 CLI 那行也清掉 —— 不然她按了看着像没反应。
+      keyBtn('ESC', function () {
+        wsIn.value = '';
+        if (roomOn) { roomSend('', ['Escape', 'C-u']); paintTail(); }
+      }),
       keyBtn('TAB', key('Tab', function () { goPage(curPage === PAGE_WS ? PAGE_CHAT : PAGE_WS); })),
       keyBtn('S-TAB', key('BTab')),
       ctrlBtn,
@@ -589,6 +598,7 @@
     var roomLastBody = null, roomLastTail = null;   // 上一次画的是什么，没变就别重画
     var roomThemeSent = false;                     // /config theme 一个房间只发一次
     var roomPinned = false;                        // 她翻历史时 = true，这期间不动 DOM
+    var roomScrollAt = 0;                          // 她最后一次真的滑动是什么时候
     // ⚠️ POST 的判断不能看「有没有 body」。09-16 踩到：kill 不带 body，
     //   于是被当成 GET 发出去，而 /api/room/kill 是 POST 路由 —— 永远打不中，
     //   她点长按红灯只看到「关不掉」。按路径定方法，别按 body 猜。
@@ -770,7 +780,13 @@
         //   09-16 踩过：一度改成「任何带底色的行都铺满 + 统一字色」，
         //   结果开屏那个像素 logo 每行本身带黑底，三行各自套了一条底纹带（裂成三段），
         //   字色还被统一成黑的（身子变黑、没带底的脚还是粉的）。别再放宽这个条件。
-        if (html.indexOf('data-inv="1"') === -1) return html;
+        // 界线按**颜色**分，不按「是不是反显」分（09-16 来回改了三版才对）：
+        //   浅色底（var(--wt-her)）= 她的输入条 → 铺满整行
+        //   深色底（var(--wt-bg)）  = 开屏 logo 的黑块 → 原样别动，
+        //                             一动就把螃蟹切成三段还染黑（踩过）
+        // CLI 给她那行发的是真实背景色 48;5;255，不是反显 —— 只认反显会漏掉它。
+        if (html.indexOf('data-inv="1"') === -1 &&
+            html.indexOf('background:var(--wt-her)') === -1) return html;
         return '<span style="display:block;background:var(--wt-her);color:var(--wt-txt);' +
           'margin:1px -12px;padding:1px 12px">' +
           html.replace(/background:[^;"]+;?/g, '') + '</span>';
@@ -827,13 +843,14 @@
           // ⚠️ 她往上翻历史的时候**别动 DOM**。09-16 两次踩到：
           //   每 1.5 秒重画一次，她正拖着就被打断，惯性滚动直接断掉 —— 就是「滑不动」。
           //   所以只要她不在底部，就整块跳过更新（内容先攒着，她滑回底部再补上）。
+          // ⚠️ 这把锁**只在她刚滑过的 8 秒内有效**，超时自动解开。
+          //   09-16 踩到两次：锁一旦卡住，画面就永远不刷新 ——
+          //   她 /clear 后停在「正在起房间…」、按 ESC 退 /usage 没反应、
+          //   一轮跑完不显示完成，全是同一个根：她得退出重进才看得到新的。
+          //   宁可偶尔打断一次滚动，也不能把画面锁死。
           var atBottom = wsBody.scrollTop + wsBody.clientHeight >= wsBody.scrollHeight - 40;
-          if (!atBottom) { roomPinned = true; }
-          else if (roomPinned) { roomPinned = false; }
-          // ⚠️ 还没画过任何内容时**绝不 pin**。09-16 她 /clear 之后屏幕一直停在
-          //   「正在起房间…」—— 那会儿内容被清空、高度骤降，atBottom 判成 false，
-          //   pinned 就把更新永久锁死了，占位文案再也换不掉。
-          if (roomLastBody === null) roomPinned = false;
+          var scrolledRecently = Date.now() - roomScrollAt < 8000;
+          roomPinned = (!atBottom && scrolledRecently && roomLastBody !== null);
           if (!roomPinned && sp.body !== roomLastBody) {
             roomEnsureScreen().innerHTML = renderBody(sp.body);
             roomLastBody = sp.body;
@@ -879,6 +896,10 @@
       roomPinned = false;
       roomSend('', [dir > 0 ? 'PageUp' : 'PageDown']);
     }
+    // 只记「她自己滑」的时刻。程序改 scrollTop 也会触发 scroll 事件，
+    // 所以用 wheel / touch 这些真实手势来打这个时间戳，别用 scroll。
+    wsBody.addEventListener('touchmove', function () { roomScrollAt = Date.now(); }, { passive: true });
+    wsBody.addEventListener('wheel', function () { roomScrollAt = Date.now(); }, { passive: true });
     wsBody.addEventListener('wheel', function (e) {
       if (!roomOn) return;
       if (e.deltaY < 0 && wsBody.scrollTop <= 0) roomGesture(1);
