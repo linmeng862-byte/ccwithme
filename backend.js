@@ -2113,6 +2113,48 @@ app.post('/api/settings', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// === 备用线路（2026-09-16）===================================================
+// 订阅/网关挂了的时候，抽屉里一个开关切到直连 API。三家预设，key 各存各的，
+// 切来切去不用重填。key 跟 bark_url 一个待遇：只进 settings，不回前端、不进日志。
+// 官方 key：照旧走网关，只换付钱的方式。OpenRouter / DeepSeek：走 handleOpenAIChat（没有 CLI 会话缓存，每轮都贵些）。
+const BACKUP_PROVIDERS = {
+  // 官方 key 不走直连：交给网关，claude 进程换成 API key 付钱，其余跟日常一模一样
+  //   （网关 apiKeyMode() 现读 backup_key_anthropic）。模型也跟日常一样由前端选。
+  anthropic:  { gateway: true, model: '' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions',  format: 'openai',    model: 'anthropic/claude-opus-5' },
+  deepseek:   { url: 'https://api.deepseek.com/chat/completions',      format: 'openai',    model: 'deepseek-chat' },
+};
+function _setting(k) { return db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || ''; }
+// 开着且 key 齐了才返回线路，否则 null（照旧走网关）
+function _backupRoute() {
+  if (_setting('backup_on') !== '1') return null;
+  const p = _setting('backup_provider');
+  const preset = BACKUP_PROVIDERS[p];
+  const apiKey = preset && _setting('backup_key_' + p);
+  if (!apiKey || preset.gateway) return null;
+  return { provider: p, baseUrl: preset.url, apiKey, apiFormat: preset.format,
+           model: _setting('backup_model_' + p) || preset.model };
+}
+app.get('/api/settings/backup', auth, (req, res) => {
+  const out = { on: _setting('backup_on') === '1', provider: _setting('backup_provider') || 'anthropic', providers: {} };
+  for (const [p, v] of Object.entries(BACKUP_PROVIDERS)) {
+    out.providers[p] = { configured: !!_setting('backup_key_' + p), model: _setting('backup_model_' + p), default_model: v.model };
+  }
+  res.json(out);
+});
+app.post('/api/settings/backup', auth, (req, res) => {
+  const { on, provider, api_key, model } = req.body || {};
+  if (provider !== undefined && !BACKUP_PROVIDERS[provider]) return res.status(400).json({ error: 'unknown provider' });
+  const up = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+  if (provider !== undefined) up.run('backup_provider', provider);
+  const p = provider || _setting('backup_provider') || 'anthropic';
+  if (api_key) up.run('backup_key_' + p, String(api_key).trim());
+  if (model !== undefined) up.run('backup_model_' + p, String(model).trim());
+  if (on !== undefined) up.run('backup_on', on ? '1' : '0');
+  const active = _setting('backup_on') === '1' && !!_setting('backup_key_' + p);
+  res.json({ ok: true, active, provider: p, via_gateway: !!BACKUP_PROVIDERS[p].gateway });
+});
+
 // === 让不让他上网查东西 =====================================================
 // 08-29：以前 WebSearch 写死在网关白名单里，她既看不见也关不掉。
 // 只有开 / 关一个布尔值，没有密钥，所以不用像 bark/minimax 那样藏内容。
@@ -9921,10 +9963,13 @@ app.post('/api/chat', auth, async (req, res) => {
   if (_blocked) return res.status(429).json({ error: _blocked, limit_exceeded: true });
 
   // 获取中转站配置
-  const baseUrl = db.prepare("SELECT value FROM settings WHERE key = 'base_url'").get()?.value;
-  const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'api_key'").get()?.value;
-  const apiFormat = db.prepare("SELECT value FROM settings WHERE key = 'api_format'").get()?.value || 'anthropic';
+  // 09-16：抽屉里的备用线开着就压过老的 base_url 那套
+  const _bk = _backupRoute();
+  const baseUrl = _bk ? _bk.baseUrl : db.prepare("SELECT value FROM settings WHERE key = 'base_url'").get()?.value;
+  const apiKey = _bk ? _bk.apiKey : db.prepare("SELECT value FROM settings WHERE key = 'api_key'").get()?.value;
+  const apiFormat = _bk ? _bk.apiFormat : (db.prepare("SELECT value FROM settings WHERE key = 'api_format'").get()?.value || 'anthropic');
   const defaultModel = db.prepare("SELECT value FROM settings WHERE key = 'model'").get()?.value || '';
+  if (_bk) console.log('[备用线] 走 ' + _bk.provider + ' / ' + _bk.model);
 
   const useGateway = !baseUrl || !apiKey;
 
@@ -9972,9 +10017,19 @@ app.post('/api/chat', auth, async (req, res) => {
   db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
 
   // 构建发送给 Anthropic API 的消息历史
-  const rawMessages = db.prepare(
+  let rawMessages = db.prepare(
     'SELECT role, content, attachments FROM messages WHERE conv_id = ? AND COALESCE(superseded,0) = 0 ORDER BY id ASC'
   ).all(convId);
+  // 09-16：备用线只带最近一截。主线一万多条、30 万字，整段送过去 DeepSeek 直接超窗、
+  //   官方也每轮烧满。记忆浮现照旧走 systemPrompt，远的事靠那边补。
+  if (_bk) {
+    const BUDGET = 40000;   // 字符
+    let used = 0, i = rawMessages.length;
+    while (i > 0 && used + (rawMessages[i - 1].content || '').length <= BUDGET) used += (rawMessages[--i].content || '').length;
+    if (i === rawMessages.length && i > 0) i--;          // 最后一条再长也得带上
+    while (i < rawMessages.length - 1 && rawMessages[i].role !== 'user') i++;   // 开头必须是她说的
+    rawMessages = rawMessages.slice(i);
+  }
   const history = await Promise.all(rawMessages.map(async (r) => {
     // ❝ 她那条里的引用标记翻成人话（他那条留原样，理由见 _quoteForModel 上面）
     if (r.role === 'user') r = { ...r, content: _quoteForModel(r.content) };
@@ -10143,7 +10198,8 @@ app.post('/api/chat', auth, async (req, res) => {
       db.prepare("UPDATE commands SET feedback_sent=1 WHERE status='done' AND feedback_sent=0").run();
     }
   } catch(e) {}
-  const useModel = model || defaultModel || 'claude-sonnet-4-6';
+  // 备用线的模型名各家格式不同，前端选的网关别名不能往那边送
+  const useModel = _bk ? _bk.model : (model || defaultModel || 'claude-sonnet-4-6');
   const engineBlock = NO_ENGINE ? '' : (
     // 原来写的是「每轮开头都要 call nocturne_wake()」——记忆浮现现在由后端在会话首轮
     // 直接注入好了（见 needBreath），不必再让他自己调一次，白花一个来回。
@@ -11343,6 +11399,52 @@ app.get('/api/workplace/show', auth, async (req, res) => {
   const out = await gitP(args);
   if (out === null) return res.status(500).json({ error: '读不到这条记录（可能已经被还原或改写了）' });
   res.json({ diff: out, empty: !out.trim() });
+});
+
+// === 推之前先给她看（2026-09-16）============================================
+// 仓库是 public 的，推出去收不回来。确认按钮点下去之前，先列出「这次会推上去什么」：
+// 哪些文件、有没有不该进仓库的文件、新增内容里有没有域名 / 绝对路径 / IP / 邮箱 / 像密钥的东西。
+// ⚠️ 像密钥的只报条数，**不回内容**；真值逐字比对在 pre-push 钩子里，这里不碰真值。
+// 范围 = 工作树改动（apply 会 add -A 的那些）+ 本地已提交还没推的。
+const PF_BAD_FILE = /(^|\/)(\.env[^/]*|\.toy_token|CLAUDE\.local\.md|toy\.html|[^/]*\.db(-wal|-shm)?|\.auth_token)$/;
+const PF_OK_DOMAIN = /(^|\.)(github\.com|githubusercontent\.com|anthropic\.com|claude\.ai|openrouter\.ai|deepseek\.com|googleapis\.com|gstatic\.com|cdnjs\.cloudflare\.com|jsdelivr\.net|w3\.org|example\.(com|org)|apple\.com|npmjs\.(com|org)|mozilla\.org|localhost)$/i;
+const PF_SECRET = /sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9]{32,}|ghp_[A-Za-z0-9]{20,}|github_pat_\w{20,}|AIza[\w-]{20,}|eyJ[\w-]{20,}\.[\w-]{10,}\.|-----BEGIN [A-Z ]*PRIVATE KEY-----|(token|api[_-]?key|password|secret)["' ]*[:=]["' ]*[\w.-]{16,}/i;
+app.get('/api/workplace/preflight', auth, async (req, res) => {
+  try {
+    const st = (await gitP(['status', '--porcelain', '-uall'])) || '';
+    const work = st.split('\n').filter(Boolean).map((l) => l.slice(3).replace(/^.* -> /, ''));
+    const upstream = (await gitP(['rev-parse', '--abbrev-ref', '@{u}'])) !== null;
+    const aheadFiles = upstream ? ((await gitP(['log', '--format=', '--name-only', '@{u}..HEAD'])) || '') : '';
+    const ahead = upstream ? ((await gitP(['rev-list', '--count', '@{u}..HEAD'])) || '0').trim() : '?';
+    const files = [...new Set([...work, ...aheadFiles.split('\n').filter(Boolean)])];
+
+    // 新增的行：已跟踪的看 diff，新文件整个读（跳过大文件和二进制），没推的提交看 log -p
+    let added = '';
+    const addLines = (txt) => { for (const l of String(txt || '').split('\n')) if (l.startsWith('+') && !l.startsWith('+++')) added += l.slice(1) + '\n'; };
+    addLines(await gitP(['diff', 'HEAD', '-U0', '--no-color']));
+    if (upstream) addLines(await gitP(['log', '-p', '-U0', '--no-color', '--format=', '@{u}..HEAD']));
+    for (const l of st.split('\n')) {
+      if (!l.startsWith('??')) continue;
+      const f = path.join(REPO, l.slice(3));
+      try { const s = fs.statSync(f); if (s.size < 512 * 1024) { const b = fs.readFileSync(f); if (!b.includes(0)) added += b.toString('utf8') + '\n'; } } catch (e) {}
+    }
+
+    const uniq = (arr, n) => [...new Set(arr)].slice(0, n);
+    const domains = uniq((added.match(/\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|ai|app|dev|fun|online|site|xyz|me|cn|top|cc)\b/gi) || [])
+      .map((d) => d.toLowerCase()).filter((d) => !PF_OK_DOMAIN.test(d) && !/\.(js|json|html|css|md)$/.test(d)), 12);
+    const absPaths = uniq(added.match(/\/(?:home|root|opt|Users)\/[\w.\-/]+/g) || [], 12);
+    const ips = uniq((added.match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || []).filter((ip) => !/^(127\.|0\.|255\.)/.test(ip)), 8);
+    const emails = uniq(added.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) || [], 8);
+    const secretLines = added.split('\n').filter((l) => PF_SECRET.test(l)).length;
+
+    res.json({
+      files, ahead,
+      bad_files: files.filter((f) => PF_BAD_FILE.test(f)),
+      domains, abs_paths: absPaths, ips, emails, secret_lines: secretLines,
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message) });
+  }
 });
 
 // 她点确认：提交 + 重启。重启要等响应发完再做，否则请求半路断在她脸上。

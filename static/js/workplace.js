@@ -1310,7 +1310,40 @@
     // 08-28 她定的「一步到位」：提交完直接推，不用再回终端补一句。
     // 对话流那张 diff 卡和工作区顶上的待提交条**共用这一个函数** ——
     // 同一件事在两个地方各写一遍，迟早漂成两个行为，这个项目栽过。
+    // 09-16：推之前先问一遍「这次会推上去什么」。仓库是 public 的，推出去收不回来。
+    // 预检挂了也照样问（话里说明没扫成），不静默放行。
+    function preflightText(p) {
+      var L = [];
+      L.push('这次会推到 GitHub（公开仓库）：');
+      L.push('· ' + p.files.length + ' 个文件' + (p.ahead && p.ahead !== '0' ? '（另有 ' + p.ahead + ' 个没推的提交）' : ''));
+      L.push('  ' + p.files.slice(0, 8).join('\n  ') + (p.files.length > 8 ? '\n  …' : ''));
+      var warn = [];
+      if (p.bad_files.length) warn.push('✗ 不该进仓库的文件：' + p.bad_files.join(' '));
+      if (p.secret_lines) warn.push('✗ 有 ' + p.secret_lines + ' 行像密钥（内容不显示）');
+      if (p.domains.length) warn.push('! 域名：' + p.domains.join(' '));
+      if (p.abs_paths.length) warn.push('! 绝对路径：' + p.abs_paths.slice(0, 5).join(' '));
+      if (p.ips.length) warn.push('! IP：' + p.ips.join(' '));
+      if (p.emails.length) warn.push('! 邮箱：' + p.emails.join(' '));
+      L.push('');
+      L.push(warn.length ? '会新暴露：\n' + warn.join('\n') : '没扫到域名 / 路径 / IP / 邮箱 / 密钥。');
+      L.push('');
+      L.push('确定提交并推送？');
+      return L.join('\n');
+    }
     function commitAndPush(msg, cb) {
+      fetch('/api/workplace/preflight', { headers: authHeaders() })
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { error: '请求失败' }; })
+        .then(function (p) {
+          var text = (p && !p.error && p.files)
+            ? preflightText(p)
+            : '推前检查没跑成（' + ((p && p.error) || '未知') + '），看不到这次会暴露什么。\n\n还是要提交并推送？';
+          if (p && p.files && !p.files.length) return cb(new Error('没有改动可提交'));
+          if (!confirm(text)) return cb(new Error('已取消，什么都没动'));
+          doApply(msg, cb);
+        });
+    }
+    function doApply(msg, cb) {
       fetch('/api/workplace/apply', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
