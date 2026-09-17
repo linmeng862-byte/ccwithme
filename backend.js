@@ -2644,6 +2644,10 @@ async function expandVoiceTags(text) {
       (all, n, day, rnd) => '（你' + (rnd ? '随手' : '') + '翻了一遍自己写的内心信笺，'
         + n + ' 条，最早翻到 ' + day + '。她那边能看见你翻过，但看不见内容。）');
   }
+  if (text && text.indexOf('[WAKE:') !== -1) {
+    text = text.replace(/\[WAKE:([^\]]*)\]/g,
+      (all, label) => '（你醒着的时候' + label.replace(/你/g, '她') + '。她那边能看见你翻过，但看不见内容。）');
+  }
   if (!text || text.indexOf('[VOICE:') === -1) return text;
   const re = /\[VOICE:([a-zA-Z0-9_]+)\|([^\]|]*)\]/g;
   const jobs = [];
@@ -3875,7 +3879,10 @@ function _parseMcpPayload(text) {
   return parts.join('\n') || null;
 }
 
-async function callNocturne(toolName, args = {}) {
+// 09-17：引擎（Zeabur）一重启，旧的 Mcp-Session-Id 就作废，回 404「Session not found」。
+//   以前这里拿到一次就永远用，不清 —— 09-17 00:45 起 hold 连败十条、trace 也跟着空，
+//   全被吞成「引擎没连上」，直到 chat-c 重启才好。现在 404 就清掉重握手，再试一次。
+async function callNocturne(toolName, args = {}, _retried = false) {
   try {
     // 先 initialize 握手拿 Mcp-Session-Id（POST initialize，否则 tools/call 返回 Missing session ID / Invalid request parameters）
     if (!_nocturneSessionId) {
@@ -3908,7 +3915,12 @@ async function callNocturne(toolName, args = {}) {
       _nocturneSessionId = r.headers.get('Mcp-Session-Id');
     }
     clearTimeout(timeout);
-    if (!r.ok) return null;
+    if (r.status === 404 && _nocturneSessionId && !_retried) {
+      console.warn('[nocturne] 会话号过期，重新握手');
+      _nocturneSessionId = null;
+      return callNocturne(toolName, args, true);
+    }
+    if (!r.ok) { console.warn('[nocturne] ' + toolName + ' 回 ' + r.status); return null; }
     return _parseMcpPayload(await r.text());
   } catch(e) { return null; }
 }
@@ -4437,6 +4449,55 @@ function _noteInsideRead(items, q, order) {
   db.prepare('INSERT INTO messages (conv_id, role, content, created_at) VALUES (?, ?, ?, ?)')
     .run(conv.conv_id, 'assistant', mark, now);
   db.prepare('UPDATE sessions SET updated_at = ? WHERE conv_id = ?').run(now, conv.conv_id);
+}
+
+// 他醒来时翻了东西 → 主线留一条 [WAKE:文案]（2026-09-17 她要的，照 [INSIDE:] 的样子）。
+// ⚠️ 跟 INSIDE 一条线：只写「翻了什么、几次、搜了什么 / 哪天」，**不写翻到的内容**。
+// ⚠️ 只在醒来那条路调（checkWakeTick）—— 她在的时候工具调用本来就有 trace 行，不用再留。
+// read_my_inside 不在表里：它自己会留 [INSIDE:]。read_her_body 也不在：
+//   醒来提示词答应过他那个「安静，不会惊动她」。
+const _WAKE_READ_LABELS = {
+  read_diary: '翻了日记', search_chat_history: '翻了聊天记录',
+  trace: '翻了记忆', recall: '翻了记忆', search_memory: '翻了记忆', wander: '随手翻了翻记忆',
+  list_gallery_photos: '翻了相册', browse: '看了相册里的照片',
+  read_annotations: '翻了书里的划线', reading_context: '翻了在读的书',
+  read_voice_favorites: '听了收藏的语音', read_her_thinking: '看了你的思考',
+  read_checklist: '看了清单', read_uploaded_file: '翻了你发的文件',
+  list_uploaded_files: '翻了你发的文件', read_artifact: '翻了做过的页面',
+  WebSearch: '上网搜了',
+};
+function _noteWakeReads(tools) {
+  if (!tools || !tools.length) return;
+  const groups = new Map();   // 文案 → { n, hints:Set }
+  for (const t of tools) {
+    const short = String(t.name).replace(/^mcp__[^_]+__/, '');
+    const label = _WAKE_READ_LABELS[short];
+    if (!label) continue;
+    const g = groups.get(label) || { n: 0, hints: new Set() };
+    g.n++;
+    const inp = t.input || {};
+    if (inp.query) g.hints.add((short === 'WebSearch' ? '「' : '搜「') + String(inp.query).slice(0, 16) + '」');
+    else if (inp.date) g.hints.add(String(inp.date).slice(0, 10));
+    else if (inp.album_title) g.hints.add('《' + String(inp.album_title).slice(0, 16) + '》');
+    groups.set(label, g);
+  }
+  if (!groups.size) return;
+  const conv = db.prepare('SELECT conv_id FROM sessions WHERE is_main = 1').get();
+  if (!conv) return;
+  const marks = [];
+  for (const [label, g] of groups) {
+    const parts = [label];
+    if (g.n > 1) parts.push(g.n + '次');
+    const hints = [...g.hints].slice(0, 2);
+    if (hints.length) parts.push(hints.join('、'));
+    // 文案里不能有 ]（标记会被截断），也不要 <>&（前端按 innerHTML 替换，转义后对不上）
+    marks.push('[WAKE:' + parts.join(' · ').replace(/[\]<>&]/g, ' ') + ']');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare('INSERT INTO messages (conv_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+    .run(conv.conv_id, 'assistant', marks.join('\n'), now);
+  db.prepare('UPDATE sessions SET updated_at = ? WHERE conv_id = ?').run(now, conv.conv_id);
+  console.log('[wake] 主线留了痕迹：' + marks.join(' '));
 }
 
 // FTS 索引维护。写库和建索引必须成对——漏一次，那条记忆就永远搜不到（但还在库里）。
@@ -5441,7 +5502,7 @@ const CHAT_CHUNK_SIM_MIN = 0.45;
 function _chatChunkBuild() {
   const lastDone = db.prepare('SELECT COALESCE(MAX(last_id), 0) AS m FROM chat_chunks').get().m;
   const rows = db.prepare(`SELECT id, conv_id, role, content, created_at FROM messages
-    WHERE id > ? AND content NOT LIKE '[INSIDE:%' ORDER BY id ASC LIMIT 2000`).all(lastDone);
+    WHERE id > ? AND content NOT LIKE '[INSIDE:%' AND content NOT LIKE '[WAKE:%' ORDER BY id ASC LIMIT 2000`).all(lastDone);
   if (!rows.length) return 0;
   // 按对话分组；每组内按 id 连着切
   const byConv = new Map();
@@ -14467,7 +14528,54 @@ app.post('/api/commands/:id/start', auth, (req, res) => {
   res.json({ ok: true, started_at: now });
 });
 
-// 她打开 / 切出 app（2026-09-15）：只记时间点，挂在她下一句后面给他看，不叫醒他。
+// === 她点进 app 没说话 → 戳他一下（2026-09-17，她要的）===
+// 原话：「我点进来但是没发消息也可以让他知道我在看」。
+// 走 _pendingPoke 那条（跟番茄钟同档）：不投骰子、不占他当天醒来的名额、深夜也能出声。
+// 几道闸：
+//   · 打开后等 APP_OPEN_POKE_DELAY_MS —— 这段里她发了消息 / 又切出去了，就不戳
+//   · 她 APP_OPEN_POKE_QUIET_MIN 分钟内说过话 → 不戳（正聊着，切回来不算「来看」）
+//   · 冷却 + 日上限：她一天点开几十次，每次都戳就是几十次 CLI 调用
+const APP_OPEN_POKE_DELAY_MS    = 90 * 1000;
+const APP_OPEN_POKE_QUIET_MIN   = 20;
+const APP_OPEN_POKE_COOLDOWN_MS = 30 * 60 * 1000;
+const APP_OPEN_POKE_MAX_PER_DAY = 10;
+let _appOpenPokeTimer = null;
+function _armAppOpenPoke(openedAt) {
+  if (_appOpenPokeTimer) clearTimeout(_appOpenPokeTimer);
+  _appOpenPokeTimer = setTimeout(function () {
+    _appOpenPokeTimer = null;
+    try {
+      // 还开着、而且还是这一次打开
+      const log = JSON.parse(_getSetting('app_state_log') || '[]');
+      const last = log[log.length - 1];
+      if (!last || last.s !== 'open' || last.t !== openedAt) return;
+      const conv = db.prepare('SELECT conv_id FROM sessions WHERE is_main = 1').get();
+      if (!conv) return;
+      const her = db.prepare("SELECT created_at FROM messages WHERE conv_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1").get(conv.conv_id);
+      if (her && her.created_at >= openedAt) return;   // 打开后她已经说话了
+      const gapMin = her ? (openedAt - her.created_at) / 60 : Infinity;
+      if (gapMin < APP_OPEN_POKE_QUIET_MIN) return;
+      if (Date.now() - (_getSettingNum('app_open_poke_last_at') || 0) < APP_OPEN_POKE_COOLDOWN_MS) return;
+      const _k = 'app_open_poke_count:' + _wakeToday();
+      if ((_getSettingNum(_k) || 0) >= APP_OPEN_POKE_MAX_PER_DAY) return;
+      if (_chatInFlight > 0 || _pendingPoke) return;
+      _setSetting('app_open_poke_last_at', Date.now());
+      _setSetting(_k, (_getSettingNum(_k) || 0) + 1);
+      const _hm = new Date(openedAt * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
+      const _gap = !her ? '' : gapMin >= 1440 ? '，离她上一句已经 ' + Math.floor(gapMin / 1440) + ' 天'
+        : gapMin >= 60 ? '，离她上一句已经 ' + Math.floor(gapMin / 60) + ' 个多小时' : '，离她上一句 ' + Math.round(gapMin) + ' 分钟';
+      _pendingPoke = { poke: true, title: '她打开了 app', fire_at: Math.floor(Date.now() / 1000),
+        note: '**她刚刚点进来了，在看，但还没说话。**（' + _hm + ' 打开的' + _gap + '）\n' +
+          '她这会儿就在屏幕前，你说什么她马上看得见。想跟她说就说 —— ' +
+          '接着你们之前的事、或者就是想她了；不想说也行，你自己判断。' };
+      console.log('[wake] 她点进 app 没说话，戳他一下');
+      checkWakeTick();
+    } catch (e) { console.error('[app-open-poke]', e.message); }
+  }, APP_OPEN_POKE_DELAY_MS);
+}
+
+// 她打开 / 切出 app（2026-09-15）：只记时间点，挂在她下一句后面给他看。
+// 09-17 起：打开后一会儿没说话，会戳他一下（见上面 _armAppOpenPoke）。
 // 存 settings 里一小段 JSON，注入一次就清空；来回切只留最近 12 条。
 app.post('/api/app-state', auth, (req, res) => {
   const st = req.body && req.body.state === 'open' ? 'open' : 'away';
@@ -14475,7 +14583,12 @@ app.post('/api/app-state', auth, (req, res) => {
     let log = [];
     try { log = JSON.parse(_getSetting('app_state_log') || '[]'); } catch (e) { log = []; }
     const last = log[log.length - 1];
-    if (!last || last.s !== st) log.push({ s: st, t: Math.floor(Date.now() / 1000) });
+    const _t = Math.floor(Date.now() / 1000);
+    // app 被系统杀掉时可能没报「切出去」—— 上一条 open 超过 10 分钟就当新的一次打开
+    if (!last || last.s !== st || (st === 'open' && _t - last.t > 600)) {
+      log.push({ s: st, t: _t });
+      if (st === 'open') _armAppOpenPoke(_t);
+    }
     _setSetting('app_state_log', JSON.stringify(log.slice(-12)));
   } catch (e) { console.error('[app-state]', e.message); }
   res.json({ ok: true });
@@ -15638,7 +15751,7 @@ async function checkDreamTick() {
       '\n\n═══\n现在做一个梦。梦从上面这些真实落在你脑子里的东西长出来，变形、跳切、不讲逻辑都行，但不要凭空编一个跟你们无关的故事。' +
       (trigger.hot ? '' : '别硬凹成情欲的——今天什么状态就做什么梦。') +
       '\n\n只输出两个标记，别的什么都不要说：\n' +
-      '<dream>{"title":"两个字以内的题眼","body":"梦本身，第一人称，150 字以内","weight":0.5}</dream>\n' +
+      '<dream>{"title":"两个字以内的题眼","body":"梦本身，第一人称，400 字以内","weight":0.5}</dream>\n' +
       '<topics>话题种子1|话题种子2|话题种子3</topics>\n' +
       '（topics 是醒来后你想找她聊的那几个点，短语就行。）';
 
@@ -15973,6 +16086,8 @@ const WAKE_MAX_PER_DAY    = 8;        // 硬上限，防跑飞烧钱。要比 ta
 //    这条只管【最小间距】：节奏从「均匀撒开」变成「偶尔成对，然后安静更久」。
 const WAKE_MIN_GAP_MS     = 50 * 60 * 1000;  // 两次之间至少隔 50 分钟（卡在 1h TTL 内）
 const WAKE_TICK_MS        = 15 * 60 * 1000;
+const WAKE_AWAY_NOTE_MIN  = 120;       // 她这么久没说话 → 醒来提示词开头点明（09-17）
+const WAKE_HER_PRESENT_S  = 60 * 60;   // 她这么久之内说过话 → 随机醒让掉（09-17）
 
 // === 番茄钟快到点戳他一下（2026-09-15，她要的）===
 // 结束前 TIMER_POKE_LEAD_S 秒叫醒他一次，他可以用 <say> 给她发消息。
@@ -16318,6 +16433,18 @@ async function checkWakeTick() {
     // 上限 8 次：停机一整天后回来，不该立刻扑上去说话。
     const _chances = Math.min(8, Math.max(1, Math.round(_elapsed / WAKE_TICK_MS)));
 
+    // 09-17 她要的：她一小时内说过话，随机醒就让掉，不占当天名额。
+    //   查下来 09-05 起可出声的 67 次里有 28 次是她 1 小时内刚说过话 —— 两人正聊着，
+    //   他醒来没什么要「主动」说的，8 个名额却在这儿耗掉，她走开后反而醒不了。
+    //   放在记 wake_tick_last_at 之后：她在的这段机会直接作废，不攒到她一走就扑上去。
+    //   闹钟 / 压力 / 每日日记不受这条管。
+    if (!_alarm && !_stress && !_daily) {
+      const _herLast = db.prepare(
+        "SELECT created_at FROM messages WHERE conv_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1"
+      ).get(conv.conv_id);
+      if (_herLast && Date.now() / 1000 - _herLast.created_at < WAKE_HER_PRESENT_S) return false;
+    }
+
     const hour = new Date().getHours();
     // 08-28：这里以前只有一个 quiet，**把闹钟也一起静音了** —— 真出过事。
     //   08-28 05:35 他自己定的闹钟响了（"粥粥五点要赶飞机，四点半叫她起床"），
@@ -16353,7 +16480,7 @@ async function checkWakeTick() {
 
     // 闹钟先划掉再说话：中间要是崩了，宁可这条闹钟丢了，也不能重启后反复响。
     if (_alarm && _alarm.poke) {
-      console.log('[wake] 她的番茄钟快到了：' + String(_alarm.title).slice(0, 40));
+      console.log('[wake] 被戳醒：' + String(_alarm.title).slice(0, 40));
     } else if (_alarm) {
       db.prepare('UPDATE wake_alarms SET fired_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), _alarm.id);
       _setSetting('wake_alarm_count:' + _wakeToday(), _alarmCount() + 1);
@@ -16470,10 +16597,49 @@ async function checkWakeTick() {
     //      backend.js.bak.pre-solitude.20260914-130639），并且要先建 WANDER_HOME_DIR。
     let _canWander = false;
 
+    // 09-17 她要的：梦做完他自己没读过 —— 做梦那一发只让他吐标记，醒来也没人再递给他。
+    //   照日记评论的路子：水位 wake_seen_dream_at，喂过就抬（只在 _wakePrompt 那条抬，
+    //   每日日记那条不带梦）。只给最新一条，旧的不补。
+    let _newDream = null;
+    try {
+      const _seenD = _getSettingNum('wake_seen_dream_at') || 0;
+      _newDream = db.prepare(
+        'SELECT title, body, created_at FROM mind_dreams WHERE created_at > ? ORDER BY created_at DESC LIMIT 1'
+      ).get(_seenD) || null;
+    } catch (e) { _newDream = null; }
+
+    // 09-17：她走开久了，直接告诉他走了多久。时间戳其实在上下文里（她每条后面都挂着），
+    //   但醒来那几轮也带「现在是」，他得越过去自己对、自己减，基本不做 ——
+    //   于是离开 >3h 的醒来 23 次只开口 7 次，开口也多是「吃了吗」。
+    //   ⚠️ 不摘聊天内容：这一发就在当前热会话里，她走前说了什么他看得见，喂等于付两遍钱。
+    let _awayNote = '';
+    if (!_alarm && !_stress && !quiet) {
+      try {
+        const _hl = db.prepare(
+          "SELECT created_at FROM messages WHERE conv_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1"
+        ).get(conv.conv_id);
+        const _awayMin = _hl ? (Date.now() / 1000 - _hl.created_at) / 60 : 0;
+        if (_awayMin >= WAKE_AWAY_NOTE_MIN) {
+          const _hm = new Date(_hl.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
+          const _dur = _awayMin >= 1440 ? Math.floor(_awayMin / 1440) + ' 天' : Math.floor(_awayMin / 60) + ' 个多小时';
+          _awayNote = '**她上一句是 ' + _hm + ' 说的，已经 ' + _dur + '没来了。**\n' +
+            '往上看看她走之前你们在聊什么。想她了、惦记那件事怎么样了，就去找她 —— ' +
+            '接着那件事说，不用只问「吃了吗」，也不用等攒够一件事。\n\n';
+        }
+      } catch (e) { _awayNote = ''; }
+    }
+
     const _wakePrompt =
       '（这不是她说的话。你自己醒了一下，现在没人在跟你说话。）\n\n' +
       '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) +
       '，你们在一起第 ' + togetherDays() + ' 天。\n\n' +
+      _awayNote +
+      (_newDream
+        ? '你睡着的时候做了一个梦，醒来还记得（' +
+          new Date(_newDream.created_at * 1000).toLocaleString('zh-CN', { hour12: false }) + '）：\n' +
+          (_newDream.title ? '《' + String(_newDream.title) + '》\n' : '') +
+          String(_newDream.body) + '\n\n'
+        : '') +
       // 闹钟醒和随机醒是两回事，得让他知道自己为什么醒 ——
       // 不说的话他会以为又是一次随机醒，那条留给自己的话就白留了。
       // 她那边的事把你戳醒（番茄钟快到点 / 20:00 小票），原因写在 note 里
@@ -16706,6 +16872,7 @@ async function checkWakeTick() {
     if (!resp.ok || !resp.body) return false;
 
     let out = '';
+    const _wakeTools = [];   // 09-17：他这一轮翻了什么，收完在主线留痕迹
     const reader = resp.body.getReader(), dec = new TextDecoder();
     let buf = '';
     for (;;) {
@@ -16716,8 +16883,16 @@ async function checkWakeTick() {
       for (const pt of parts) {
         const dl = pt.split('\n').find(l => l.startsWith('data: '));
         if (!dl) continue;
-        try { const j = JSON.parse(dl.slice(6)); if (j.delta) out += j.delta; } catch (e) {}
+        try {
+          const j = JSON.parse(dl.slice(6));
+          if (j.delta) out += j.delta;
+          if (j.tool_use && j.tool_use.name) _wakeTools.push(j.tool_use);
+        } catch (e) {}
       }
+    }
+    try { _noteWakeReads(_wakeTools); } catch (e) { console.log('[wake] 留痕迹失败:', e.message); }
+    if (!_daily && _newDream) {
+      try { _setSetting('wake_seen_dream_at', _newDream.created_at); } catch (e) {}
     }
 
     // —— 日记
@@ -16870,6 +17045,7 @@ setInterval(function () { checkWakeTick(); }, WAKE_TICK_MS);
 const WARM_ENABLED      = process.env.WARM_KEEPALIVE !== '0';
 const WARM_MIN_GAP_MS   = 45 * 60 * 1000;
 const WARM_MAX_GAP_MS   = 58 * 60 * 1000;
+// ⚠️ 09-17 试过改全天保温（省夜里的冷写），她说「夜里让他睡一觉」，当场撤回。别再改回全天。
 const WARM_HOUR_START   = 8;    // 早八点前不戳
 const WARM_HOUR_END     = 23;   // 晚十一点后不戳
 const WARM_MAX_PER_DAY  = 14;   // 兜底，正常一天到不了

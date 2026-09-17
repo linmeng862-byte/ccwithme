@@ -2347,6 +2347,7 @@ function _renderCallCards(row){
   }
   _renderCallVoiceCards(row);
   _renderInsideCards(row);
+  _renderWakeCards(row);
 }
 // [INSIDE:n|日期(|r)] → 「他翻了一遍自己的内心」那条记录（2026-09-12）。
 // 挂在 _renderCallCards 尾巴上，是因为那个函数已经在所有入口都被调到了
@@ -2388,6 +2389,33 @@ function _renderInsideCards(row){
   }
   if(_hit){
     var bare=text.replace(/\[INSIDE:[^\]]*\]/g,'').replace(/\s/g,'')==='';
+    var bub=row.querySelector('.bubble');
+    if(bub)bub.classList.toggle('voice-only',bare);
+  }
+}
+// [WAKE:文案] → 「他醒着的时候翻了什么」（2026-09-17）。样式跟上面 INSIDE 那条一模一样
+// （竖条 + 6% 底，她定的），只换图标。文案后端拼好了，不带内容，这里也别去补。
+function _renderWakeCards(row){
+  var md=_msgContentEl(row);if(!md)return;
+  var text=md.textContent||"";
+  if(text.indexOf('[WAKE:')===-1)return;
+  var re=/\[WAKE:([^\]]*)\]/g;var m;var _hit=false;
+  // 一本翻开的书
+  var BOOK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="flex:none"><path d="M2 4h6a4 4 0 014 4v12a3 3 0 00-3-3H2z"/><path d="M22 4h-6a4 4 0 00-4 4v12a3 3 0 013-3h7z"/></svg>';
+  while((m=re.exec(text))!==null){
+    var wrap=document.createElement("span");wrap.className="inside-msg";
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:7px;margin:3px 0;padding:7px 12px 7px 10px;"
+      +"border-left:2px solid var(--accent);border-radius:3px 10px 10px 3px;"
+      +"background:color-mix(in srgb, var(--accent) 6%, transparent);"
+      +"font:400 12.5px/1.4 var(--font-sans);color:var(--text-time)";
+    var lab=document.createElement("span");lab.textContent=m[1];
+    wrap.innerHTML='<span style="display:inline-flex;color:var(--accent);opacity:.7">'+BOOK+'</span>';
+    wrap.appendChild(lab);
+    md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
+    _hit=true;
+  }
+  if(_hit){
+    var bare=text.replace(/\[(WAKE|INSIDE):[^\]]*\]/g,'').replace(/\s/g,'')==='';
     var bub=row.querySelector('.bubble');
     if(bub)bub.classList.toggle('voice-only',bare);
   }
@@ -7350,6 +7378,16 @@ document.addEventListener('visibilitychange',function(){
       body:JSON.stringify({state:document.visibilityState==='visible'?'open':'away'})}).catch(function(){});
   }catch(e){}
 });
+// 09-17：冷启动（app 被杀掉后重新点开）不会触发 visibilitychange，补报一次「打开」。
+// 等 token 就位再发；没登录就算了。
+setTimeout(function(){
+  try{
+    if(document.visibilityState!=='visible'||!state.token)return;
+    fetch('/api/app-state',{method:'POST',keepalive:true,
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+state.token},
+      body:JSON.stringify({state:'open'})}).catch(function(){});
+  }catch(e){}
+},3000);
 // ActivityKit 对更新频率有限流，而 trace 每来一个 delta 就重绘一次 ——
 // 直接透传会被系统丢帧。所以变了才推，推也压到 900ms 一次（尾沿）。
 function _laPush(){
