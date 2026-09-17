@@ -2260,3 +2260,73 @@ html[data-palette="ink"][data-theme="light"]:not(.ui-plain) .inside-letter-body{
 html[data-palette="ink"][data-theme="light"]:not(.ui-plain) .gallery-save-card .gs-icon,html[data-palette="ink"][data-theme="light"]:not(.ui-plain) .gallery-album-card-chat .gs-icon{color:#8FA6C4}
 html[data-palette="ink"][data-theme="light"]:not(.ui-plain) .music-card-progress-bar{background:#7E93AE}
 html[data-palette="ink"][data-theme="light"]:not(.ui-plain) .music-play-btn{background:#F6DCE7;color:#232B33}
+
+
+/* ============ 2026-09-18 聊天背景 + 磨砂玻璃（她要的）============
+   图挂在 #chat 上：它本来就是滑动的那一层、带圆角、overflow:hidden，
+   壁纸跟着圆角裁，不会从边上漏出来。
+   ⚠️ 官端（.ui-plain）不铺 —— JS 那头不贴 has-wall，这里再补一道，两头都挡。
+
+   **不加整页白雾**（朋友圈那边两版都试错了：白雾盖掉壁纸、模糊糊掉壁纸）。
+   气泡和输入框自己做成磨砂玻璃，壁纸从它们底下透出来。
+
+   ⚠️ **名字别叫错**（09-18 她纠正过）：这是**磨砂玻璃 / glassmorphism（玻璃拟态）**——
+      重模糊 + 半透明底，主体是那块雾。苹果那个 **Liquid Glass 是另一回事**：很透、
+      模糊很轻、戏在边缘折射。当天照 Liquid 的路子做过一版（blur 7px、底 26%、
+      mask 抠出折射环），**她看了说不如这版，已回滚**。
+      想再试那版：backups/home.css.bak.liquid-rejected.*，别从零重做。
+
+   玻璃 = 半透明的底 + backdrop blur + 顶上一道内高光 + 一圈很淡的白描边。
+   四样缺一样就不像：只有半透明是塑料片，只有模糊是毛玻璃，没有高光是死的。
+   ⚠️ 只在 has-wall 时才玻璃 —— 没铺壁纸时底下是纯色，模糊出来是一样的颜色，
+      白花那笔 backdrop-filter 的渲染钱（它在移动端不便宜）。 */
+#chat.has-wall{background-size:cover;background-position:center;background-repeat:no-repeat}
+html.ui-plain #chat{background-image:none!important}
+
+html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
+html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+  -webkit-backdrop-filter:blur(20px) saturate(1.8);backdrop-filter:blur(20px) saturate(1.8);
+  border:1px solid rgba(255,255,255,.4);
+  box-shadow:0 4px 16px rgba(60,50,40,.1), inset 0 1px 0 rgba(255,255,255,.5);
+}
+/* 底色保留各自那支（她的粉、他的米），只是兑稀 —— 换肤照样跟着走 */
+html:not(.ui-plain) #chat.has-wall .msg-user .bubble{
+  background:color-mix(in srgb, var(--bubble-her) 52%, transparent);
+}
+html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+  background:color-mix(in srgb, var(--bubble-him, var(--bg-surface)) 52%, transparent);
+}
+/* 老 WebKit 不认 color-mix 就落回定死的半透明白，别变成全透明 */
+@supports not (background: color-mix(in srgb, red 50%, transparent)){
+  html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
+  html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{background:rgba(255,255,255,.55)}
+}
+/* 深色下玻璃要压暗，照着亮底兑会糊成一团白 */
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-user .bubble,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+    background:rgba(30,27,24,.55);border-color:rgba(255,255,255,.12);
+    box-shadow:0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+}
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-user .bubble,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+  background:rgba(30,27,24,.55);border-color:rgba(255,255,255,.12);
+  box-shadow:0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);
+}
+
+/* 输入框本来就是玻璃（blur 28 + 高光内描边），但那是配纯色底调的 ——
+   压在照片上 25% 的白太薄，字会跟壁纸打架。铺了壁纸就厚一档、描边亮一档。 */
+html:not(.ui-plain) #chat.has-wall .composer-box{
+  background:rgba(255,255,255,.42);
+  border-color:rgba(255,255,255,.6);
+  box-shadow:0 10px 36px rgba(60,50,40,.14),0 2px 8px rgba(0,0,0,.05),0 0 0 1px rgba(255,255,255,.45) inset;
+}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .composer-box{
+    background:rgba(28,25,22,.62);border-color:rgba(255,255,255,.14);
+  }
+}
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .composer-box{
+  background:rgba(28,25,22,.62);border-color:rgba(255,255,255,.14);
+}

@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789530636">
+<link rel="stylesheet" href="/css/home.css?v=1789665731">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
@@ -372,6 +372,16 @@
             <button class="palette-dot" data-palette="ink" aria-label="墨蓝" style="background:linear-gradient(135deg,#F6DCE7 50%,#E4E9F4 50%)"></button>
           </div>
         </div>
+        <!-- 09-18 她要的：主线聊天页铺一张壁纸。**官端（ui-plain）不跟着变** ——
+             跟全站换肤一个规矩，那边所有皮肤样式都带 :not(.ui-plain)。 -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px">
+          <span style="font:14px var(--font-sans);color:var(--text-secondary)">聊天背景</span>
+          <div style="display:flex;gap:8px">
+            <button class="drawer-action" id="chatWallPick" style="font:13px var(--font-sans)">选图</button>
+            <button class="drawer-action" id="chatWallClear" style="font:13px var(--font-sans);color:var(--text-faint)">清除</button>
+          </div>
+        </div>
+        <input type="file" id="chatWallFile" accept="image/*" hidden>
       </div></nav>
     <div class="mobile-sidebar-section-title">Recents</div>
     <div class="drawer-list" id="sessionList"></div>
@@ -8345,11 +8355,45 @@ async function testEleven(btn){
   }, true);
   function updatePlainToggle(){
     var on = document.documentElement.classList.contains('ui-plain');
+    // 09-18：官端不铺壁纸。开关一动就重算一次，不然切过去壁纸还留在那儿。
+    if(window._applyChatWall) window._applyChatWall();
     var knob = $('plainKnob'), btn = $('plainToggle');
     if(knob){knob.style.left = on ? '20px' : '2px';knob.style.background = on ? '#fff' : 'var(--text-primary)';}
     if(btn){btn.style.background = on ? '#E8A8B8' : 'var(--border-strong)';}
   }
 })();
+// === 聊天背景（09-18 她要的）===
+// 整页铺一张壁纸，气泡浮在上面。**官端不跟着变** —— 打了 ui-plain 就不贴 has-wall。
+// 存 localStorage（跟头像、朋友圈壁纸同一条路），压缩复用 moments.js 里的 _moStoreImage：
+//   那个函数是全局的、head 里就加载了。**它是唯一一处压图逻辑**，别再抄第二份。
+(function(){
+  function apply(){
+    var chat = document.getElementById('chat');
+    if(!chat) return;
+    var plain = document.documentElement.classList.contains('ui-plain');
+    var w = '';
+    try { w = localStorage.getItem('chat_wallpaper') || ''; } catch(e) {}
+    if(w && !plain){ chat.style.backgroundImage = 'url(' + w + ')'; chat.classList.add('has-wall'); }
+    else { chat.style.backgroundImage = ''; chat.classList.remove('has-wall'); }
+  }
+  window._applyChatWall = apply;      // 切官端开关的时候要再跑一次
+  apply();
+  var pick = document.getElementById('chatWallPick');
+  var clear = document.getElementById('chatWallClear');
+  var file = document.getElementById('chatWallFile');
+  if(pick && file) pick.onclick = function(){ file.click(); };
+  if(file) file.onchange = function(){
+    var f = (this.files||[])[0]; this.value='';
+    if(!f) return;
+    if(typeof _moStoreImage !== 'function'){ toast('压图那段没加载到'); return; }
+    _moStoreImage(f, 'chat_wallpaper', apply);
+  };
+  if(clear) clear.onclick = function(){
+    try { localStorage.removeItem('chat_wallpaper'); } catch(e) {}
+    apply();
+  };
+})();
+
 // === 换肤（09-13）===
 // 属性是 head 里那段同步脚本先打好的；这里只管点色点切换。颜色全在 CSS 变量上，切了立刻生效，不用重载。
 (function(){
