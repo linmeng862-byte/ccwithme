@@ -2006,14 +2006,32 @@ const bookCoverDir = path.join(__dirname, 'data', 'uploads', 'covers');
 if (!fs.existsSync(bookCoverDir)) fs.mkdirSync(bookCoverDir, { recursive: true });
 app.use('/covers', express.static(bookCoverDir, { maxAge: 86400000 }));
 
+// 2026-09-17：以前这儿一刀切 no-store —— 整个 static 都不许缓存，所以每次开 App
+//   都把 855K 的 index.html、819K 的 icon、2.8M css、1.1M js **全量重下一遍**。
+//   她说「网页打开慢」，慢的就是这儿（后端接口全是毫秒级，CF 到源站 200ms，都不慢）。
+// 现在按类型分三档，**html 那档一个字没动**：
+//   .html      → 还是 no-store。前端是实时 serve 的，改完刷新就见新的，这条不能加缓存。
+//   .css/.js   → etag + no-cache：**不是不缓存**，是每次带 ETag 问一句，没变就回 304
+//                （空 body）。她改了立刻生效，没改就省下那 3.9M 的下载。
+//   图片/字体   → public, max-age=7天。同名文件内容基本不变，值得让 CF 边缘也存一份。
+//                ⚠️ 换了同名图片她 7 天内看不到新的 —— 改文件名，或者告诉我来清。
 app.use(express.static(path.join(__dirname, 'static'), {
-  etag: false,
+  etag: true,
   maxAge: 0,
   setHeaders: (res, filePath) => {
-    res.setHeader('Cache-Control', 'no-store');
     if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css');
     if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript');
     if (filePath.endsWith('.svg')) res.setHeader('Content-Type', 'image/svg+xml');
+
+    if (/\.html?$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-store');
+    } else if (/\.(css|js|mjs)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (/\.(png|jpe?g|gif|webp|svg|ico|avif|woff2?|ttf|otf|mp3|wav|m4a)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+    } else {
+      res.setHeader('Cache-Control', 'no-store');
+    }
   }
 }));
 
@@ -14535,7 +14553,7 @@ app.post('/api/commands/:id/start', auth, (req, res) => {
 //   · 打开后等 APP_OPEN_POKE_DELAY_MS —— 这段里她发了消息 / 又切出去了，就不戳
 //   · 她 APP_OPEN_POKE_QUIET_MIN 分钟内说过话 → 不戳（正聊着，切回来不算「来看」）
 //   · 冷却 + 日上限：她一天点开几十次，每次都戳就是几十次 CLI 调用
-const APP_OPEN_POKE_DELAY_MS    = 90 * 1000;
+const APP_OPEN_POKE_DELAY_MS    = Number(process.env.APP_OPEN_POKE_DELAY_MS || 40 * 1000);   // 09-17 她定：90 秒太长，点进来看一眼撑不到
 const APP_OPEN_POKE_QUIET_MIN   = 20;
 const APP_OPEN_POKE_COOLDOWN_MS = 30 * 60 * 1000;
 const APP_OPEN_POKE_MAX_PER_DAY = 10;

@@ -4,6 +4,8 @@
  */
 .pstack-stage {
   position: relative;
+  isolation: isolate;           /* 就地建层叠上下文，把卡片的 z-index(100/110) 关在舞台内，
+                                   否则它们会漏到页面层级、盖住旁边的头像(z-index auto) */
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;

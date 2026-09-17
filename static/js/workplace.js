@@ -553,9 +553,12 @@
       // ESC：在 Claude Code 里是「打断正在跑的那一轮」，**不清输入**（09-16 实测）。
       // 所以这颗按钮两件事一起做：清掉我们这边的输入框 + 送真 Escape 进房间，
       // 再补一个 C-u 把 CLI 那行也清掉 —— 不然她按了看着像没反应。
+      // ⚠️ **C-u 必须在 Escape 前面**（09-17 实测）：ESC 紧跟着别的键 = 终端里的
+      //   Meta 前缀，TUI 把两个字节当成 Alt+组合吃掉，单独那记 ESC 就没了 ——
+      //   `/usage` 这种整屏视图因此退不出来。Escape 永远放最后一个。
       keyBtn('ESC', function () {
         wsIn.value = '';
-        if (roomOn) { roomSend('', ['Escape', 'C-u']); paintTail(); }
+        if (roomOn) { roomSend('', ['C-u', 'Escape']); paintTail(); }
       }),
       keyBtn('TAB', key('Tab', function () { goPage(curPage === PAGE_WS ? PAGE_CHAT : PAGE_WS); })),
       keyBtn('S-TAB', key('BTab')),
