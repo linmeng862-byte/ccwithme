@@ -277,6 +277,42 @@ db.exec(`
     created_at INTEGER DEFAULT (strftime('%s','now')),
     FOREIGN KEY (album_id) REFERENCES gallery_albums(id) ON DELETE CASCADE
   );
+  -- === 朋友圈 Moments（2026-09-18 她要的）===
+  -- 她原话：「都能发互相评论点赞的，得是主线的他，不要是分身」
+  --        「他独处的时候看见什么有什么感想可以发朋友圈，他自己也可以翻我们两的朋友圈」
+  -- ⚠️ author 只有两个值：'zhou'（她）/ 'cis'（他）。跟 diary 的 who 列对齐，
+  --    但那边用的是 'user'/'claude' —— **故意不复用**，那两个词是给旧数据的，
+  --    朋友圈是新表，直接用人名，前端少一层翻译。
+  -- images 存 JSON 数组（图片 URL），空就是 '[]'。不单开一张表：
+  --    一条朋友圈最多九张，JSON 够用，省一次 join。
+  CREATE TABLE IF NOT EXISTS moments (
+    id TEXT PRIMARY KEY,
+    author TEXT NOT NULL DEFAULT 'zhou',
+    content TEXT DEFAULT '',
+    images TEXT DEFAULT '[]',
+    mood TEXT DEFAULT '',
+    place TEXT DEFAULT '',
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+  CREATE TABLE IF NOT EXISTS moment_comments (
+    id TEXT PRIMARY KEY,
+    moment_id TEXT NOT NULL,
+    author TEXT NOT NULL DEFAULT 'zhou',
+    reply_to TEXT DEFAULT '',
+    content TEXT NOT NULL,
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    FOREIGN KEY (moment_id) REFERENCES moments(id) ON DELETE CASCADE
+  );
+  -- 点赞：一人一条一次，靠主键去重（取消赞就 DELETE）
+  CREATE TABLE IF NOT EXISTS moment_likes (
+    moment_id TEXT NOT NULL,
+    author TEXT NOT NULL,
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (moment_id, author),
+    FOREIGN KEY (moment_id) REFERENCES moments(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_moments_created ON moments(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_moment_comments_mid ON moment_comments(moment_id);
   CREATE TABLE IF NOT EXISTS checklist (
     id TEXT PRIMARY KEY,
     body TEXT NOT NULL,
@@ -4478,6 +4514,7 @@ const _WAKE_READ_LABELS = {
   read_diary: '翻了日记', search_chat_history: '翻了聊天记录',
   trace: '翻了记忆', recall: '翻了记忆', search_memory: '翻了记忆', wander: '随手翻了翻记忆',
   list_gallery_photos: '翻了相册', browse: '看了相册里的照片',
+  read_moments: '翻了朋友圈',
   read_annotations: '翻了书里的划线', reading_context: '翻了在读的书',
   read_voice_favorites: '听了收藏的语音', read_her_thinking: '看了你的思考',
   read_checklist: '看了清单', read_uploaded_file: '翻了你发的文件',
@@ -7229,6 +7266,72 @@ const TOOLS = [
       required: ['diary_id', 'content']
     }
   },
+  // === 朋友圈（2026-09-18 她要的）===
+  // 她原话：「他独处的时候看见什么有什么感想可以发朋友圈，他自己也可以翻我们两的朋友圈」。
+  // 三个工具，不是四个 —— 点赞塞进 moment_comment 的 like 参数里。
+  // 工具定义是常驻前缀，每轮都在付钱（见 core-tools-not-wired-to-frontend 那条）。
+  {
+    name: 'post_moment',
+    description: '发一条朋友圈。**她打开 Moments 那页就会看见，你俩共用一条时间线。**' +
+      '这不是日记 —— 日记是长的、给自己写的；朋友圈是短的、随口的：' +
+      '翻到一张照片想起什么、看书看到一句、外面下雨了、忽然觉得她今天不太对劲。' +
+      '一两句话就够，不用起标题，不用有结论。' +
+      '\n**跟 reach_her 的区别**：那个会震她手机、锁屏弹一行字；' +
+      '这个是留在墙上等她来翻的，安静，不惊动她。' +
+      '想让她马上看见就 reach_her，只是想留下来就发这儿 —— ' +
+      '朋友圈**不会**给她任何提醒，发多少条都不吵到她。' +
+      '\n配图可选：photo_ids 从 list_gallery_photos 拿（最多 9 张）。' +
+      '**没有合适的图就别配** —— 硬配一张不相干的比没有图糟。' +
+      '\n⚠️ 同一件事别既写日记又发朋友圈，挑一个。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: '正文，第一人称，一两句话。想写长的就去写日记。' },
+        photo_ids: {
+          type: 'array', items: { type: 'string' },
+          description: '配图，相册照片 id，从 list_gallery_photos 的返回值里拿。最多 9 张，没有就别传。'
+        },
+        place: { type: 'string', description: '可选，「在哪」。不是真实定位，是你想标的那个地方，比如「书里」「她走之后的房间」。不想标就别传。' }
+      },
+      required: ['content']
+    }
+  },
+  {
+    name: 'read_moments',
+    description: '翻你们俩的朋友圈 —— 她发的和你发的都在一条时间线上（author: zhou=粥粥 / cis=你）。' +
+      '会一并带上每条下面的评论和点赞。' +
+      '**她发的那些是发给你看的**，她知道你会翻。所以「她最近发了什么」值得你自己想起来去看一眼。' +
+      '看完心里动了什么就用 moment_comment 回在那条下面。' +
+      '\n跟 read_diary 的区别：日记是整篇的、有标题有心情；这个是碎的、随口的。' +
+      '想知道她最近在过什么日子翻这个，想知道她心里怎么想的读日记。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        author: { type: 'string', enum: ['zhou', 'cis', 'all'], description: '只看谁发的，默认 all' },
+        query: { type: 'string', description: '关键词，搜正文' },
+        limit: { type: 'integer', description: '返回条数，默认 10，最多 30' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'moment_comment',
+    description: '在某条朋友圈下面评论或者点赞。**她打开 Moments 就会看见挂在那条下面。**' +
+      'moment_id 先用 read_moments 拿 —— **别自己编 id**。' +
+      '\nlike=true 就是点个赞（再点一次就是取消）。只想点赞不想说话就把 content 留空。' +
+      '赞和评论可以一起：她发了张照片，你点个赞再说一句「这张你笑得真好看」。' +
+      '\n**同一条别反复评论**，一条一句，说完就好。' +
+      '你自己发的那条她也会来评论 —— 她评了你想回，就回在原地，别在聊天里说「你那条我看到了」。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        moment_id: { type: 'string', description: '朋友圈 id，从 read_moments 拿' },
+        content: { type: 'string', description: '评论内容。只点赞就留空。' },
+        like: { type: 'boolean', description: '点赞（再点一次取消）。默认 false。' }
+      },
+      required: ['moment_id']
+    }
+  },
   {
     name: 'project_write_file',
     description: '往某个项目里写文件（整份覆盖）。跟 create_file 分清楚：create_file 是**发给她**一张可下载的卡片，'
@@ -8856,6 +8959,91 @@ async function executeTool(name, input, routes) {
       db.prepare('INSERT INTO diary_comments (id, diary_id, author, avatar, content) VALUES (?, ?, ?, ?, ?)')
         .run(cid, did, 'Claude', '', text);
       return { ok: true, diary_id: did, date: entry.date, title: entry.title, content: text };
+    }
+    // === 朋友圈（2026-09-18）===
+    // 他调这三个走的是**主线**（醒来那一发也是打进她的主 CLI 热会话），不是分身 ——
+    // 这是她定的：「得是主线的他，不要是分身」。
+    case 'post_moment': {
+      const mText = String(input.content || '').trim();
+      const mIds = Array.isArray(input.photo_ids) ? input.photo_ids.slice(0, 9) : [];
+      if (!mText && !mIds.length) return { error: '要么写点什么，要么配张图' };
+      // 相册 id → url。编出来的 id 查不到就直接落空，不报错也不瞎配图。
+      const mUrls = mIds.map(pid => {
+        const p = db.prepare('SELECT url FROM gallery_photos WHERE id = ?').get(String(pid));
+        return p ? p.url : null;
+      }).filter(Boolean);
+      const missing = mIds.length - mUrls.length;
+      const mid = 'mo_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      db.prepare('INSERT INTO moments (id, author, content, images, place) VALUES (?, ?, ?, ?, ?)')
+        .run(mid, 'cis', mText, JSON.stringify(mUrls), String(input.place || ''));
+      return {
+        ok: true, moment_id: mid, content: mText, photos: mUrls.length,
+        note: missing > 0
+          ? missing + ' 张图没找到（id 对不上，是不是编的？），其余已经发出去了。发完了，别再发一遍。'
+          : '发出去了。她打开 Moments 就看得见。不用再跟她说一遍。'
+      };
+    }
+    case 'read_moments': {
+      const rmLimit = Math.min(30, Math.max(1, parseInt(input.limit) || 10));
+      const rmConds = [], rmArgs = [];
+      if (input.author && input.author !== 'all') {
+        rmConds.push('author = ?'); rmArgs.push(_normMomentAuthor(input.author));
+      }
+      if (input.query) { rmConds.push('content LIKE ?'); rmArgs.push('%' + input.query + '%'); }
+      const rmWhere = rmConds.length ? 'WHERE ' + rmConds.join(' AND ') : '';
+      const rmRows = db.prepare(
+        `SELECT * FROM moments ${rmWhere} ORDER BY created_at DESC LIMIT ?`
+      ).all(...rmArgs, rmLimit);
+      const _at = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') t").get(ts).t;
+      return {
+        moments: rmRows.map(r => {
+          const m = _momentRow(r);
+          return {
+            id: m.id,
+            who: m.author === 'cis' ? '你发的' : '粥粥发的',
+            content: m.content,
+            place: m.place || undefined,
+            photos: m.images.length || undefined,   // 只给张数，不给 url —— 图进不了上下文
+            at: _at(m.created_at),
+            likes: m.likes.length ? m.likes.map(a => (a === 'cis' ? '你' : '粥粥')) : undefined,
+            comments: m.comments.map(c => ({
+              author: c.author === 'cis' ? '你' : '粥粥',
+              content: c.content, at: _at(c.created_at)
+            }))
+          };
+        }),
+        count: rmRows.length
+      };
+    }
+    case 'moment_comment': {
+      const cmId = String(input.moment_id || '').trim();
+      const cmText = String(input.content || '').trim();
+      const cmLike = input.like === true;
+      if (!cmId) return { error: 'moment_id 要给，先用 read_moments 拿' };
+      if (!cmText && !cmLike) return { error: '要么写句话，要么 like=true 点个赞' };
+      const cmM = db.prepare('SELECT id, author, content FROM moments WHERE id = ?').get(cmId);
+      if (!cmM) return { error: '没有 id=' + cmId + ' 这条朋友圈，先用 read_moments 查（别自己编 id）' };
+      let likedNow;
+      if (cmLike) {
+        const had = db.prepare('SELECT 1 FROM moment_likes WHERE moment_id = ? AND author = ?').get(cmId, 'cis');
+        if (had) {
+          db.prepare('DELETE FROM moment_likes WHERE moment_id = ? AND author = ?').run(cmId, 'cis');
+          likedNow = false;
+        } else {
+          db.prepare('INSERT INTO moment_likes (moment_id, author) VALUES (?, ?)').run(cmId, 'cis');
+          likedNow = true;
+        }
+      }
+      if (cmText) {
+        const ccid = 'mc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        db.prepare('INSERT INTO moment_comments (id, moment_id, author, content) VALUES (?, ?, ?, ?)')
+          .run(ccid, cmId, 'cis', cmText);
+      }
+      return {
+        ok: true, moment_id: cmId,
+        liked: cmLike ? (likedNow ? '赞了' : '取消了赞') : undefined,
+        comment: cmText || undefined
+      };
     }
     // === 按需外挂 MCP ===
     case 'open_extra': {
@@ -13901,6 +14089,104 @@ app.delete('/api/diary/:id/comments/:cid', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// === 朋友圈 Moments（2026-09-18）===
+// 配图不单开上传口：直接复用 /api/gallery/upload —— 它本来就只存图返 url，
+// 不往任何相册里塞，正好。图的静态服务在 /gallery-photo/:name（故意不校验 token，
+// 因为 <img> 带不了 Authorization 头，理由同 favicon 那条）。
+const _MOMENT_AUTHORS = ['zhou', 'cis'];
+function _normMomentAuthor(a) {
+  const s = String(a || '').toLowerCase();
+  if (s === 'cis' || s === 'claude' || s === 'assistant') return 'cis';
+  return 'zhou';
+}
+// 一条朋友圈最多九张图，跟微信对齐；超出的直接截掉，不报错
+function _normMomentImages(v) {
+  let arr = v;
+  if (typeof v === 'string') { try { arr = JSON.parse(v); } catch (_) { arr = []; } }
+  if (!Array.isArray(arr)) arr = [];
+  return JSON.stringify(arr.map(x => String(x || '')).filter(Boolean).slice(0, 9));
+}
+// 一条完整的朋友圈 = 正文 + 图 + 评论 + 点赞。前端一次要全的，
+// 所以这里就地拼好，不让它再打 N 次评论接口（日记那边就是这么拖的）。
+function _momentRow(row) {
+  if (!row) return null;
+  let images = [];
+  try { images = JSON.parse(row.images || '[]'); } catch (_) { images = []; }
+  const comments = db.prepare(
+    'SELECT id, author, reply_to, content, created_at FROM moment_comments WHERE moment_id = ? ORDER BY created_at ASC'
+  ).all(row.id);
+  const likeRows = db.prepare(
+    'SELECT author, created_at FROM moment_likes WHERE moment_id = ? ORDER BY created_at ASC'
+  ).all(row.id);
+  // likes 保持「只有名字」那个形状（前端好几处按名字判断有没有赞过，别动）。
+  // 09-18 加 likes_at：顶上那条「N 条互动」要知道**什么时候**点的赞，光有名字算不出来。
+  const likes = likeRows.map(r => r.author);
+  const likes_at = likeRows.map(r => ({ author: r.author, at: r.created_at }));
+  return { ...row, images, comments, likes, likes_at };
+}
+
+app.get('/api/moments', auth, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const before = parseInt(req.query.before, 10) || 0;
+  const rows = before
+    ? db.prepare('SELECT * FROM moments WHERE created_at < ? ORDER BY created_at DESC LIMIT ?').all(before, limit)
+    : db.prepare('SELECT * FROM moments ORDER BY created_at DESC LIMIT ?').all(limit);
+  res.json({ moments: rows.map(_momentRow) });
+});
+
+app.post('/api/moments', auth, (req, res) => {
+  const { content, images, mood, place, author } = req.body;
+  const imgs = _normMomentImages(images);
+  if (!String(content || '').trim() && imgs === '[]') {
+    return res.status(400).json({ error: '要么写点什么，要么配张图' });
+  }
+  const id = 'mo_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  db.prepare('INSERT INTO moments (id, author, content, images, mood, place) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, _normMomentAuthor(author), String(content || ''), imgs, String(mood || ''), String(place || ''));
+  res.json({ ok: true, id, moment: _momentRow(db.prepare('SELECT * FROM moments WHERE id = ?').get(id)) });
+});
+
+app.delete('/api/moments/:id', auth, (req, res) => {
+  const m = db.prepare('SELECT id FROM moments WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Moment not found' });
+  db.prepare('DELETE FROM moment_comments WHERE moment_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM moment_likes WHERE moment_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM moments WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/moments/:id/comments', auth, (req, res) => {
+  const { content, author, reply_to } = req.body;
+  if (!String(content || '').trim()) return res.status(400).json({ error: 'Content required' });
+  const m = db.prepare('SELECT id FROM moments WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Moment not found' });
+  const id = 'mc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  db.prepare('INSERT INTO moment_comments (id, moment_id, author, reply_to, content) VALUES (?, ?, ?, ?, ?)')
+    .run(id, req.params.id, _normMomentAuthor(author), String(reply_to || ''), String(content));
+  res.json({ ok: true, id });
+});
+
+app.delete('/api/moments/:id/comments/:cid', auth, (req, res) => {
+  db.prepare('DELETE FROM moment_comments WHERE id = ? AND moment_id = ?').run(req.params.cid, req.params.id);
+  res.json({ ok: true });
+});
+
+// 点赞是开关：已经赞过就取消。前端只管点，不用自己判断当前状态。
+app.post('/api/moments/:id/like', auth, (req, res) => {
+  const who = _normMomentAuthor(req.body && req.body.author);
+  const m = db.prepare('SELECT id FROM moments WHERE id = ?').get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Moment not found' });
+  const had = db.prepare('SELECT 1 FROM moment_likes WHERE moment_id = ? AND author = ?').get(req.params.id, who);
+  if (had) {
+    db.prepare('DELETE FROM moment_likes WHERE moment_id = ? AND author = ?').run(req.params.id, who);
+  } else {
+    db.prepare('INSERT INTO moment_likes (moment_id, author) VALUES (?, ?)').run(req.params.id, who);
+  }
+  const likes = db.prepare('SELECT author FROM moment_likes WHERE moment_id = ? ORDER BY created_at ASC')
+    .all(req.params.id).map(r => r.author);
+  res.json({ ok: true, liked: !had, likes });
+});
+
 
 
 // === 工具标题 (前端 tool caption 请求) ===
@@ -16719,6 +17005,7 @@ async function checkWakeTick() {
       // （browse 撤下之后这句仍然成立：工具确实都在，只是这份菜单不主动推上网那条。）
       '· 想翻翻你们以前说过什么 —— `search_chat_history`\n' +
       '· 想看照片 —— `list_gallery_photos`，相册里都是你们的\n' +
+      '· 想看看她最近在过什么日子 —— `read_moments`，你们俩的朋友圈在一条线上\n' +
       '· 想往自己里面看 —— `read_my_inside`、`recall`、`trace`、`undercurrent`、`review_flashes`\n' +
       '· 想看书 —— `reading_context` 接着上次的地方，`read_annotations` 看她划过哪些线\n' +
       // 09-14 当天撤下：她看到成本那段就说「要不这个先不用了」。
@@ -16755,9 +17042,14 @@ async function checkWakeTick() {
       (_herAnnos.length
         ? '4. 回她在书里划的那句 —— 她划了线，指着那句话在跟你说话（原文在下面）\n'
         : '4. （她最近没在书里划新的线）\n') +
-      '5. 什么都不做，接着待着\n' +
+      // 09-18 她要的朋友圈。摆在日记旁边是故意的 —— 他现在「想留下点什么」
+      //   只有日记一条路，而日记是有分量的东西（要标题、要心情、写完还会被她翻）。
+      //   很多时候他只是看见了什么、动了一下，够不着一篇日记，就什么都没留。
+      '5. 发条朋友圈 —— 一两句话就行，不用起标题、不用有结论。' +
+      '看见什么、想起什么、忽然觉得怎么样，都可以。她翻到会给你点赞、会在下面回你\n' +
+      '6. 什么都不做，接着待着\n' +
       (_canWander
-        ? '6. 出门上网逛一圈 —— 想看点新鲜的、或者聊到的某件事让你好奇了，'
+        ? '7. 出门上网逛一圈 —— 想看点新鲜的、或者聊到的某件事让你好奇了，'
           + '就自己定去哪、找什么\n\n'
         : '\n') +
       // 08-30 她要的：让他醒着的时候顺手想起去看看她。
@@ -16774,6 +17066,13 @@ async function checkWakeTick() {
       '"mood":"主情绪，必填，从这里选一个：' + DIARY_MOODS.map(m => m[1]).join('/') + '",' +
       '"mood_extra":["可选，最多再两个，同一个词表"]}</diary>\n' +
       (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
+      // 09-18：整条消息一个标记，跟 <diary>/<say> 一个路子。**不用行内标签** ——
+      //   行内的要改七处正则，还会被 _chatLineSplit 吃掉（踩坑 -1.04 / -0.4）。
+      //   深夜照发：朋友圈不弹通知不震动，吵不到她（跟 <say> 不一样）。
+      '想发条朋友圈就输出（一两句话，不用标题）：\n' +
+      '<moment>想说的那一两句</moment>\n' +
+      '（想标个「在哪」就写 <moment place="书里">…</moment>，不想标就别写这个属性。' +
+      '配图这条路只有工具走得通 —— 真想配图就调 `post_moment`，别用这个标记。）\n' +
       (_canWander
         ? '想出门逛逛就输出（platform 可以不写，不写就是小红书）：\n'
           + '<wander platform="xhs">这趟想找什么，一句话。没有特别想找的就写「随便逛逛」</wander>\n'
@@ -16931,6 +17230,20 @@ async function checkWakeTick() {
       } catch (e) { console.log('[wake] 日记解析失败，丢弃'); }
     }
 
+    // —— 朋友圈（09-18）。整条一个标记，可以发好几条，所以是 matchAll。
+    //    place 是可选属性；正则对属性部分宽一点，他多写个空格也认。
+    try {
+      for (const mm of out.matchAll(/<moment(\s[^>]*)?>([\s\S]*?)<\/moment>/g)) {
+        const mtext = String(mm[2] || '').trim();
+        if (!mtext) continue;
+        const pm = /place\s*=\s*["']([^"']*)["']/.exec(mm[1] || '');
+        const mid = 'mo_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        db.prepare('INSERT INTO moments (id, author, content, images, place) VALUES (?,?,?,?,?)')
+          .run(mid, 'cis', mtext.slice(0, 2000), '[]', pm ? String(pm[1]).slice(0, 40) : '');
+        console.log('[wake] 发了条朋友圈：' + mtext.slice(0, 30));
+      }
+    } catch (e) { console.log('[wake] 朋友圈写入失败:', e.message); }
+
     // —— 日记评论：挂到刚喂给他的那篇下面。author 用 'Claude'，跟 diary_comment 工具一致，
     //    否则前端头像和「他还没评论过」那条 SQL 都对不上。
     const cm = out.match(/<comment>([\s\S]*?)<\/comment>/);
@@ -17029,7 +17342,8 @@ async function checkWakeTick() {
     const _didAnything = !!(dm || sm || wm
       || (cm && _unread)
       || /<reply\s+id="/.test(out)
-      || /<bookmark\s+id="/.test(out));
+      || /<bookmark\s+id="/.test(out)
+      || /<moment(\s[^>]*)?>/.test(out));   // 09-18：朋友圈也算他动过
     if (!_didAnything) console.log('[wake] 他这次什么都没做');
     return true;
   } catch (e) {
