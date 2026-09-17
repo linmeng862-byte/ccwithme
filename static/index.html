@@ -570,6 +570,15 @@
 <section class="sheet" id="workplaceSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeWorkplace">×</button><h2 class="sheet-title">workplace</h2><span></span></header><div class="sheet-content" id="workplaceContent"></div></section>
 <section class="sheet" id="artifactsSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeArtifacts">×</button><h2 class="sheet-title">Artifacts</h2><span></span></header><div class="sheet-content" id="artifactsContent"></div></section>
 
+<!-- 全屏预览 artifact -->
+<section id="artifactViewPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:90;display:none;flex-direction:column;background:var(--bg-primary)">
+  <header id="artifactViewHead" style="padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 8px;flex:none;display:flex;align-items:center;gap:10px;min-height:44px">
+    <button class="profile-round-button" id="closeArtifactView" aria-label="返回" style="flex:none">×</button>
+    <span id="artifactViewTitle" style="flex:1;font:600 16px/1.2 var(--font-sans);color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+  </header>
+  <div id="artifactViewBody" style="flex:1;overflow:auto;-webkit-overflow-scrolling:touch"></div>
+</section>
+
 <div class="overlay" id="todoOverlay" aria-hidden="true" inert></div>
 <div class="overlay" id="voiceFavOverlay" aria-hidden="true" inert></div>
 <section class="sheet" id="voiceFavSheet" aria-hidden="true" inert><div class="sheet-handle"></div><header class="sheet-head"><button class="icon-button" id="closeVoiceFav">×</button><h2 class="sheet-title">收藏的语音</h2><span></span></header><div class="sheet-content" id="voiceFavContent"></div></section>
@@ -1029,40 +1038,17 @@ _artifactsList.forEach(function(art){
   hdr.append(iconBox,info,dlBtn,sendBtn,delBtn);
   card.append(hdr);
 
-  // 点卡片本身 = 展开预览（正文是懒加载的，从库里来的要先拉回来）
-  var expanded=false,frame=null;
+  // 点卡片 = 全屏预览
   hdr.onclick=function(){
-    if(expanded){if(frame){frame.remove();frame=null}expanded=false;return}
     var show=function(){
       if(!art.content){toast('这个作品没有正文');return}
-      expanded=true;
-      if(ty.ext==='.md'){
-        // md 直接用聊天里那套 marked 渲染，不套 iframe——省一个文档，也跟着主题走
-        frame=document.createElement('div');
-        frame.className='md';
-        frame.style.cssText='padding:14px 18px 18px;border-top:1px solid var(--border);font:15px/1.75 var(--font-sans);color:var(--text-primary);overflow-x:auto';
-        try{frame.innerHTML=window.marked?marked.parse(art.content,{breaks:true,gfm:true}):'<pre></pre>'}
-        catch(e){frame.textContent=art.content}
-        if(!window.marked)frame.querySelector('pre').textContent=art.content;
-        frame.querySelectorAll('a[href]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')});
-        card.append(frame);return;
-      }
-      var blob=_artifactBlob(art);
-      if(!blob){toast('这个文件坏了，打不开');expanded=false;return}
-      frame=document.createElement('iframe');
-      frame.style.cssText='width:100%;min-height:'+(ty.ext==='.pdf'?'620px':'400px')+';border:none;border-top:1px solid var(--border);display:block';
-      // PDF 要用浏览器自带的阅读器，sandbox 会把它关掉，所以只给 html/svg 上 sandbox
-      if(ty.ext!=='.pdf')frame.sandbox='allow-scripts';
-      frame.src=URL.createObjectURL(blob);
-      card.append(frame);
+      _openArtifactFullscreen(art,ty);
     };
     if(art.content){show();return}
     if(art._loading)return;
     art._loading=true;
-    var tip=document.createElement('div');
-    tip.style.cssText='padding:10px 16px;color:var(--text-secondary);font:12px var(--font-sans);border-top:1px solid var(--border)';
-    tip.textContent='加载中…';card.append(tip);
-    _fetchArtifactContent(art).then(function(){tip.remove();art._loading=false;show()});
+    toast('加载中…');
+    _fetchArtifactContent(art).then(function(){art._loading=false;show()});
   };
   c.append(card);
 });
@@ -1074,6 +1060,45 @@ dlAll.innerHTML='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" str
 dlAll.onclick=function(e){e.stopPropagation();_downloadAllArtifacts()};
 c.append(dlAll);
 }
+
+function _openArtifactFullscreen(art,ty){
+  if(!ty)ty=_artType(art);
+  var panel=$('artifactViewPanel');
+  var body=$('artifactViewBody');
+  var title=$('artifactViewTitle');
+  title.textContent=art.title||'未命名';
+  body.innerHTML='';
+  if(ty.ext==='.md'){
+    var md=document.createElement('div');
+    md.className='md';
+    md.style.cssText='padding:16px 18px 40px;font:15px/1.75 var(--font-sans);color:var(--text-primary);overflow-x:auto';
+    try{md.innerHTML=window.marked?marked.parse(art.content,{breaks:true,gfm:true}):'<pre></pre>'}
+    catch(e){md.textContent=art.content}
+    if(!window.marked){var p=md.querySelector('pre');if(p)p.textContent=art.content}
+    md.querySelectorAll('a[href]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')});
+    body.append(md);
+  }else{
+    var blob=_artifactBlob(art);
+    if(!blob){toast('这个文件坏了，打不开');return}
+    var fr=document.createElement('iframe');
+    fr.style.cssText='width:100%;height:100%;border:none;display:block';
+    if(ty.ext!=='.pdf')fr.sandbox='allow-scripts';
+    fr.src=URL.createObjectURL(blob);
+    body.append(fr);
+  }
+  panel.style.display='flex';
+  panel.setAttribute('aria-hidden','false');
+}
+function _closeArtifactFullscreen(){
+  var panel=$('artifactViewPanel');
+  panel.style.display='none';
+  panel.setAttribute('aria-hidden','true');
+  var body=$('artifactViewBody');
+  var fr=body.querySelector('iframe');
+  if(fr&&fr.src&&fr.src.startsWith('blob:'))URL.revokeObjectURL(fr.src);
+  body.innerHTML='';
+}
+$('closeArtifactView').onclick=_closeArtifactFullscreen;
 
 // 「发给他看」—— 她配图里写的「加了发他自己的 html 给他看」。
 // ⚠️ 正文可能很大（html 动辄几十 KB），整块塞进消息就是白烧 token，
