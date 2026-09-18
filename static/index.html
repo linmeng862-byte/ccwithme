@@ -36,7 +36,7 @@
 <link rel="stylesheet" href="/css/moments.css?v=1789664967">
 <script src="/js/moments.js?v=1789664967"></script>
 <script src="/js/books.js?v=1789209745"></script>
-<script src="/js/diary.js?v=1789209745"></script>
+<script src="/js/diary.js?v=1789209747"></script>
 <script src="/js/calendar.js?v=1789209745"></script>
 <script src="/js/gallery.js?v=1789209745"></script>
 <script src="/js/memory.js?v=1789209745"></script>
@@ -6650,7 +6650,8 @@ function _cacheCard(recent){
   if(!recent||!recent.length)return '';
   var rows=recent.map(function(x){
     var w=Number(x.w)||0,r=Number(x.r)||0;
-    var st=w<2000?['命中','#7A9E86']:(w<25000?['重建','#C9A87C']:['重写','#C88080']);
+    // 09-17：颜色走 CSS 变量，皮肤可以换（没设就是原来的绿/黄/红）
+    var st=w<2000?['命中','var(--cache-hit,#7A9E86)']:(w<25000?['重建','var(--cache-rebuild,#C9A87C)']:['重写','var(--cache-miss,#C88080)']);
     var tot=w+r,pct=tot?Math.round(r/tot*100):0;
     return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bg-sunken)">'
       +'<span style="flex:0 0 38px;font:11px var(--font-sans);color:var(--text-faint)">'+escHtml(x.hm||'')+'</span>'
@@ -6663,10 +6664,10 @@ function _cacheCard(recent){
   return '<div style="margin-bottom:22px;background:var(--bg-surface);border:1px solid var(--bg-sunken);border-radius:14px;padding:14px 16px">'
     +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">'
       +'<span style="font:600 13px var(--font-sans);color:var(--text-secondary)">缓存命中（最近 '+recent.length+' 条）</span>'
-      +'<span style="font:600 13px var(--font-sans);color:'+(hit>recent.length/2?'#7A9E86':'#C88080')+'">'+hit+'/'+recent.length+'</span></div>'
+      +'<span style="font:600 13px var(--font-sans);color:'+(hit>recent.length/2?'var(--cache-hit,#7A9E86)':'var(--cache-miss,#C88080)')+'">'+hit+'/'+recent.length+'</span></div>'
     +rows
     +'<div style="font:11px/1.6 var(--font-sans);color:var(--text-faint);margin-top:8px">'
-      +'<b style="color:#7A9E86">命中</b>=几乎不花钱　<b style="color:#C9A87C">重建</b>=换会话时的一次性　<b style="color:#C88080">重写</b>=整段重来<br>'
+      +'<b style="color:var(--cache-hit,#7A9E86)">命中</b>=几乎不花钱　<b style="color:var(--cache-rebuild,#C9A87C)">重建</b>=换会话时的一次性　<b style="color:var(--cache-miss,#C88080)">重写</b>=整段重来<br>'
       +'连着聊命中率高；隔一小时以上回来，第一条必定是重写。</div></div>'}
 // 订阅额度卡片——放在用量面板最上面，因为这才是真正会把她卡住的那个数。
 // 下面那些 $ 都是按 API 价估的，她走订阅，那些只能当"这轮值多少钱"的参考。

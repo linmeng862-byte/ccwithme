@@ -1508,9 +1508,11 @@ function _initDiaryStyles() {
     var isDark = document.documentElement.dataset.theme === 'dark' ||
       (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme:dark)').matches);
     var panel = document.getElementById('diaryPanel');
-    if (panel) panel.style.background = isDark ? '#1C1A17' : '#F8F7F4';
+    // 09-17：小狗绘本 / 牵牛花皮肤要跟着底色走，行内写死的 #F8F7F4 会把 CSS 盖掉。其余皮肤保持原样。
+    var follow = /^(pup|asagao)$/.test(document.documentElement.dataset.palette || '') && !document.documentElement.classList.contains('ui-plain');
+    if (panel) panel.style.background = isDark ? '#1C1A17' : (follow ? 'var(--bg-primary)' : '#F8F7F4');
   }
   _diaryApplyTheme();
-  new MutationObserver(_diaryApplyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  new MutationObserver(_diaryApplyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette'] });
   matchMedia('(prefers-color-scheme:dark)').addEventListener('change', _diaryApplyTheme);
 })();

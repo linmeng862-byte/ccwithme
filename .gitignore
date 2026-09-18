@@ -51,3 +51,6 @@ static/start.bat
 
 # 做给她看的预览页（配色对比、设计稿），不进仓库
 static/preview/
+
+# 皮肤背景图（09-17）：是别人的画（小红书存的），PUBLIC 仓库不进，每台自己放
+static/skins/

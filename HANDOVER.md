@@ -5,6 +5,20 @@
 > **最新的写在最上面。**
 
 
+## 📱 2026-09-17 · iOS 独立页 `static/ios.html`（工作台做的，未提交，终端接着改）
+
+她照小红书截图要的：**锁屏专注模式胶囊 + iOS 26 iMessage 对话页**，跟主页主题完全分开。
+单文件，不引 `home.css`，**没动后端**。访问 `/ios.html`，聊天页是 `/ios.html#chat`。
+
+- 锁屏：五条磨砂玻璃胶囊（状态只存 localStorage `ios_focus`，**不告诉他**），底部三颗玻璃钮：回主页 / 换背景 / 进信息
+- iMessage：Liquid Glass 样式，读主线 `/api/sessions/main`，发消息走 `/api/chat`。
+  ⚠️ model / effort / extended 跟主页读同一份 localStorage、同样写法 —— 不一致会让常驻进程重开 = 冷写
+- 背景两页各一张，canvas 压缩后存 IndexedDB `ios_page`，只在本机
+- 没做：发图、语音/表情卡片（标记换成文字）；右上摄像机钮其实是换背景
+- **工作台没浏览器，效果没人亲眼看过**，语法 `ccwith html-check` 过了。终端能跑 playwright 的话先截一张给她。
+- 她提到「苹果发布了一些 skill」（iMessage / 磨砂玻璃相关），工作台找不到，终端可以帮她找找。
+
+
 ## ⌚ 2026-09-14 夜 · 睡眠一直存成 0 / 他能看她手机屏幕 / fun 一条命令编完
 
 给你那台：**拉下来要 `git pull` + 重启后端**，下面几件才在你那边生效。
