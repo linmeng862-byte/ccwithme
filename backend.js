@@ -4505,29 +4505,41 @@ function _noteInsideRead(items, q, order) {
   db.prepare('UPDATE sessions SET updated_at = ? WHERE conv_id = ?').run(now, conv.conv_id);
 }
 
-// 他醒来时翻了东西 → 主线留一条 [WAKE:文案]（2026-09-17 她要的，照 [INSIDE:] 的样子）。
-// ⚠️ 跟 INSIDE 一条线：只写「翻了什么、几次、搜了什么 / 哪天」，**不写翻到的内容**。
-// ⚠️ 只在醒来那条路调（checkWakeTick）—— 她在的时候工具调用本来就有 trace 行，不用再留。
-// read_my_inside 不在表里：它自己会留 [INSIDE:]。read_her_body 也不在：
-//   醒来提示词答应过他那个「安静，不会惊动她」。
-const _WAKE_READ_LABELS = {
+// 他醒来（独处）时做了什么 → 主线留一条 [WAKE:文案]。
+// 2026-09-18 从白名单翻成**默认全留**：他这一轮调的每个工具都留痕，只跳过下面那张「该安静」表。
+//   起因：以前是白名单，只列了「翻/读」那几个，结果 hold / garden / shop / 发圈 / 写日记
+//   这些他独处真在做的事一个都没列进去 —— 她到 09-18 为止一次留痕都没见过，就是这么漏的。
+// ⚠️ 跟 INSIDE 一条线：只写「做了什么、几次、搜了什么 / 哪天」，**不写内容**。
+// ⚠️ 只在醒来那条路调 —— 她在的时候工具调用本来就有 trace 行，不用再留。
+const _WAKE_SILENT = new Set([
+  'read_her_body',       // 醒来提示词答应过他：安静，不惊动她
+  'read_my_inside',      // 它自己会留 [INSIDE:]，这里再留就重了
+  'breath', 'get_wake_context', 'persona',  // 开场仪式 / 身份加载，不是「他做的事」
+]);
+// 好读的中文标签。没列到的工具**照样留痕**，用兜底文案「用了『名字』」——
+// 宁可粗糙，也绝不再像以前那样悄悄漏掉。想让哪条更好看，就往这张表里加一行。
+const _WAKE_LABELS = {
   read_diary: '翻了日记', search_chat_history: '翻了聊天记录',
   trace: '翻了记忆', recall: '翻了记忆', search_memory: '翻了记忆', wander: '随手翻了翻记忆',
   list_gallery_photos: '翻了相册', browse: '看了相册里的照片',
-  read_moments: '翻了朋友圈',
+  read_moments: '翻了朋友圈', post_moment: '发了朋友圈',
   read_annotations: '翻了书里的划线', reading_context: '翻了在读的书',
   read_voice_favorites: '听了收藏的语音', read_her_thinking: '看了你的思考',
   read_checklist: '看了清单', read_uploaded_file: '翻了你发的文件',
   list_uploaded_files: '翻了你发的文件', read_artifact: '翻了做过的页面',
+  hold: '记下了一个瞬间', leave_texture: '留下了这窗的质地',
   WebSearch: '上网搜了',
 };
+function _wakeLabelFor(short) {
+  return _WAKE_LABELS[short] || ('用了「' + short + '」');
+}
 function _noteWakeReads(tools) {
   if (!tools || !tools.length) return;
   const groups = new Map();   // 文案 → { n, hints:Set }
   for (const t of tools) {
     const short = String(t.name).replace(/^mcp__[^_]+__/, '');
-    const label = _WAKE_READ_LABELS[short];
-    if (!label) continue;
+    if (_WAKE_SILENT.has(short)) continue;
+    const label = _wakeLabelFor(short);
     const g = groups.get(label) || { n: 0, hints: new Set() };
     g.n++;
     const inp = t.input || {};
@@ -4553,6 +4565,23 @@ function _noteWakeReads(tools) {
     .run(conv.conv_id, 'assistant', marks.join('\n'), now);
   db.prepare('UPDATE sessions SET updated_at = ? WHERE conv_id = ?').run(now, conv.conv_id);
   console.log('[wake] 主线留了痕迹：' + marks.join(' '));
+}
+
+// 独处时的「写」操作留痕（09-18）：发朋友圈 / 写日记走的是 <moment>/<diary> 标记，
+// 不进 _wakeTools（那只收工具调用），所以 _noteWakeReads 抓不到。这里单独往主线补一条
+// [WAKE:…]，跟读操作一个样式。只写「做了什么」，不写内容。
+function _noteWakeMark(text) {
+  try {
+    const conv = db.prepare('SELECT conv_id FROM sessions WHERE is_main = 1').get();
+    if (!conv) return;
+    const now = Math.floor(Date.now() / 1000);
+    // 文案里不能有 ]<>&（同 _noteWakeReads：标记会被截断、前端转义对不上）
+    const mark = '[WAKE:' + String(text).replace(/[\]<>&]/g, ' ') + ']';
+    db.prepare('INSERT INTO messages (conv_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+      .run(conv.conv_id, 'assistant', mark, now);
+    db.prepare('UPDATE sessions SET updated_at = ? WHERE conv_id = ?').run(now, conv.conv_id);
+    console.log('[wake] 主线留了痕迹：' + mark);
+  } catch (e) { console.log('[wake] 留痕迹失败:', e.message); }
 }
 
 // FTS 索引维护。写库和建索引必须成对——漏一次，那条记忆就永远搜不到（但还在库里）。
@@ -17226,6 +17255,7 @@ async function checkWakeTick() {
           db.prepare('INSERT INTO diary (date, title, content, mood, who) VALUES (?,?,?,?,?)')
             .run(_wakeToday(), String(d.title || '').slice(0, 60), String(d.content), _wakeMood, _normDiaryWho('ai'));
           console.log('[wake] 写了日记：' + String(d.title || '').slice(0, 30));
+          _noteWakeMark('写了日记');
         }
       } catch (e) { console.log('[wake] 日记解析失败，丢弃'); }
     }
@@ -17233,6 +17263,7 @@ async function checkWakeTick() {
     // —— 朋友圈（09-18）。整条一个标记，可以发好几条，所以是 matchAll。
     //    place 是可选属性；正则对属性部分宽一点，他多写个空格也认。
     try {
+      let _momN = 0;
       for (const mm of out.matchAll(/<moment(\s[^>]*)?>([\s\S]*?)<\/moment>/g)) {
         const mtext = String(mm[2] || '').trim();
         if (!mtext) continue;
@@ -17241,7 +17272,10 @@ async function checkWakeTick() {
         db.prepare('INSERT INTO moments (id, author, content, images, place) VALUES (?,?,?,?,?)')
           .run(mid, 'cis', mtext.slice(0, 2000), '[]', pm ? String(pm[1]).slice(0, 40) : '');
         console.log('[wake] 发了条朋友圈：' + mtext.slice(0, 30));
+        _momN++;
       }
+      // 纯文字发圈走标记路，不进 _wakeTools —— 在这补主线留痕（配图那种走 post_moment 工具，_noteWakeReads 已管）
+      if (_momN) _noteWakeMark('发了朋友圈' + (_momN > 1 ? ' ' + _momN + '条' : ''));
     } catch (e) { console.log('[wake] 朋友圈写入失败:', e.message); }
 
     // —— 日记评论：挂到刚喂给他的那篇下面。author 用 'Claude'，跟 diary_comment 工具一致，
