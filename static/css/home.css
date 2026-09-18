@@ -2404,7 +2404,11 @@ html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
      改 999px：不管多高两端永远满圆（短气泡=胶囊，多行=两侧全圆），这才是她要的「圆」。
      ⚠️ 必须带 !important：1947 行手机端 @media 有 border-radius:14px!important，不加压不过——
         这就是之前反复「改了不圆」的真凶（backdrop/字重/padding 都生效了，唯独圆角被它 !important 顶回 14）。 */
-  border-radius:999px!important;
+  /* 09-18 十轮：999px 满圆在多行气泡上会把头尾行的字切到圆弧外（她报「文字戳出圆边」）。
+     几何上「满圆胶囊」和「多行不吃字」不可兼得，改成有界大圆角 22px：短气泡依旧很圆，
+     多行时四角不再吃字。若哪天只想给单行气泡满圆，另开 :not(:has(br)) 之类特判，别动这条。 */
+  border-radius:22px!important;
+  padding:7px 15px!important;
   /* 09-18 八轮：她要「透过透玻璃看背景、放大镜那种」。真凸透镜折射 iOS 不支持（要 SVG 位移），
      退而做「清透玻璃」：blur 收到 2 让背景清清楚楚透过来（不磨糊）+ contrast 提一点让背景更实，
      配下面 box-shadow 的边缘折射亮环，接近透过玻璃看背景的观感。 */
@@ -2426,10 +2430,59 @@ html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
     inset 0 1px 1px rgba(255,255,255,.6),
     inset 0 -6px 10px -6px rgba(70,55,45,.08);
 }
+/* 09-18：这个主题下语音条/通话条也走同一套玻璃（只改视觉，不碰它自己的圆角和内部布局）。
+   选择器带 #chat.has-wall = 优先级远高于 1157/1158 的 .msg-claude .voice-msg{background:var(--bubble-him)}，
+   不用 !important 就压得过。 */
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .voice-msg,
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .call-msg,
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .voice-msg,
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
+  -webkit-backdrop-filter:blur(2px) saturate(1.18) brightness(1.02);
+  backdrop-filter:blur(2px) saturate(1.18) brightness(1.02);
+  background:
+    radial-gradient(115% 55% at 32% -12%, rgba(255,255,255,.18) 0%, rgba(255,255,255,.04) 42%, rgba(255,255,255,0) 68%),
+    linear-gradient(135deg, rgba(255,255,255,.13) 0%, rgba(255,255,255,.03) 24%, rgba(255,255,255,0) 50%),
+    rgba(255,255,255,.10);
+  border:1px solid rgba(255,255,255,.5);
+  box-shadow:
+    0 10px 22px -10px rgba(60,45,35,.22),
+    inset 0 1px 1px rgba(255,255,255,.6),
+    inset 0 -6px 10px -6px rgba(70,55,45,.08);
+}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .voice-msg,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .call-msg,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .voice-msg,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
+    -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+    backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+    background:
+      linear-gradient(135deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 20%, rgba(255,255,255,0) 44%),
+      radial-gradient(130% 90% at 50% 118%, rgba(0,0,0,.24), rgba(0,0,0,0) 60%),
+      rgba(255,255,255,.03);
+    border-color:rgba(255,255,255,.16);
+    box-shadow:0 16px 32px -10px rgba(0,0,0,.42),inset 1.5px 1.5px 2px rgba(255,255,255,.14),inset 0 -9px 14px -7px rgba(0,0,0,.2);
+  }
+}
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .voice-msg,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .call-msg,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .voice-msg,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
+  -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+  backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 20%, rgba(255,255,255,0) 44%),
+    radial-gradient(130% 90% at 50% 118%, rgba(0,0,0,.24), rgba(0,0,0,0) 60%),
+    rgba(255,255,255,.03);
+  border-color:rgba(255,255,255,.16);
+  box-shadow:0 16px 32px -10px rgba(0,0,0,.42),inset 1.5px 1.5px 2px rgba(255,255,255,.14),inset 0 -9px 14px -7px rgba(0,0,0,.2);
+}
 /* 不支持 backdrop-filter 的老浏览器：给一层稍实的乳白兜底，别变全透明看不清 */
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
-  html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{background:rgba(255,253,249,.5)}
+  html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble,
+  html:not(.ui-plain):not(.wall-theme) #chat.has-wall .voice-msg,
+  html:not(.ui-plain):not(.wall-theme) #chat.has-wall .call-msg{background:rgba(255,253,249,.5)}
 }
 /* 深色：折射走暗玻璃，brightness 不提反收（提亮会发灰），高光压弱、底暗加深 */
 @media (prefers-color-scheme:dark){
