@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789700000">
+<link rel="stylesheet" href="/css/home.css?v=1789801500">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.css">
@@ -46,7 +46,7 @@
 <script src="/js/cinema.js?v=19"></script>
 <script src="/js/mcp.js?v=1"></script>
 <script src="/js/journey.js?v=1"></script>
-<script src="/js/persona-pending.js?v=1" defer></script><script src="/js/workplace.js?v=67"></script>
+<script src="/js/persona-pending.js?v=1" defer></script><script src="/js/workplace.js?v=68"></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -378,6 +378,8 @@
         <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px">
           <span style="font:14px var(--font-sans);color:var(--text-secondary)">聊天背景</span>
           <div style="display:flex;gap:8px">
+            <!-- 09-18 她要的：点固定配色不再删壁纸，只是藏起来。这个按钮一键切回上次那张，不用重传。 -->
+            <button class="drawer-action" id="chatWallBack" style="font:13px var(--font-sans)">壁纸</button>
             <button class="drawer-action" id="chatWallPick" style="font:13px var(--font-sans)">选图</button>
             <button class="drawer-action" id="chatWallClear" style="font:13px var(--font-sans);color:var(--text-faint)">清除</button>
           </div>
@@ -8373,54 +8375,76 @@ async function testEleven(btn){
     var chat = document.getElementById('chat');
     if(!chat) return;
     var plain = document.documentElement.classList.contains('ui-plain');
-    var w = '';
-    try { w = localStorage.getItem('chat_wallpaper') || ''; } catch(e) {}
-    // 09-18：抽屉也沿用同一张壁纸（她要的）。直接把图铺到 #drawer 上，
-    // 不靠「让抽屉透出底下的 #chat」——抽屉开合会 transform #chat，靠透出不稳。
     var drawer = document.getElementById('drawer');
-    var on = !!(w && !plain);
+    // 自定义壁纸（她自己传的图）。off = 暂时藏起来（点了固定配色），图还在，「壁纸」按钮能切回。
+    var rawStored = '', off = false;
+    try { rawStored = localStorage.getItem('chat_wallpaper') || ''; off = localStorage.getItem('chat_wall_off') === '1'; } catch(e) {}
+    var custom = (rawStored && !off) ? rawStored : '';
+    // 09-18：主题自带背景。选「小狗绘本」等配色时，铺这张固定插画当背景（她发的两张彩铅小狗）。
+    //   跟自定义壁纸是两套：自定义在就优先自定义，没有才用主题图。主题图是 static 资源，不进 localStorage。
+    var palette = ''; try { palette = document.documentElement.dataset.palette || ''; } catch(e) {}
+    var THEME_WALLS = { pup: { chat:'/img/pup-chat.jpg?v=1', drawer:'/img/pup-drawer.jpg?v=1' } };
+    var theme = THEME_WALLS[palette] || null;
+    var chatImg   = custom || (theme && theme.chat)   || '';
+    var drawerImg = custom || (theme && theme.drawer) || '';
+    var usingTheme = !custom && !!(theme && theme.chat);   // 当前铺的是主题图（气泡要柔和一档）
+    var on = !!(chatImg && !plain);
+    // 「壁纸」按钮：有存过图、且当前没在用自定义图（藏了 / 切了主题图 / 纯色）时才亮。
+    var backBtn = document.getElementById('chatWallBack');
+    if(backBtn){ var can = !!(rawStored && !custom); backBtn.style.opacity = can ? '1' : '.35'; backBtn.style.pointerEvents = can ? '' : 'none'; }
+    // 全局标记：wall-on 给盖在 #chat 上的面板挂玻璃；wall-theme 让主题背景下的气泡走「柔和」那套。
+    document.documentElement.classList.toggle('wall-on', on);
+    document.documentElement.classList.toggle('wall-theme', on && usingTheme);
+    function paint(el, img, veil){
+      if(!el) return;
+      if(img){
+        // veil：主题背景上叠一层奶白柔纱，让插画朦胧柔和（她要「背景再磨砂」）。抽屉不叠，要看清小狗。
+        el.style.backgroundImage = veil ? ('linear-gradient(' + veil + ',' + veil + '), url(' + img + ')') : ('url(' + img + ')');
+        el.style.backgroundSize = 'cover';
+        el.style.backgroundPosition = 'center center';
+        el.style.backgroundRepeat = 'no-repeat';
+        el.classList.add('has-wall');
+      } else {
+        el.style.backgroundImage = '';
+        el.style.backgroundSize = '';
+        el.style.backgroundPosition = '';
+        el.style.backgroundRepeat = '';
+        el.classList.remove('has-wall');
+      }
+    }
     if(on){
-      chat.style.backgroundImage = 'url(' + w + ')';
-      chat.style.backgroundSize = 'cover';
-      chat.style.backgroundPosition = 'center center';
-      chat.style.backgroundRepeat = 'no-repeat';
-      chat.classList.add('has-wall');
-      if(drawer){
-        drawer.style.backgroundImage = 'url(' + w + ')';
-        drawer.style.backgroundSize = 'cover';
-        drawer.style.backgroundPosition = 'center center';
-        drawer.style.backgroundRepeat = 'no-repeat';
-        drawer.classList.add('has-wall');
-      }
+      // 主题背景：聊天页和抽屉都叠同一层奶白柔纱、都不做磨砂玻璃（她要抽屉「和背景那种一样」）。
+      var veil = usingTheme ? 'rgba(255,253,249,.4)' : '';
+      paint(chat, chatImg, veil);
+      paint(drawer, drawerImg, veil);
     } else {
-      chat.style.backgroundImage = '';
-      chat.style.backgroundSize = '';
-      chat.style.backgroundPosition = '';
-      chat.style.backgroundRepeat = '';
-      chat.classList.remove('has-wall');
-      if(drawer){
-        drawer.style.backgroundImage = '';
-        drawer.style.backgroundSize = '';
-        drawer.style.backgroundPosition = '';
-        drawer.style.backgroundRepeat = '';
-        drawer.classList.remove('has-wall');
-      }
+      paint(chat, '', '');
+      paint(drawer, '', '');
     }
   }
   window._applyChatWall = apply;      // 切官端开关的时候要再跑一次
   apply();
   var pick = document.getElementById('chatWallPick');
   var clear = document.getElementById('chatWallClear');
+  var back = document.getElementById('chatWallBack');
   var file = document.getElementById('chatWallFile');
   if(pick && file) pick.onclick = function(){ file.click(); };
   if(file) file.onchange = function(){
     var f = (this.files||[])[0]; this.value='';
     if(!f) return;
     if(typeof _moStoreImage !== 'function'){ toast('压图那段没加载到'); return; }
-    _moStoreImage(f, 'chat_wallpaper', apply);
+    // 传新图 = 立刻用上，把「藏起来」的标记清掉。
+    _moStoreImage(f, 'chat_wallpaper', function(){ try{ localStorage.removeItem('chat_wall_off'); }catch(e){} apply(); });
+  };
+  // 「壁纸」按钮：把藏起来的图切回来；没有存图就等于「选图」。
+  if(back) back.onclick = function(){
+    var has = ''; try { has = localStorage.getItem('chat_wallpaper') || ''; } catch(e) {}
+    if(!has){ if(file) file.click(); return; }
+    try { localStorage.removeItem('chat_wall_off'); } catch(e) {}
+    apply();
   };
   if(clear) clear.onclick = function(){
-    try { localStorage.removeItem('chat_wallpaper'); } catch(e) {}
+    try { localStorage.removeItem('chat_wallpaper'); localStorage.removeItem('chat_wall_off'); } catch(e) {}
     apply();
   };
 })();
@@ -8439,9 +8463,9 @@ async function testEleven(btn){
     var p = b.dataset.palette || '';
     if(p) document.documentElement.dataset.palette = p; else delete document.documentElement.dataset.palette;
     try{ if(p) localStorage.setItem('chat_palette', p); else localStorage.removeItem('chat_palette'); }catch(e){}
-    // 09-18：配色和壁纸是互斥的两套「背景」。点任一固定配色 = 要纯色主题，
-    // 得把壁纸一起清掉，否则照片还压在上面，看着就是「配色没全变回去」（她碰到的）。
-    try{ localStorage.removeItem('chat_wallpaper'); }catch(e){}
+    // 09-18：配色和壁纸是互斥的两套「背景」。点固定配色 = 要纯色主题，得让壁纸让位。
+    // 但不再删图（她说每次都要重传太烦）—— 只打个「藏起来」的标记，「壁纸」按钮能一键切回。
+    try{ localStorage.setItem('chat_wall_off', '1'); }catch(e){}
     if(window._applyChatWall) window._applyChatWall();
     mark();
   }, true);

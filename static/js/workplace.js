@@ -664,7 +664,10 @@
         ';color:' + T_TXT + ';font:12px/1.6 ' + MONO + ';white-space:pre-wrap;overflow-wrap:anywhere');
       row.append(h('span', 'flex:none;color:' + T_DIM, '〉'));
       row.append(h('div', 'flex:1;min-width:0', text));
-      if (roomScreen) wsBody.insertBefore(row, roomScreen);
+      // 09-18：屏幕块从 roomScreen(<pre>) 换成 roomTermEl(xterm) 后，roomScreen 永远是 null，
+      //   她说的话会 append 到终端块下面（termEl 是 flex:1 撑满的，等于沉到看不见）。
+      //   跟着新变量走：插在 xterm 上面，回到「她说的话铺在屏幕块上面」。
+      if (roomTermEl) wsBody.insertBefore(row, roomTermEl);
       else wsBody.append(row);
       wsBody.scrollTop = wsBody.scrollHeight;
     }

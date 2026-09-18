@@ -2382,36 +2382,123 @@ html[data-palette="ink"][data-theme="light"]:not(.ui-plain) .music-play-btn{back
 #chat.has-wall{background-size:cover;background-position:center;background-repeat:no-repeat}
 html.ui-plain #chat{background-image:none!important}
 
+/* ---- 气泡：厚液态玻璃折射（09-18 四轮，GPT 对着参考图 + 我上一版写的诊断）----
+   上一版的病根：一层固定乳白底 + 各自 color-mix 染色 —— 把背景色盖住了、还像块灰卡。
+   这版反过来：
+   ① 删掉固定乳白/染色。气泡颜色改由 backdrop 从背景「吸」上来 ——
+      saturate 拉高 + brightness 提亮，颜色随背景流动、每条气泡不一样。
+   ② 厚玻璃靠多层叠加（用多重 background 而不是伪元素 —— 同样多层，且不动文字层级，字天然在 background 之上）：
+      · 折射底：低 blur + 高 saturate + brightness（背景进气泡后放大提亮的观感）
+      · 极淡乳白雾：rgba 白 .05，只给一点点奶感，不盖色
+      · 左上角不规则高光：135deg 渐变，收在 44% 内，不是竖条不像遮罩
+      · 底部暗部：radial 收在底缘，压出鼓起的体积
+   ③ 圆角加大到 28，外投影往下沉（果冻鼓起感），内高光走左上、内暗走底。
+   ⚠️ 文字：--text-primary 深色，在 background 层之上，不参与任何 blur。 */
 html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
 html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
-  -webkit-backdrop-filter:blur(20px) saturate(1.8);backdrop-filter:blur(20px) saturate(1.8);
-  border:1px solid rgba(255,255,255,.4);
-  box-shadow:0 4px 16px rgba(60,50,40,.1), inset 0 1px 0 rgba(255,255,255,.5);
+  /* 09-18 六轮：她说「不够透，要能微微透过模糊的背景」——病根是白叠层太厚 + 太亮把背景盖住了。
+     降亮(1.16→1.04)、blur 收(6→4，背景看得见)、高光/乳白雾都减薄，让模糊的背景真的透上来。圆角 32→40。 */
+  /* 09-18 九轮：她说「还是不圆」——上一步加厚 padding 让气泡变高，固定 40px 相对变小成了圆角矩形。
+     改 999px：不管多高两端永远满圆（短气泡=胶囊，多行=两侧全圆），这才是她要的「圆」。
+     ⚠️ 必须带 !important：1947 行手机端 @media 有 border-radius:14px!important，不加压不过——
+        这就是之前反复「改了不圆」的真凶（backdrop/字重/padding 都生效了，唯独圆角被它 !important 顶回 14）。 */
+  border-radius:999px!important;
+  /* 09-18 八轮：她要「透过透玻璃看背景、放大镜那种」。真凸透镜折射 iOS 不支持（要 SVG 位移），
+     退而做「清透玻璃」：blur 收到 2 让背景清清楚楚透过来（不磨糊）+ contrast 提一点让背景更实，
+     配下面 box-shadow 的边缘折射亮环，接近透过玻璃看背景的观感。 */
+  -webkit-backdrop-filter:blur(2px) saturate(1.18) brightness(1.02);
+  backdrop-filter:blur(2px) saturate(1.18) brightness(1.02);
+  /* 09-18 七轮：她要「气泡里的光感、液体感」——不是调亮，是表面那道水光。
+     第一层是上方一枚柔和水光穹顶（像光打在液体上），配 box-shadow 的玻璃顶沿亮边，
+     就有了湿润的液体反光；其余层不变，保持通透。 */
+  /* 09-18 十轮：中央加奶白遮罩(.16)压住背景显色、饱和降到 1.18；折射(顶部水光)强度降到约 30%；
+     白亮边加到 1.5px；内高光 + 极淡底暗做厚度。 */
+  background:
+    radial-gradient(115% 55% at 32% -12%, rgba(255,255,255,.18) 0%, rgba(255,255,255,.04) 42%, rgba(255,255,255,0) 68%),
+    linear-gradient(135deg, rgba(255,255,255,.13) 0%, rgba(255,255,255,.03) 24%, rgba(255,255,255,0) 50%),
+    rgba(255,255,255,.16);
+  border:1.5px solid rgba(255,255,255,.62);
+  box-shadow:
+    0 10px 22px -10px rgba(60,45,35,.22),
+    inset 0 1.5px 1px rgba(255,255,255,.72),
+    inset 0 -6px 10px -6px rgba(70,55,45,.08);
 }
-/* 底色保留各自那支（她的粉、他的米），只是兑稀 —— 换肤照样跟着走 */
-html:not(.ui-plain) #chat.has-wall .msg-user .bubble{
-  background:color-mix(in srgb, var(--bubble-her) 52%, transparent);
-}
-html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
-  background:color-mix(in srgb, var(--bubble-him, var(--bg-surface)) 52%, transparent);
-}
-/* 老 WebKit 不认 color-mix 就落回定死的半透明白，别变成全透明 */
-@supports not (background: color-mix(in srgb, red 50%, transparent)){
+/* 不支持 backdrop-filter 的老浏览器：给一层稍实的乳白兜底，别变全透明看不清 */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
-  html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{background:rgba(255,255,255,.55)}
+  html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{background:rgba(255,253,249,.5)}
 }
-/* 深色下玻璃要压暗，照着亮底兑会糊成一团白 */
+/* 深色：折射走暗玻璃，brightness 不提反收（提亮会发灰），高光压弱、底暗加深 */
 @media (prefers-color-scheme:dark){
   html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-user .bubble,
   html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-claude .bubble{
-    background:rgba(30,27,24,.55);border-color:rgba(255,255,255,.12);
-    box-shadow:0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);
+    -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+    backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+    background:
+      linear-gradient(135deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 20%, rgba(255,255,255,0) 44%),
+      radial-gradient(130% 90% at 50% 118%, rgba(0,0,0,.24), rgba(0,0,0,0) 60%),
+      rgba(255,255,255,.03);
+    border-color:rgba(255,255,255,.16);
+    box-shadow:0 16px 32px -10px rgba(0,0,0,.42),inset 1.5px 1.5px 2px rgba(255,255,255,.14),inset 0 -9px 14px -7px rgba(0,0,0,.2);
   }
 }
 html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-user .bubble,
 html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
-  background:rgba(30,27,24,.55);border-color:rgba(255,255,255,.12);
-  box-shadow:0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);
+  -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+  backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 20%, rgba(255,255,255,0) 44%),
+    radial-gradient(130% 90% at 50% 118%, rgba(0,0,0,.24), rgba(0,0,0,0) 60%),
+    rgba(255,255,255,.03);
+  border-color:rgba(255,255,255,.16);
+  box-shadow:0 16px 32px -10px rgba(0,0,0,.42),inset 1.5px 1.5px 2px rgba(255,255,255,.14),inset 0 -9px 14px -7px rgba(0,0,0,.2);
+}
+/* 09-18 十轮：① 缩小左右 padding + 最大宽度 ② 上下 padding/字号/行高两人**统一**，
+   让他的气泡跟她一样高（之前 user 9 / claude 12 + 字号 15/17 拉出了高度差，她说他的变高了）
+   ③ 字改黑加粗 600。⚠️ 全带 !important：709/1947 行手机端 @media 用 !important 钉了 padding。 */
+html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
+html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+  /* 09-18 十二轮：她说还太高、看着像换行 —— 上下 padding 压到 3、行高 1.25，气泡扁下来清爽。
+     width:fit-content 让气泡贴着字走、不被拉宽也不塌窄；max-width 放宽到 80% 少断行。 */
+  padding:3px 12px!important; max-width:80%!important; width:fit-content!important;
+  /* 09-18 十二轮真凶：气泡有 min-height:40px + display:flex 硬撑到 40 高，压 padding 没用。
+     解开 min-height 才真的扁得下来。 */
+  min-height:0!important;
+  font-size:15px!important; line-height:1.25!important; font-weight:600!important; color:#111!important;
+}
+/* 他的正文在 .md 子元素，字号/行高/字重/色也一起统一，不然外壳变了字还各走各的 */
+html:not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{
+  font-size:15px!important; line-height:1.25!important; font-weight:600; color:#111;
+}
+/* 深色下别用黑字（看不见），换回浅色正文 */
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-user .bubble,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{ color:#E8E2D9!important }
+@media(prefers-color-scheme:dark){
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-user .bubble,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-claude .bubble,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{ color:#E8E2D9!important }
+}
+/* ---- 主题背景（pup 小狗绘本等）下的气泡：柔和一档（09-18 她要「柔和一点，别像自定义那种玻璃感」）----
+   主体更奶更实、模糊更轻、高光更收 —— 像柔软果冻，不是通透玻璃。 */
+html.wall-theme:not(.ui-plain) #chat.has-wall .msg-user .bubble,
+html.wall-theme:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+  -webkit-backdrop-filter:blur(10px) saturate(1.1);backdrop-filter:blur(10px) saturate(1.1);
+  box-shadow:0 6px 18px rgba(70,55,45,.1),inset 0 1px 1px rgba(255,255,255,.7);
+  /* 09-18 十/十二轮：小狗主题要跟自定义玻璃拉开 —— 圆角收回柔和 22（不要胶囊），
+     描边柔化（不要 1.5px 白亮边），字重回常规、别用纯黑，整体是奶油果冻不是玻璃。 */
+  border-radius:22px!important;
+  border:1px solid rgba(255,255,255,.35)!important;
+  font-weight:450!important; color:var(--text-primary)!important;
+}
+html.wall-theme:not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{
+  font-weight:450!important; color:var(--text-primary)!important;
+}
+html.wall-theme:not(.ui-plain) #chat.has-wall .msg-user .bubble{
+  background:color-mix(in srgb, var(--bubble-her) 60%, rgba(255,253,249,.55));
+}
+html.wall-theme:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+  background:color-mix(in srgb, var(--bubble-him, var(--bg-surface)) 60%, rgba(255,253,249,.55));
 }
 
 /* 输入框本来就是玻璃（blur 28 + 高光内描边），但那是配纯色底调的 ——
@@ -2436,8 +2523,10 @@ html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .composer-box{
    ⚠️ 只在 has-wall 时才玻璃，没铺壁纸时抽屉还是原来的实色 sidebar，不白花 backdrop 的钱。 */
 html:not(.ui-plain) #drawer.has-wall{background-color:var(--claude-sidebar-bg)}
 html:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
-  background:rgba(255,255,255,.48);
-  -webkit-backdrop-filter:blur(26px) saturate(1.5);backdrop-filter:blur(26px) saturate(1.5);
+  /* 09-18 三轮：她要「再透、磨砂只要一点点」，白底 .18→.10、blur 12→6。壁纸基本裸透。
+     会话名是深色小字，就靠这层极薄纱兜可读性 —— 到底了，再降字要糊。 */
+  background:rgba(255,255,255,.10);
+  -webkit-backdrop-filter:blur(6px) saturate(1.2);backdrop-filter:blur(6px) saturate(1.2);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset -1px 0 0 rgba(255,255,255,.25);
 }
 /* 会话行/导航项选中态描一圈淡白，浮在玻璃上更立体 */
@@ -2448,11 +2537,54 @@ html:not(.ui-plain) #drawer.has-wall .mobile-sidebar-nav-item:active{
 }
 @media (prefers-color-scheme:dark){
   html:not([data-theme="light"]):not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
-    background:rgba(28,25,22,.56);
+    background:rgba(28,25,22,.18);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset -1px 0 0 rgba(255,255,255,.06);
   }
 }
 html[data-theme="dark"]:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
-  background:rgba(28,25,22,.56);
+  background:rgba(28,25,22,.18);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset -1px 0 0 rgba(255,255,255,.06);
+}
+
+/* ---- Mind / 日记 / Gallery / Books 面板沿用壁纸（09-18 她要的）----
+   这些是 fixed inset:0 盖在 #chat 上的全屏面板，#chat 的壁纸就在底下（面板打开时 #chat 不隐藏，验过）。
+   面板不像抽屉会 transform，可以老老实实靠 backdrop-filter 把底下那张**透过来**。
+   09-18 二轮：她要「完全透过来」——面板底压到很薄（≈.32），只留一层薄纱保证字不糊，
+   壁纸从底下透成主角。面板里的卡片各自是玻璃（日记 .diary-card、mind memory-card 本来就是
+   color-mix + blur），面板透了之后它们的玻璃质感才真正显出来。
+   ⚠️ 只在 html.wall-on 时才玻璃，没铺壁纸时还是原来的实色面板，不白花 backdrop 的钱。
+   ⚠️ !important：mindPanel 底色在内联 style 上、diaryPanel 深色那条带 !important，不加压不过。 */
+html.wall-on:not(.ui-plain) #mindPanel,
+html.wall-on:not(.ui-plain) #diaryPanel,
+html.wall-on:not(.ui-plain) #galleryPanel,
+html.wall-on:not(.ui-plain) #booksPanel{
+  background:rgba(250,249,245,.32)!important;
+  -webkit-backdrop-filter:blur(30px) saturate(1.4);backdrop-filter:blur(30px) saturate(1.4);
+}
+@media (prefers-color-scheme:dark){
+  html.wall-on:not([data-theme="light"]):not(.ui-plain) #mindPanel,
+  html.wall-on:not([data-theme="light"]):not(.ui-plain) #diaryPanel,
+  html.wall-on:not([data-theme="light"]):not(.ui-plain) #galleryPanel,
+  html.wall-on:not([data-theme="light"]):not(.ui-plain) #booksPanel{
+    background:rgba(24,21,18,.34)!important;
+  }
+}
+html[data-theme="dark"].wall-on:not(.ui-plain) #mindPanel,
+html[data-theme="dark"].wall-on:not(.ui-plain) #diaryPanel,
+html[data-theme="dark"].wall-on:not(.ui-plain) #galleryPanel,
+html[data-theme="dark"].wall-on:not(.ui-plain) #booksPanel{
+  background:rgba(24,21,18,.34)!important;
+}
+
+/* ---- 主题背景（小狗绘本 pup 等）下抽屉柔和一档（09-18 她要「柔和，别像自定义那种玻璃感」）----
+   自定义壁纸抽屉压到 .18 很透；主题插画换成奶白盖厚些、模糊轻些，画温润透出而不喧闹。 */
+html.wall-theme:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
+  /* 09-18 四轮：她要抽屉「不要磨砂，和背景那种一样」——内层完全透明、去掉 backdrop 和内高光，
+     柔纱已经叠在抽屉图上（JS paint 的 veil），直接看叠纱的小狗，跟聊天背景一模一样的处理。 */
+  background:transparent;
+  -webkit-backdrop-filter:none;backdrop-filter:none;
+  box-shadow:none;
+}
+html[data-theme="dark"].wall-theme:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
+  background:transparent;
 }
