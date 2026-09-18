@@ -2394,8 +2394,8 @@ html.ui-plain #chat{background-image:none!important}
       · 底部暗部：radial 收在底缘，压出鼓起的体积
    ③ 圆角加大到 28，外投影往下沉（果冻鼓起感），内高光走左上、内暗走底。
    ⚠️ 文字：--text-primary 深色，在 background 层之上，不参与任何 blur。 */
-html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
-html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
   /* 09-18 六轮：她说「不够透，要能微微透过模糊的背景」——病根是白叠层太厚 + 太亮把背景盖住了。
      降亮(1.16→1.04)、blur 收(6→4，背景看得见)、高光/乳白雾都减薄，让模糊的背景真的透上来。圆角 32→40。 */
   /* 09-18 九轮：她说「还是不圆」——上一步加厚 padding 让气泡变高，固定 40px 相对变小成了圆角矩形。
@@ -2425,13 +2425,13 @@ html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
 }
 /* 不支持 backdrop-filter 的老浏览器：给一层稍实的乳白兜底，别变全透明看不清 */
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
-  html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
-  html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{background:rgba(255,253,249,.5)}
+  html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
+  html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{background:rgba(255,253,249,.5)}
 }
 /* 深色：折射走暗玻璃，brightness 不提反收（提亮会发灰），高光压弱、底暗加深 */
 @media (prefers-color-scheme:dark){
-  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-user .bubble,
-  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
     -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
     backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
     background:
@@ -2442,8 +2442,8 @@ html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
     box-shadow:0 16px 32px -10px rgba(0,0,0,.42),inset 1.5px 1.5px 2px rgba(255,255,255,.14),inset 0 -9px 14px -7px rgba(0,0,0,.2);
   }
 }
-html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-user .bubble,
-html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
   -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
   backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
   background:
@@ -2456,50 +2456,29 @@ html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
 /* 09-18 十轮：① 缩小左右 padding + 最大宽度 ② 上下 padding/字号/行高两人**统一**，
    让他的气泡跟她一样高（之前 user 9 / claude 12 + 字号 15/17 拉出了高度差，她说他的变高了）
    ③ 字改黑加粗 600。⚠️ 全带 !important：709/1947 行手机端 @media 用 !important 钉了 padding。 */
-html:not(.ui-plain) #chat.has-wall .msg-user .bubble,
-html:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
-  /* 09-18 十二轮：她说还太高、看着像换行 —— 上下 padding 压到 3、行高 1.25，气泡扁下来清爽。
-     width:fit-content 让气泡贴着字走、不被拉宽也不塌窄；max-width 放宽到 80% 少断行。 */
-  padding:3px 12px!important; max-width:80%!important; width:fit-content!important;
-  /* 09-18 十二轮真凶：气泡有 min-height:40px + display:flex 硬撑到 40 高，压 padding 没用。
-     解开 min-height 才真的扁得下来。 */
-  min-height:0!important;
-  font-size:15px!important; line-height:1.25!important; font-weight:600!important; color:#111!important;
+/* 09-18 十五轮：她说「气泡之前都是好的，改了才换行」——我之前动 padding/width/flex/min-height 去调尺寸，
+   反而把她的气泡挤到提前换行（headless 复现不出，是 iOS Safari 的 flex 差异）。
+   ★ 尺寸/布局全部交还给 base 规则，这里只留纯视觉（字色+字重）。别再往这条加 padding/width/height/flex。 */
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
+  font-weight:600!important; color:#111!important;
 }
-/* 他的正文在 .md 子元素，字号/行高/字重/色也一起统一，不然外壳变了字还各走各的 */
-html:not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{
-  font-size:15px!important; line-height:1.25!important; font-weight:600; color:#111;
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble .md{
+  font-weight:600; color:#111;
 }
 /* 深色下别用黑字（看不见），换回浅色正文 */
-html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-user .bubble,
-html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble,
-html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{ color:#E8E2D9!important }
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble .md{ color:#E8E2D9!important }
 @media(prefers-color-scheme:dark){
-  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-user .bubble,
-  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-claude .bubble,
-  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{ color:#E8E2D9!important }
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble .md{ color:#E8E2D9!important }
 }
-/* ---- 主题背景（pup 小狗绘本等）下的气泡：柔和一档（09-18 她要「柔和一点，别像自定义那种玻璃感」）----
-   主体更奶更实、模糊更轻、高光更收 —— 像柔软果冻，不是通透玻璃。 */
-html.wall-theme:not(.ui-plain) #chat.has-wall .msg-user .bubble,
-html.wall-theme:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
-  -webkit-backdrop-filter:blur(10px) saturate(1.1);backdrop-filter:blur(10px) saturate(1.1);
-  box-shadow:0 6px 18px rgba(70,55,45,.1),inset 0 1px 1px rgba(255,255,255,.7);
-  /* 09-18 十/十二轮：小狗主题要跟自定义玻璃拉开 —— 圆角收回柔和 22（不要胶囊），
-     描边柔化（不要 1.5px 白亮边），字重回常规、别用纯黑，整体是奶油果冻不是玻璃。 */
-  border-radius:22px!important;
-  border:1px solid rgba(255,255,255,.35)!important;
-  font-weight:450!important; color:var(--text-primary)!important;
-}
-html.wall-theme:not(.ui-plain) #chat.has-wall .msg-claude .bubble .md{
-  font-weight:450!important; color:var(--text-primary)!important;
-}
-html.wall-theme:not(.ui-plain) #chat.has-wall .msg-user .bubble{
-  background:color-mix(in srgb, var(--bubble-her) 60%, rgba(255,253,249,.55));
-}
-html.wall-theme:not(.ui-plain) #chat.has-wall .msg-claude .bubble{
-  background:color-mix(in srgb, var(--bubble-him, var(--bg-surface)) 60%, rgba(255,253,249,.55));
-}
+/* ---- 主题背景（pup 小狗绘本等）下的气泡：完全不玻璃（09-18 她要固定成今天 pull 之前的老气泡）----
+   上面那套玻璃气泡规则全带了 :not(.wall-theme)，主题背景时一条都不命中，
+   气泡直接回落到 base（.msg-user/.msg-claude .bubble 的实色 --bubble-her/him + 常规圆角），
+   不再跟自定义背景联动。这里**故意留空**，别再往主题气泡上加玻璃。 */
 
 /* 输入框本来就是玻璃（blur 28 + 高光内描边），但那是配纯色底调的 ——
    压在照片上 25% 的白太薄，字会跟壁纸打架。铺了壁纸就厚一档、描边亮一档。 */
