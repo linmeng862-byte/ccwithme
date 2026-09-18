@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789900000">
+<link rel="stylesheet" href="/css/home.css?v=1789970000">
 <!-- 站酷快乐体：只用于自定义壁纸下的聊天气泡（见 home.css）。若她网络到不了 Google Fonts 会静默回退系统字体。 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -50,7 +50,7 @@
 <script src="/js/cinema.js?v=19"></script>
 <script src="/js/mcp.js?v=1"></script>
 <script src="/js/journey.js?v=1"></script>
-<script src="/js/persona-pending.js?v=1" defer></script><script src="/js/workplace.js?v=68"></script>
+<script src="/js/persona-pending.js?v=1" defer></script><script src="/js/workplace.js?v=69"></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -733,7 +733,7 @@
 <div class="toast" id="toast"></div>
 <!-- 番茄钟浮窗 — 居中悬浮卡片 -->
 	<div id="timerWidget" class="hidden" style="position:fixed;bottom:130px;left:50%;transform:translateX(-50%) translateY(12px);z-index:25;width:80vw;max-width:380px;transition:transform .5s cubic-bezier(.22,.61,.36,1),opacity .4s;opacity:0;pointer-events:none">
-	  <div id="timerCard" style="background:#FDF9F3;border-radius:28px;padding:24px 22px 20px;box-shadow:0 8px 32px rgba(0,0,0,.1),0 2px 8px rgba(0,0,0,.04);pointer-events:auto;transition:background .6s">
+	  <div id="timerCard" style="background:rgba(253,249,243,.55);backdrop-filter:blur(22px) saturate(1.1);-webkit-backdrop-filter:blur(22px) saturate(1.1);border-radius:28px;padding:24px 22px 20px;box-shadow:0 8px 32px rgba(0,0,0,.1),0 2px 8px rgba(0,0,0,.04);pointer-events:auto;transition:background .6s">
 	    <!-- 状态标签 -->
 	    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
 	      <span id="timerDot" style="width:8px;height:8px;border-radius:50%;background:#E88040;flex:none;transition:background .6s"></span>
@@ -774,7 +774,9 @@
   display:flex;align-items:center;justify-content:center;
   flex-direction:column;gap:3px;
   width:46px;height:64px;
-  background:#FDF9F3;
+  background:rgba(253,249,243,.55);
+  backdrop-filter:blur(22px) saturate(1.1);
+  -webkit-backdrop-filter:blur(22px) saturate(1.1);
   border-radius:16px 0 0 16px;
   box-shadow:-2px 2px 12px rgba(0,0,0,.06);
   cursor:pointer;
@@ -3892,7 +3894,23 @@ var _STAR_FILLED_SVG='<svg width="16" height="16" viewBox="0 0 24 24" fill="curr
 var _STAR_EMPTY_SVG='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
 function updateSessionHeader(){if(!state.menuSession){$('sessionMenuTitle').textContent=state.currentTitle;var ss=$('starSession');var starIcon=ss?ss.querySelector('svg'):null;if(starIcon)starIcon.outerHTML=state.starred?_STAR_FILLED_SVG:_STAR_EMPTY_SVG}}
 function scrollBottom(){requestAnimationFrame(function(){stream.scrollTop=stream.scrollHeight})}
-(()=>{const btn=$('scrollToBottom');if(!btn)return;function check(){const atBottom=stream.scrollHeight-stream.scrollTop-stream.clientHeight<80;btn.classList.toggle('hidden',atBottom);if(atBottom)scrollBottom()}stream.addEventListener('scroll',check,{passive:true});new MutationObserver(function(){requestAnimationFrame(check)}).observe(streamInner,{childList:true,subtree:true,characterData:true});btn.addEventListener('click',()=>{stream.scrollTo({top:stream.scrollHeight,behavior:'smooth'})});chat.addEventListener('wheel',function(e){stream.scrollTop+=e.deltaY},{passive:true});check()})();
+// 09-18：滚动跟随重写。旧写法在 scroll 事件里 `if(atBottom)scrollBottom()`，
+//   只要离底 <80px 一滚就被拽回最底；MutationObserver 又盯着 characterData，
+//   后台定时器（番茄钟 200ms、pollCommands 4s…）一动 DOM 就再拽一次 ——
+//   两者叠加 = 往上拉被弹回、还抖，跟主题无关（她说「每个主题都拉不上去」）。
+//   新逻辑：只用一个 pinned 标记跟着**她自己**的滚动走。她贴底才跟随，
+//   一往上滚就置 false、停止抢滚；滚回底部再自动恢复跟随。
+(()=>{const btn=$('scrollToBottom');if(!btn)return;var pinned=true;
+  function nearBottom(){return stream.scrollHeight-stream.scrollTop-stream.clientHeight<80}
+  function onScroll(){pinned=nearBottom();btn.classList.toggle('hidden',pinned)}
+  stream.addEventListener('scroll',onScroll,{passive:true});
+  // ⚠️ 打字时不跟随：她在输入框里敲字时，streamInner 里任何文字变动（后台 tick）
+  //   都会把视图拽到底一次 → 上面气泡跟着跳（她说「打字时上面气泡抖动」）。
+  //   收消息时她通常没在打字，跟随照常。
+  new MutationObserver(function(){if(pinned&&document.activeElement!==input)requestAnimationFrame(function(){stream.scrollTop=stream.scrollHeight})}).observe(streamInner,{childList:true,subtree:true,characterData:true});
+  btn.addEventListener('click',function(){stream.scrollTo({top:stream.scrollHeight,behavior:'smooth'})});
+  chat.addEventListener('wheel',function(e){stream.scrollTop+=e.deltaY},{passive:true});
+  onScroll()})();
 function appendDisclaimer(){document.querySelector('.stream-disclaimer')?.remove();if(!streamInner.querySelector('.msg-claude'))return;const note=document.createElement('div');note.className='stream-disclaimer';note.innerHTML=`${logo('mark-20')}<span>Claude is AI and can make mistakes.<br>Please double-check your heart^ ^.</span>`;streamInner.append(note)}
 async function greeting(){try{const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),3000);const r=await fetch('/api/splash',{signal:ctrl.signal});clearTimeout(t);if(r.ok){const d=await r.json();if(d&&d.line)return d.line}}catch{}const hour=new Date().getHours();const name=state.profile?.nickname||state.profile?.fullName||'';let greetings;if(hour>=5&&hour<12)greetings=['Good morning'+(name?' '+name:'')+'!','Rise and shine'+(name?', '+name:'')+'!','Morning'+(name?', '+name:'')+'! \u2600\ufe0f'];else if(hour>=12&&hour<18)greetings=['Good afternoon'+(name?', '+name:'')+'!','Afternoon'+(name?', '+name:'')+'!','Coffee or Claude time?'];else if(hour>=18&&hour<22)greetings=['Good evening'+(name?', '+name:'')+'!','Evening'+(name?', '+name:'')+'!','Winding down?'];else greetings=['Up late'+(name?', '+name:'')+'?','Night'+(name?', '+name:'')+'! \ud83c\udf19','Burning the midnight oil?'];return greetings[Math.floor(Math.random()*greetings.length)];}
 async function resetEmpty(){streamInner.innerHTML=`<div class="empty" id="empty">${logo('mark-35')}<div class="empty-line"></div></div>`;$('empty').querySelector('.empty-line').textContent=await greeting();input.placeholder='Chat with Claude'}
@@ -6819,7 +6837,7 @@ function _renderUsage(data){
   $('usageBody').innerHTML=
      _liveUsageCard(_liveUsageData)
     +_usageLimitsCard(data)
-    +_opusCard(_liveUsageData)
+    /* 09-18 她说不看 Opus5 那块了，撤掉显示（_opusCard 函数留着，想接回来加回这行即可） */
     +_cacheCard(data.recent)
     +'<div style="margin-top:18px;font:11px/1.6 var(--font-sans);color:var(--text-faint)">缓存命中越高越省钱。</div>';
   // 2026-08-22 她说「api 估算的不要，只要真实的」：
@@ -7327,7 +7345,10 @@ renderMessage=function(md,text,noStrip){
     var d=new Date();time.textContent=(d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
     fold.append(bodyEl,time);card.append(head,fold);
     head.addEventListener('click',function(){card.classList.toggle('collapsed')});
-    md.append(card);
+    // 09-18：信笺不能塞进 .md（在气泡里面 → 撑破气泡、字跑出来）。
+    //   摘到气泡外面、挂到行级，跟留痕/轨迹卡一样是气泡旁边一张独立卡。
+    var _bub=md.closest('.bubble');
+    if(_bub&&_bub.parentNode)_bub.after(card);else md.append(card);
   });
   setTimeout(function(){
   md.querySelectorAll('pre code').forEach(function(code){

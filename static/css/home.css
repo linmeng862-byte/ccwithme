@@ -2464,14 +2464,13 @@ html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-clau
    ★ 尺寸/布局全部交还给 base 规则，这里只留纯视觉（字色+字重）。别再往这条加 padding/width/height/flex。 */
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
-  /* 09-18：自定义壁纸气泡用站酷快乐体（可爱圆润），字重回常规——快乐体本身已够粗，600 会糊。
-     字体到不了（Google Fonts 被网络挡）会静默回退系统字，布局不变。 */
-  font-family:"ZCOOL KuaiLe", -apple-system, "PingFang SC", system-ui, sans-serif!important;
-  font-weight:400!important; color:#111!important; letter-spacing:.3px;
+  /* 09-18：她要撤掉站酷快乐体，回默认字体、稍微加粗（500）就好。 */
+  font-family:var(--font-sans)!important;
+  font-weight:500!important; color:#111!important;
 }
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble .md{
-  font-family:"ZCOOL KuaiLe", -apple-system, "PingFang SC", system-ui, sans-serif;
-  font-weight:400; color:#111;
+  font-family:var(--font-sans);
+  font-weight:500; color:#111;
 }
 /* 深色下别用黑字（看不见），换回浅色正文 */
 html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
@@ -2489,23 +2488,10 @@ html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-clau
 
 /* 输入框本来就是玻璃（blur 28 + 高光内描边），但那是配纯色底调的 ——
    压在照片上 25% 的白太薄，字会跟壁纸打架。铺了壁纸就厚一档、描边亮一档。 */
-/* 09-18 她要输入框也用气泡那套玻璃：blur 从 base 的 28 降到 2（透玻璃、背景透上来），
-   背景/描边/高光底暗全套用气泡配方，只是圆角保留 base（输入框做成胶囊会怪）。 */
 html:not(.ui-plain) #chat.has-wall .composer-box{
-  /* 09-18 她说「还是磨砂的」：blur(2) 在这么大一片上就是磨砂感。去掉模糊，
-     只留提亮+饱和的清透film，背景清清楚楚透上来 → 清玻璃不是磨砂。玻璃感靠细白边+高光交代。 */
-  -webkit-backdrop-filter:saturate(1.15) brightness(1.03);
-  backdrop-filter:saturate(1.15) brightness(1.03);
-  /* 输入框面积大，同样奶白铺一片会比小气泡显厚 → 底色比气泡再压透一档（.10→.07）、两道高光各减一点 */
-  background:
-    radial-gradient(115% 55% at 32% -12%, rgba(255,255,255,.14) 0%, rgba(255,255,255,.03) 42%, rgba(255,255,255,0) 68%),
-    linear-gradient(135deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,.02) 24%, rgba(255,255,255,0) 50%),
-    rgba(255,255,255,.07);
-  border:1px solid rgba(255,255,255,.5);
-  box-shadow:
-    0 10px 22px -10px rgba(60,45,35,.22),
-    inset 0 1px 1px rgba(255,255,255,.6),
-    inset 0 -6px 10px -6px rgba(70,55,45,.08);
+  background:rgba(255,255,255,.42);
+  border-color:rgba(255,255,255,.6);
+  box-shadow:0 10px 36px rgba(60,50,40,.14),0 2px 8px rgba(0,0,0,.05),0 0 0 1px rgba(255,255,255,.45) inset;
 }
 @media (prefers-color-scheme:dark){
   html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .composer-box{
@@ -2514,6 +2500,149 @@ html:not(.ui-plain) #chat.has-wall .composer-box{
 }
 html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .composer-box{
   background:rgba(28,25,22,.62);border-color:rgba(255,255,255,.14);
+}
+
+/* ---- 自定义壁纸下：聊天里的卡片也磨砂玻璃（09-18 她要的）----
+   music / gallery / memory / thinking 这些卡，铺壁纸时都改成半透明 + 磨砂，
+   壁纸从卡片底下透一点出来，跟气泡、输入框一套质地。
+   ⚠️ 只在 has-wall 时才玻璃 —— 没壁纸保持原来的实色卡，不白花 backdrop 的钱。
+   ⚠️ 选择器带 #chat（ID）天然压过下面那些 .music-card/.gallery-* 的实色规则，不用 !important。 */
+html:not(.ui-plain) #chat.has-wall .music-card,
+html:not(.ui-plain) #chat.has-wall .memory-save-card,
+html:not(.ui-plain) #chat.has-wall .gallery-save-card,
+html:not(.ui-plain) #chat.has-wall .gallery-album-card-chat,
+html:not(.ui-plain) #chat.has-wall .gallery-memory-card,
+html:not(.ui-plain) #chat.has-wall .memory-card,
+html:not(.ui-plain) #chat.has-wall .inside-letter,
+html:not(.ui-plain) #chat.has-wall .thinking-body{
+  background:rgba(255,255,255,.42);
+  border:1px solid rgba(255,255,255,.55);
+  backdrop-filter:blur(20px) saturate(1.1);
+  -webkit-backdrop-filter:blur(20px) saturate(1.1);
+  box-shadow:0 10px 36px rgba(60,50,40,.12),0 2px 8px rgba(0,0,0,.05);
+}
+/* 信笺左边那道金棕竖条保留（它是「这是心里话」的标记），其余交给玻璃 */
+html:not(.ui-plain) #chat.has-wall .inside-letter{border-left:2px solid #C89664}
+/* 信笺正文那层「横格纸纹」在玻璃上会脏，has-wall 时去掉 */
+html:not(.ui-plain) #chat.has-wall .inside-letter-body{background-image:none}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .music-card,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .memory-save-card,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .gallery-save-card,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .gallery-album-card-chat,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .gallery-memory-card,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .memory-card,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .inside-letter,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .thinking-body{
+    background:rgba(28,25,22,.58);border:1px solid rgba(255,255,255,.14);
+  }
+  /* 深色玻璃上，米色信纸的深字看不见 → 提亮 */
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .inside-letter-body{color:#E3DACB}
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .inside-letter-time{color:#9A9284}
+}
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .music-card,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .memory-save-card,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .gallery-save-card,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .gallery-album-card-chat,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .gallery-memory-card,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .memory-card,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .inside-letter,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .thinking-body{
+  background:rgba(28,25,22,.58);border:1px solid rgba(255,255,255,.14);
+}
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .inside-letter-body{color:#E3DACB}
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .inside-letter-time{color:#9A9284}
+/* 工具/思考轨迹条、操作报告卡、文件/工件卡 —— 同一批米白卡，一起磨砂。
+   trace-row-summary 的浅色底 #EDEDEF/#EFECE6 就是她截图里那张 ToolSearch 的米白。
+   带 #chat（ID）压过 2073/2119 那些无 ID 的浅色实底规则，不用 !important。 */
+html:not(.ui-plain) #chat.has-wall .trace-row-summary,
+html:not(.ui-plain) #chat.has-wall .tool-row,
+html:not(.ui-plain) #chat.has-wall .action-report-card,
+html:not(.ui-plain) #chat.has-wall .file-card,
+html:not(.ui-plain) #chat.has-wall .artifact-card{
+  background:rgba(255,255,255,.42);
+  border:1px solid rgba(255,255,255,.55);
+  backdrop-filter:blur(20px) saturate(1.1);
+  -webkit-backdrop-filter:blur(20px) saturate(1.1);
+}
+/* 指令胶囊 cmd-capsule 是 JS 内联 #FDF9F3，只能用 !important 顶。 */
+html:not(.ui-plain) #chat.has-wall .cmd-capsule{
+  background:rgba(255,255,255,.42)!important;
+  backdrop-filter:blur(20px) saturate(1.1);
+  -webkit-backdrop-filter:blur(20px) saturate(1.1);
+}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .trace-row-summary,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .tool-row,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .action-report-card,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .file-card,
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .artifact-card{
+    background:rgba(28,25,22,.58);border:1px solid rgba(255,255,255,.14);
+  }
+  html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .cmd-capsule{
+    background:rgba(28,25,22,.58)!important;
+  }
+}
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .trace-row-summary,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .tool-row,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .action-report-card,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .file-card,
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .artifact-card{
+  background:rgba(28,25,22,.58);border:1px solid rgba(255,255,255,.14);
+}
+html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .cmd-capsule{
+  background:rgba(28,25,22,.58)!important;
+}
+
+/* ---- 歌词 sheet 磨砂玻璃（09-18 她要的）----
+   点音乐卡弹出的就是这个 #lyricsSheet（.sheet 组件，底本来是实色 --bg-primary）。
+   它 position:fixed 浮在聊天上层，改成半透明 + backdrop-filter，后面的壁纸就透上来。
+   ⚠️ 不用 has-wall 门（sheet 不是 #chat 的子节点，选不到）—— 跟番茄钟一样无条件玻璃：
+      有壁纸时是玻璃，纯色底时看着接近实色，不突兀。 */
+#lyricsSheet,#thoughtSheet{
+  background:rgba(255,255,255,.55);
+  backdrop-filter:blur(30px) saturate(1.2);
+  -webkit-backdrop-filter:blur(30px) saturate(1.2);
+}
+#lyricsSheet .sheet-content,#thoughtSheet .sheet-content{background:transparent}
+@media(prefers-color-scheme:dark){
+  html:not([data-theme="light"]) #lyricsSheet,
+  html:not([data-theme="light"]) #thoughtSheet{background:rgba(30,27,24,.6)}
+}
+html[data-theme="dark"] #lyricsSheet,
+html[data-theme="dark"] #thoughtSheet{background:rgba(30,27,24,.6)}
+html[data-theme="light"] #lyricsSheet,
+html[data-theme="light"] #thoughtSheet{background:rgba(255,255,255,.55)}
+
+/* ---- usage 面板玻璃（09-18 她要的：像玻璃罐里的沙漏）----
+   面板浮在聊天上层，backdrop-filter 把后面的壁纸磨砂透上来。
+   诀窍：面板里的卡片/条全是内联 var(--bg-*)，只要在 #usagePanel 上**重定义**
+   这几个变量为半透明，内联背景就自动变玻璃 —— 不用 !important、不用改一堆内联。
+   沙漏 = 用量条 track（--bg-sunken）透明成玻璃罐，fill 是实色（沙子，JS 里给的 _spendColor）。
+   ⚠️ 只在玻璃主题（:not(.ui-plain)）生效，官端保持实色面板。 */
+html.wall-on:not(.ui-plain) #usagePanel{
+  --bg-primary:rgba(255,255,255,.5);
+  --bg-surface:rgba(255,255,255,.42);
+  --bg-sunken:rgba(120,110,95,.16);
+  backdrop-filter:blur(30px) saturate(1.2);
+  -webkit-backdrop-filter:blur(30px) saturate(1.2);
+}
+@media(prefers-color-scheme:dark){
+  html.wall-on:not([data-theme="light"]):not(.ui-plain) #usagePanel{
+    --bg-primary:rgba(28,25,22,.55);
+    --bg-surface:rgba(255,255,255,.08);
+    --bg-sunken:rgba(255,255,255,.10);
+  }
+}
+html[data-theme="dark"].wall-on:not(.ui-plain) #usagePanel{
+  --bg-primary:rgba(28,25,22,.55);
+  --bg-surface:rgba(255,255,255,.08);
+  --bg-sunken:rgba(255,255,255,.10);
+}
+html[data-theme="light"].wall-on:not(.ui-plain) #usagePanel{
+  --bg-primary:rgba(255,255,255,.5);
+  --bg-surface:rgba(255,255,255,.42);
+  --bg-sunken:rgba(120,110,95,.16);
 }
 
 /* ---- 抽屉沿用壁纸（09-18 她要的）----
@@ -2556,6 +2685,8 @@ html[data-theme="dark"]:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
 html.wall-on:not(.ui-plain) #mindPanel,
 html.wall-on:not(.ui-plain) #diaryPanel,
 html.wall-on:not(.ui-plain) #galleryPanel,
+html.wall-on:not(.ui-plain) #memoryPanel,
+html.wall-on:not(.ui-plain) #calendarPanel,
 html.wall-on:not(.ui-plain) #booksPanel{
   background:rgba(250,249,245,.32)!important;
   -webkit-backdrop-filter:blur(30px) saturate(1.4);backdrop-filter:blur(30px) saturate(1.4);
@@ -2564,6 +2695,8 @@ html.wall-on:not(.ui-plain) #booksPanel{
   html.wall-on:not([data-theme="light"]):not(.ui-plain) #mindPanel,
   html.wall-on:not([data-theme="light"]):not(.ui-plain) #diaryPanel,
   html.wall-on:not([data-theme="light"]):not(.ui-plain) #galleryPanel,
+  html.wall-on:not([data-theme="light"]):not(.ui-plain) #memoryPanel,
+  html.wall-on:not([data-theme="light"]):not(.ui-plain) #calendarPanel,
   html.wall-on:not([data-theme="light"]):not(.ui-plain) #booksPanel{
     background:rgba(24,21,18,.34)!important;
   }
@@ -2571,8 +2704,70 @@ html.wall-on:not(.ui-plain) #booksPanel{
 html[data-theme="dark"].wall-on:not(.ui-plain) #mindPanel,
 html[data-theme="dark"].wall-on:not(.ui-plain) #diaryPanel,
 html[data-theme="dark"].wall-on:not(.ui-plain) #galleryPanel,
+html[data-theme="dark"].wall-on:not(.ui-plain) #memoryPanel,
+html[data-theme="dark"].wall-on:not(.ui-plain) #calendarPanel,
 html[data-theme="dark"].wall-on:not(.ui-plain) #booksPanel{
   background:rgba(24,21,18,.34)!important;
+}
+
+/* ---- 面板里硬编码实色的卡，wall-on 时改玻璃（09-18 她要 memory/calendar/mind/gallery 都适配）----
+   多数卡已经是 var(--glass-bg)/var(--c-card) 变量底，面板 frost 后自己就透了；
+   这里补的是那些写死颜色（#F3EFE7/#FFFDF9…）的卡 —— 用变量重定义或直接覆盖。 */
+/* 日历：整套颜色是 calendar.js 注入的 --c-* 变量，wall-on 时把卡/线重定义成玻璃 */
+html.wall-on:not(.ui-plain) #calendarPanel{
+  --c-card:rgba(255,255,255,.42);
+  --c-line:rgba(120,110,95,.20);
+}
+html[data-theme="dark"].wall-on:not(.ui-plain) #calendarPanel,
+html.wall-on:not([data-theme="light"]):not(.ui-plain) #calendarPanel{
+  --c-card:rgba(255,255,255,.08);
+  --c-line:rgba(255,255,255,.12);
+}
+/* gallery：卡底 --g-card 是 gallery.js 注入的 #F2EFE7，wall-on 时重定义成玻璃 */
+html.wall-on:not(.ui-plain) #galleryPanel{
+  --g-card:rgba(255,255,255,.40);
+  --g-line:rgba(120,110,95,.22);
+}
+html[data-theme="dark"].wall-on:not(.ui-plain) #galleryPanel,
+html.wall-on:not([data-theme="light"]):not(.ui-plain) #galleryPanel{
+  --g-card:rgba(255,255,255,.08);
+  --g-line:rgba(255,255,255,.12);
+}
+/* memory 页里写死 #F3EFE7 的几张卡（可编辑记忆行/偏好卡/空态） */
+html.wall-on:not(.ui-plain) #memoryPanel .profile-memory-row .profile-memory-card,
+html.wall-on:not(.ui-plain) #memoryPanel .profile-preferences-card,
+html.wall-on:not(.ui-plain) #memoryPanel .profile-empty{
+  background:rgba(255,255,255,.40)!important;
+  -webkit-backdrop-filter:blur(18px) saturate(1.1);backdrop-filter:blur(18px) saturate(1.1);
+  outline-color:rgba(255,255,255,.4)!important;
+}
+html[data-theme="dark"].wall-on:not(.ui-plain) #memoryPanel .profile-memory-row .profile-memory-card,
+html[data-theme="dark"].wall-on:not(.ui-plain) #memoryPanel .profile-preferences-card,
+html[data-theme="dark"].wall-on:not(.ui-plain) #memoryPanel .profile-empty{
+  background:rgba(255,255,255,.08)!important;outline-color:rgba(255,255,255,.1)!important;
+}
+/* mind 卡（09-18 她选 A：保留情绪色 + 更玻璃）。
+   情绪色在独立的 .mind-feel-indicator 色条上，不在卡背景 —— 所以放心调透卡背景。
+   feel/dream/mem 本来就是 color-mix 玻璃，只是 60% 太厚壁纸透不出，wall-on 时调更透；
+   desire 卡是实色粉渐变，一起转成玻璃（渐变让位给壁纸）。深色 mind.js 带 !important，用 .wall-on 加特异性 + !important 压过。 */
+html.wall-on:not(.ui-plain) .mind-feel-card,
+html.wall-on:not(.ui-plain) .mind-dream-card,
+html.wall-on:not(.ui-plain) .mind-mem-card,
+html.wall-on:not(.ui-plain) .mind-desire-card{
+  background:rgba(255,255,255,.34)!important;
+  -webkit-backdrop-filter:blur(18px) saturate(1.2);backdrop-filter:blur(18px) saturate(1.2);
+  border:1px solid rgba(255,255,255,.5)!important;
+}
+html[data-theme="dark"].wall-on:not(.ui-plain) .mind-feel-card,
+html[data-theme="dark"].wall-on:not(.ui-plain) .mind-dream-card,
+html[data-theme="dark"].wall-on:not(.ui-plain) .mind-mem-card,
+html[data-theme="dark"].wall-on:not(.ui-plain) .mind-desire-card,
+html.wall-on:not([data-theme="light"]):not(.ui-plain) .mind-feel-card,
+html.wall-on:not([data-theme="light"]):not(.ui-plain) .mind-dream-card,
+html.wall-on:not([data-theme="light"]):not(.ui-plain) .mind-mem-card,
+html.wall-on:not([data-theme="light"]):not(.ui-plain) .mind-desire-card{
+  background:rgba(37,34,30,.4)!important;
+  border:1px solid rgba(255,255,255,.12)!important;
 }
 
 /* ---- 主题背景（小狗绘本 pup 等）下抽屉柔和一档（09-18 她要「柔和，别像自定义那种玻璃感」）----

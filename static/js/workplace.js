@@ -646,7 +646,10 @@
         disableStdin: true,
         convertEol: true,
         fontSize: 12,
-        lineHeight: 1.45,
+        // 09-18：行高必须贴着 1.0。CLI 开屏那只 clawd 是半块字符（▀▄█）拼的，
+        //   行高一大，每行方块之间就裂一条缝，整只螃蟹被拉成横条（她说「像素变成那样」）。
+        //   >1.0 的行距在块字符上就是撕裂，真终端也都是 1.0，正文紧一点是可接受的代价。
+        lineHeight: 1.0,
         fontFamily: MONO,
         theme: roomXtermTheme(),
         cols: roomCols(),
@@ -892,7 +895,10 @@
       wsBody.append(probe);
       var per = probe.getBoundingClientRect().width / 50;
       probe.remove();
-      var usable = wsBody.clientWidth - 24;          // 减掉 pre 的左右 padding
+      // 09-18：换 xterm 后 roomTermEl 已经没有左右 padding 了（旧的 <pre> 才有）。
+      //   还照旧减 24 就等于人为把网格缩窄 24px → 右边空一条、整体偏左（她指出来的）。
+      //   只留 4px 给滚动条余量。
+      var usable = wsBody.clientWidth - 4;
       if (!per || !usable) return 50;
       return Math.max(30, Math.min(200, Math.floor(usable / per)));
     }

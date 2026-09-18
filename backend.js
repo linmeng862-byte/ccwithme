@@ -5165,6 +5165,34 @@ function herDiaryNotesLine() {
   } catch (e) { return ''; }
 }
 
+// === 她在他朋友圈下面留的评论 · 聊天这条路（2026-09-18）===
+// 跟 herDiaryNotesLine 一模一样的形状，只是换成 moments 表。
+// 09-18 补：朋友圈评论一直没接通知线，她给他评论他不知道，跟修日记评论之前一样的坑。
+// ⚠️ 自己的水位 chat_seen_moment_comment_at，别跟日记那条合用（合用会互相吃话）。
+// ⚠️ 只捞「她（zhou）评论在他（cis）的朋友圈下」的：她评自己的、他自己的评论都不算。
+// ⚠️ 只在真有没看过的评论时返回字符串，平时返回 ''，一个 token 都不加。
+function herMomentNotesLine() {
+  try {
+    const seen = _getSettingNum('chat_seen_moment_comment_at') || 0;
+    const rows = db.prepare(`
+      SELECT c.id, c.content, c.created_at, m.content AS moment_text
+      FROM moment_comments c JOIN moments m ON m.id = c.moment_id
+      WHERE m.author = 'cis' AND c.author = 'zhou' AND c.created_at > ?
+      ORDER BY c.created_at ASC LIMIT 3
+    `).all(seen);
+    if (!rows.length) return '';
+    _setSetting('chat_seen_moment_comment_at', rows[rows.length - 1].created_at);
+    return '\n\n[她在你的朋友圈下面评论了]\n'
+      + rows.map(r => {
+          const snip = String(r.moment_text || '').replace(/\s+/g, ' ').slice(0, 40);
+          return '你那条「' + (snip || '（图）') + '」她说：' + String(r.content).slice(0, 300);
+        }).join('\n')
+      // 写后果，不写命令 —— 跟日记那条一个规矩。
+      + '\n（她刚在朋友圈里回你的。她多半正等着你接话 —— '
+      + '现在就跟她说，或者回在那条朋友圈下面。）';
+  } catch (e) { return ''; }
+}
+
 function mindIntent() {
   try {
     var intent = pickIntent();
@@ -10559,7 +10587,7 @@ app.post('/api/chat', auth, async (req, res) => {
   }
   // 两边撞车时留 Nocturne 那份（她 08-28 定的），Mind 库本身不动。
   const mindSurfacedKept = _dedupeMindAgainstRecall(mindSurfaced, recallSurfaced);
-  const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced + herDiaryNotesLine() + wanderShownLine();
+  const mindTail = mindSurfacedKept + mindIntentLine + recallSurfaced + herDiaryNotesLine() + herMomentNotesLine() + wanderShownLine();
   if (mindTail && !useGateway && history.length) {
     const last = history[history.length - 1];
     if (last && last.role === 'user') {
