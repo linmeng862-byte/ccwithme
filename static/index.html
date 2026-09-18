@@ -26,7 +26,11 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789801800">
+<link rel="stylesheet" href="/css/home.css?v=1789900000">
+<!-- 站酷快乐体：只用于自定义壁纸下的聊天气泡（见 home.css）。若她网络到不了 Google Fonts 会静默回退系统字体。 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.css">
@@ -8421,6 +8425,8 @@ async function testEleven(btn){
       paint(chat, '', '');
       paint(drawer, '', '');
     }
+    // 背景一变就刷新配色点/「壁纸」按钮的选中态（切壁纸后选中框跟着走）。
+    if(window._markPalette) window._markPalette();
   }
   window._applyChatWall = apply;      // 切官端开关的时候要再跑一次
   apply();
@@ -8454,8 +8460,17 @@ async function testEleven(btn){
 (function(){
   function mark(){
     var cur = document.documentElement.dataset.palette || '';
-    document.querySelectorAll('.palette-dot').forEach(function(b){ b.classList.toggle('on', (b.dataset.palette||'') === cur); });
+    // 09-18：自定义壁纸开着时它就是当前背景 → 配色点一律不显示选中，选中态归到「壁纸」按钮。
+    //   否则（藏了壁纸/纯配色）按 data-palette 标。这修了「切壁纸后选中框还赖在固定配色上」。
+    var customOn = false;
+    try { customOn = !!(localStorage.getItem('chat_wallpaper') && localStorage.getItem('chat_wall_off') !== '1'); } catch(e){}
+    document.querySelectorAll('.palette-dot').forEach(function(b){
+      b.classList.toggle('on', !customOn && (b.dataset.palette||'') === cur);
+    });
+    var backBtn = document.getElementById('chatWallBack');
+    if(backBtn) backBtn.classList.toggle('wall-active', customOn);
   }
+  window._markPalette = mark;
   mark();
   document.addEventListener('click', function(ev){
     var b = ev.target.closest && ev.target.closest('.palette-dot');

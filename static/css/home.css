@@ -2128,6 +2128,8 @@ html[data-palette="cream"][data-theme="light"]:not(.ui-plain) .music-play-btn{ba
 /* 抽屉里的色点 */
 .palette-dot{width:26px;height:26px;border-radius:50%;border:0;padding:0;cursor:pointer;box-shadow:0 0 0 1px var(--border-strong);transition:box-shadow .15s}
 .palette-dot.on{box-shadow:0 0 0 2px var(--bg-primary),0 0 0 3.5px var(--text-primary)}
+/* 09-18：自定义壁纸开着时，「壁纸」按钮显选中（跟配色点选中同一套 text-primary），选中态一眼看清在哪 */
+.drawer-action.wall-active{border-color:var(--text-primary);box-shadow:0 0 0 1px var(--text-primary) inset;color:var(--text-primary);font-weight:600}
 
 @media(prefers-color-scheme:dark){
   html:not([data-theme="light"]) .inside-letter{background:#2A2A29;border-color:rgba(255,255,255,.08);border-left-color:#B98495}
@@ -2416,11 +2418,12 @@ html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
   background:
     radial-gradient(115% 55% at 32% -12%, rgba(255,255,255,.18) 0%, rgba(255,255,255,.04) 42%, rgba(255,255,255,0) 68%),
     linear-gradient(135deg, rgba(255,255,255,.13) 0%, rgba(255,255,255,.03) 24%, rgba(255,255,255,0) 50%),
-    rgba(255,255,255,.16);
-  border:1.5px solid rgba(255,255,255,.62);
+    rgba(255,255,255,.10);
+  /* 09-18 微调：她要更透 + 白边更细。底层奶白 .16→.10、白描边 1.5px→1px 且淡一档、顶沿内高光 1.5px→1px。 */
+  border:1px solid rgba(255,255,255,.5);
   box-shadow:
     0 10px 22px -10px rgba(60,45,35,.22),
-    inset 0 1.5px 1px rgba(255,255,255,.72),
+    inset 0 1px 1px rgba(255,255,255,.6),
     inset 0 -6px 10px -6px rgba(70,55,45,.08);
 }
 /* 不支持 backdrop-filter 的老浏览器：给一层稍实的乳白兜底，别变全透明看不清 */
@@ -2461,10 +2464,14 @@ html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-clau
    ★ 尺寸/布局全部交还给 base 规则，这里只留纯视觉（字色+字重）。别再往这条加 padding/width/height/flex。 */
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
-  font-weight:600!important; color:#111!important;
+  /* 09-18：自定义壁纸气泡用站酷快乐体（可爱圆润），字重回常规——快乐体本身已够粗，600 会糊。
+     字体到不了（Google Fonts 被网络挡）会静默回退系统字，布局不变。 */
+  font-family:"ZCOOL KuaiLe", -apple-system, "PingFang SC", system-ui, sans-serif!important;
+  font-weight:400!important; color:#111!important; letter-spacing:.3px;
 }
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble .md{
-  font-weight:600; color:#111;
+  font-family:"ZCOOL KuaiLe", -apple-system, "PingFang SC", system-ui, sans-serif;
+  font-weight:400; color:#111;
 }
 /* 深色下别用黑字（看不见），换回浅色正文 */
 html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .bubble,
@@ -2482,10 +2489,23 @@ html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-clau
 
 /* 输入框本来就是玻璃（blur 28 + 高光内描边），但那是配纯色底调的 ——
    压在照片上 25% 的白太薄，字会跟壁纸打架。铺了壁纸就厚一档、描边亮一档。 */
+/* 09-18 她要输入框也用气泡那套玻璃：blur 从 base 的 28 降到 2（透玻璃、背景透上来），
+   背景/描边/高光底暗全套用气泡配方，只是圆角保留 base（输入框做成胶囊会怪）。 */
 html:not(.ui-plain) #chat.has-wall .composer-box{
-  background:rgba(255,255,255,.42);
-  border-color:rgba(255,255,255,.6);
-  box-shadow:0 10px 36px rgba(60,50,40,.14),0 2px 8px rgba(0,0,0,.05),0 0 0 1px rgba(255,255,255,.45) inset;
+  /* 09-18 她说「还是磨砂的」：blur(2) 在这么大一片上就是磨砂感。去掉模糊，
+     只留提亮+饱和的清透film，背景清清楚楚透上来 → 清玻璃不是磨砂。玻璃感靠细白边+高光交代。 */
+  -webkit-backdrop-filter:saturate(1.15) brightness(1.03);
+  backdrop-filter:saturate(1.15) brightness(1.03);
+  /* 输入框面积大，同样奶白铺一片会比小气泡显厚 → 底色比气泡再压透一档（.10→.07）、两道高光各减一点 */
+  background:
+    radial-gradient(115% 55% at 32% -12%, rgba(255,255,255,.14) 0%, rgba(255,255,255,.03) 42%, rgba(255,255,255,0) 68%),
+    linear-gradient(135deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,.02) 24%, rgba(255,255,255,0) 50%),
+    rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.5);
+  box-shadow:
+    0 10px 22px -10px rgba(60,45,35,.22),
+    inset 0 1px 1px rgba(255,255,255,.6),
+    inset 0 -6px 10px -6px rgba(70,55,45,.08);
 }
 @media (prefers-color-scheme:dark){
   html:not([data-theme="light"]):not(.ui-plain) #chat.has-wall .composer-box{

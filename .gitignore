@@ -54,3 +54,6 @@ static/preview/
 
 # 皮肤背景图（09-17）：是别人的画（小红书存的），PUBLIC 仓库不进，每台自己放
 static/skins/
+
+# 私图：预览用的她桌面照，别进 public 仓库
+static/img/ref-desk.jpg
