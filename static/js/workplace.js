@@ -248,9 +248,10 @@
             dot.style.transform = '';
             roomStop();
             roomApi('kill').then(function () {
+              if (roomTerm) { roomTerm.dispose(); roomTerm = null; }
+              if (roomTermEl) { roomTermEl.remove(); roomTermEl = null; }
               roomScreen = null; roomThemeSent = false;
               roomLastBody = null; roomLastTail = null;
-              wsBody.innerHTML = '';
               toast('房间关掉了，400MB 还回去了');
             }).catch(function () { toast('关不掉，看看网关活着没'); });
           }, 650);
@@ -453,7 +454,7 @@
     function wsSendClick() { wsSend(); }
     wsEnter.addEventListener('pointerdown', function (e) { e.preventDefault(); });
     wsEnter.onclick = wsSendClick;
-    wsIn.addEventListener('input', function () { if (roomOn) paintTail(); });
+    wsIn.addEventListener('input', function () {});
     wsIn.onkeydown = function (e) {
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); wsSend(); }
       else if (e.key === 'ArrowUp' && wsHistI > 0) { e.preventDefault(); wsIn.value = wsHist[--wsHistI] || ''; }
@@ -558,7 +559,7 @@
       //   `/usage` 这种整屏视图因此退不出来。Escape 永远放最后一个。
       keyBtn('ESC', function () {
         wsIn.value = '';
-        if (roomOn) { roomSend('', ['C-u', 'Escape']); paintTail(); }
+        if (roomOn) { roomSend('', ['C-u', 'Escape']); }
       }),
       keyBtn('TAB', key('Tab', function () { goPage(curPage === PAGE_WS ? PAGE_CHAT : PAGE_WS); })),
       keyBtn('S-TAB', key('BTab')),
@@ -614,21 +615,48 @@
       } : undefined;
       return api('/api/room/' + path, init).then(function (r) { return r.json(); });
     }
-    // ⚠️ 09-16 她说「UI 能和上一版一样吗」—— 原来这儿 `wsBody.innerHTML = ''`
-    //   把欢迎框和她说过的话一起铲了。现在只**追加**屏幕，上面那些全留着。
+    // xterm.js 终端实例（替代手写 ANSI 解析）
+    var roomTerm = null, roomTermEl = null;
+    function roomXtermTheme() {
+      var dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      var forced = document.documentElement.getAttribute('data-theme');
+      if (forced) dark = forced === 'dark';
+      return dark ? {
+        background: '#1F1E1D', foreground: '#DCD7CF', cursor: '#DCD7CF',
+        selectionBackground: 'rgba(255,255,255,0.2)',
+        black: '#1F1E1D', red: '#D97757', green: '#6BAF7B', yellow: '#D4A64A',
+        blue: '#6B92D8', magenta: '#B87BC4', cyan: '#5BAFAF', white: '#DCD7CF',
+        brightBlack: '#857F76', brightRed: '#D97757', brightGreen: '#6BAF7B', brightYellow: '#D4A64A',
+        brightBlue: '#6B92D8', brightMagenta: '#B87BC4', brightCyan: '#5BAFAF', brightWhite: '#DCD7CF'
+      } : {
+        background: '#FAF6F1', foreground: '#1F1E1D', cursor: '#1F1E1D',
+        selectionBackground: 'rgba(0,0,0,0.15)',
+        black: '#FAF6F1', red: '#C25B36', green: '#3E8E57', yellow: '#B98A2E',
+        blue: '#4A72B8', magenta: '#9A5BA8', cyan: '#3E8E8E', white: '#1F1E1D',
+        brightBlack: '#8A857C', brightRed: '#C25B36', brightGreen: '#3E8E57', brightYellow: '#B98A2E',
+        brightBlue: '#4A72B8', brightMagenta: '#9A5BA8', brightCyan: '#3E8E8E', brightWhite: '#1F1E1D'
+      };
+    }
     function roomEnsureScreen() {
-      if (roomScreen) return roomScreen;
-      // ⚠️ **不自画欢迎框。**那个像素 logo 是 Claude Code 开屏时自己画的，
-      //   房间屏幕里本来就有（09-16 她指出来的：「tmux 不应该自带吗」）。
-      //   自己再画一个就是重复，而且画得还不像。
+      if (roomTermEl) return roomTermEl;
       wsWelcomeGone();
-      // ⚠️ 09-16 绕了一圈：先是 flex-end 贴底、又改 margin-top:auto 贴底，
-      //   她说「还是在下面」—— 她要的一直是**内容从上面开始排**（贴底的话上面一大片空）。
-      //   「保持在键盘上面」说的是那个输入框，不是内容。别再往贴底改。
-      roomScreen = h('pre', 'margin:0;padding:10px 12px;font:12px/1.45 ' + MONO + ';color:' + T_TXT +
-        ';white-space:pre-wrap;overflow-wrap:anywhere');
-      wsBody.append(roomScreen);
-      return roomScreen;
+      roomTermEl = h('div', 'margin:0;flex:1;min-height:0');
+      wsBody.append(roomTermEl);
+      roomTerm = new Terminal({
+        disableStdin: true,
+        convertEol: true,
+        fontSize: 12,
+        lineHeight: 1.45,
+        fontFamily: MONO,
+        theme: roomXtermTheme(),
+        cols: roomCols(),
+        rows: roomRows(),
+        scrollback: 200,
+        cursorBlink: false,
+        allowTransparency: true
+      });
+      roomTerm.open(roomTermEl);
+      return roomTermEl;
     }
     // 房间模式下她说的话：跟对话流那条同一个样子，铺在屏幕块上面。
     function liveHerRoom(text) {
@@ -835,30 +863,12 @@
         roomBusy = false;
         if (!roomOn) return;
         if (d && d.alive) {
-          // ⚠️ 每轮都重画整块 = 她滚到一半就被冲回去（09-16 她说「滑不到最上面」）。
-          //   内容没变就什么都不做；变了也先记下滚动位置再放回去。
-          var sp = splitScreen(d.screen || '');
-          if (!roomPinned && sp.tail !== roomLastTail) {
-            roomTailRaw = sp.tail;
-            paintTail();
-            roomLastTail = sp.tail;
-          }
-          // ⚠️ 她往上翻历史的时候**别动 DOM**。09-16 两次踩到：
-          //   每 1.5 秒重画一次，她正拖着就被打断，惯性滚动直接断掉 —— 就是「滑不动」。
-          //   所以只要她不在底部，就整块跳过更新（内容先攒着，她滑回底部再补上）。
-          // ⚠️ 这把锁**只在她刚滑过的 8 秒内有效**，超时自动解开。
-          //   09-16 踩到两次：锁一旦卡住，画面就永远不刷新 ——
-          //   她 /clear 后停在「正在起房间…」、按 ESC 退 /usage 没反应、
-          //   一轮跑完不显示完成，全是同一个根：她得退出重进才看得到新的。
-          //   宁可偶尔打断一次滚动，也不能把画面锁死。
-          var atBottom = wsBody.scrollTop + wsBody.clientHeight >= wsBody.scrollHeight - 40;
-          var scrolledRecently = Date.now() - roomScrollAt < 8000;
-          roomPinned = (!atBottom && scrolledRecently && roomLastBody !== null);
-          if (!roomPinned && sp.body !== roomLastBody) {
-            roomEnsureScreen().innerHTML = renderBody(sp.body);
-            roomLastBody = sp.body;
-            // 刚翻过历史就别硬拽到底 —— 那等于白翻。1.5 秒内不自动跟随。
-            if (Date.now() - roomGestureAt > 1500) wsBody.scrollTop = wsBody.scrollHeight;
+          var raw = d.screen || '';
+          if (raw !== roomLastBody) {
+            roomEnsureScreen();
+            roomTerm.write('\x1b[2J\x1b[H');
+            roomTerm.write(raw);
+            roomLastBody = raw;
             roomIdleTicks = 0;
             if (roomTickMs !== 1200) roomSchedule(1200);
           } else {
@@ -867,7 +877,8 @@
           }
           if (wsMode) wsMode.textContent = '';
         } else if (d && !d.alive) {
-          roomEnsureScreen().textContent = '房间不在了（闲置自动收了）。说句话我就重新起一个。';
+          roomEnsureScreen();
+          if (roomTerm) { roomTerm.write('\x1b[2J\x1b[H'); roomTerm.write('房间不在了（闲置自动收了）。说句话我就重新起一个。'); }
         }
       }).catch(function () { roomBusy = false; });
     }
@@ -927,7 +938,8 @@
       if (liveSec) { liveSec.remove(); liveSec = null; }
       liveSaid = null;
       wsWelcomeGone();
-      roomEnsureScreen().textContent = '正在起房间…（第一次要十几秒）';
+      roomEnsureScreen();
+      if (roomTerm) roomTerm.write('正在起房间…（第一次要十几秒）');
       roomApi('open', { model: wpModel, cols: roomCols(), rows: roomRows() }).then(function () {
         // 告诉房间里的 CLI 她这会儿是浅色还是深色 —— 它据此决定正文发什么色。
         // 不告诉的话它默认按深色终端发浅灰字，白天就是白底白字。
@@ -943,13 +955,21 @@
         roomSchedule(1500);
         setTimeout(roomPoll, 1200);
       }).catch(function () {
-        roomEnsureScreen().textContent = '房间起不来。看看网关活着没。';
+        if (roomTerm) { roomTerm.write('\x1b[2J\x1b[H'); roomTerm.write('房间起不来。看看网关活着没。'); }
       });
     }
     function roomStop() {
       roomOn = false;
       if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
     }
+    // 主题切换时更新 xterm 颜色
+    function roomSyncTheme() { if (roomTerm) roomTerm.options.theme = roomXtermTheme(); }
+    if (matchMedia('(prefers-color-scheme: dark)').addEventListener) {
+      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', roomSyncTheme);
+    }
+    new MutationObserver(function (muts) {
+      muts.forEach(function (m) { if (m.attributeName === 'data-theme') roomSyncTheme(); });
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     // ⚠️ 关掉整个工作台面板时也要停 —— 09-16 她问「反复点进去有风险吗」时发现的：
     //   原来只有「翻回对话页」会停，直接关面板那个 1.5 秒的轮询会一直跑在后台，
     //   反复进出就叠一层。这个钩子给 index.html 的关闭按钮和红灯用。
@@ -1000,7 +1020,7 @@
     }
     function wsWelcomeGone() { if (wsWelcome) { wsWelcome.remove(); wsWelcome = null; } }
     wsWelcomeShow();
-    wsPane.append(wsBar, wsPend, wsBody, roomTail, wsDock);
+    wsPane.append(wsBar, wsPend, wsBody, wsDock);
     main.append(pgChat, wsPane);
 
     // 宽屏并排 / 窄屏两页。matchMedia 而不是只在打开时量一次 ——

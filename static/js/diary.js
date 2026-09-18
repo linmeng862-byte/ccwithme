@@ -1251,8 +1251,8 @@ function _initDiaryStyles() {
   style.textContent = [
     '/* === Diary — Apple HIG Warm Paper === */',
     '#diaryPanel { --d-bg: var(--bg-primary); --d-card: #FFFDF9; --d-text: #2C2821; --d-muted: #A0988B; --d-line: #E5DFD4; --d-accent: #2C2821; }',
-    '@media (prefers-color-scheme: dark) { #diaryPanel { --d-bg: var(--bg-primary); --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } .diary-card { background:#25221E; } .diary-today-header { color:#E8E4DB; } .diary-cal-overview,.diary-year-month,.diary-stats-summary { background:#25221E; } }',
-    'html[data-theme="dark"] #diaryPanel { --d-bg: var(--bg-primary); --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } html[data-theme="dark"] .diary-card { background:#25221E; } html[data-theme="dark"] .diary-cal-overview,html[data-theme="dark"] .diary-year-month,html[data-theme="dark"] .diary-stats-summary { background:#25221E; }',
+    '@media (prefers-color-scheme: dark) { #diaryPanel { --d-bg: var(--bg-primary); --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } .diary-card { background:rgba(37,34,30,.6); border-color:rgba(255,255,255,.1); box-shadow:0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06); } .diary-today-header { color:#E8E4DB; } .diary-cal-overview,.diary-year-month,.diary-stats-summary { background:#25221E; } }',
+    'html[data-theme="dark"] #diaryPanel { --d-bg: var(--bg-primary); --d-card: #25221E; --d-text: #E8E4DB; --d-muted: #8A8276; --d-line: #3A3530; --d-accent: #E8E4DB; } html[data-theme="dark"] .diary-card { background:rgba(37,34,30,.6); border-color:rgba(255,255,255,.1); box-shadow:0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06); } html[data-theme="dark"] .diary-cal-overview,html[data-theme="dark"] .diary-year-month,html[data-theme="dark"] .diary-stats-summary { background:#25221E; }',
 
     /* Timeline shell */
     '#diaryTimeline { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:0 0 calc(env(safe-area-inset-bottom) + 80px); }',
@@ -1380,7 +1380,9 @@ function _initDiaryStyles() {
     '.diary-tl-content { flex:1; min-width:0; padding-left:6px; padding-bottom:2px; }',
 
     /* Cards */
-    '.diary-card { background:var(--d-card); border-radius:20px; padding:18px 20px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.04); cursor:pointer; transition:box-shadow .2s, transform .15s; position:relative; }',
+    /* 09-18 磨砂玻璃感（她要的）：底兑稀 + backdrop blur + 一道内高光 + 淡白描边。
+       老 WebKit 不认 color-mix 就落回原来的实色 var(--d-card)，不会变透明。 */
+    '.diary-card { background:var(--d-card); background:color-mix(in srgb, var(--d-card) 60%, transparent); -webkit-backdrop-filter:blur(16px) saturate(1.3); backdrop-filter:blur(16px) saturate(1.3); border:1px solid rgba(255,255,255,.55); border-radius:20px; padding:18px 20px; margin-bottom:12px; box-shadow:0 4px 16px rgba(60,50,40,.08), inset 0 1px 0 rgba(255,255,255,.6); cursor:pointer; transition:box-shadow .2s, transform .15s; position:relative; }',
     '.diary-card:active { transform:scale(.99); }',
     '.diary-card.locked { opacity:.85; }',
     '.diary-card-top { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }',

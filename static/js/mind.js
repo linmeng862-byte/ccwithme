@@ -252,8 +252,9 @@ function _initMindStyles() {
       'html[data-theme="dark"] .mind-feel-filter-btn.active{background:#2C2821;color:#E8E4DB;box-shadow:none}',
 
     // Feel cards
-    '.mind-feel-card{position:relative;padding:16px 16px 14px;margin-bottom:10px;border-radius:16px;background:#FFFDF9;overflow:hidden;transition:all .3s}' +
-      '@media(prefers-color-scheme:dark){.mind-feel-card{background:#25221E}}',
+    /* 09-18 磨砂玻璃感（她要的）：底兑稀 + backdrop blur + 内高光 + 淡白描边；老 WebKit 落回实色 */
+    '.mind-feel-card{position:relative;padding:16px 16px 14px;margin-bottom:10px;border-radius:16px;background:#FFFDF9;background:color-mix(in srgb,#FFFDF9 60%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.3);backdrop-filter:blur(16px) saturate(1.3);border:1px solid rgba(255,255,255,.55);box-shadow:0 4px 16px rgba(60,50,40,.08),inset 0 1px 0 rgba(255,255,255,.6);overflow:hidden;transition:all .3s}' +
+      '@media(prefers-color-scheme:dark){.mind-feel-card{background:rgba(37,34,30,.6);border-color:rgba(255,255,255,.1);box-shadow:0 4px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)}}',
     '.mind-feel-indicator{position:absolute;left:0;top:0;bottom:0;width:3px}',
     '.mind-feel-body{font:400 14px/1.6 var(--font-serif);color:#2C2821;transition:all .3s}' +
       '@media(prefers-color-scheme:dark){.mind-feel-body{color:#E8E4DB}}',
@@ -270,8 +271,8 @@ function _initMindStyles() {
 
     // Dream timeline
     '.mind-dream-list{position:relative}',
-    '.mind-dream-card{position:relative;padding:18px 16px;margin-bottom:14px;border-radius:16px;background:#FFFDF9;box-shadow:0 1px 4px rgba(0,0,0,.03)}' +
-      '@media(prefers-color-scheme:dark){.mind-dream-card{background:#25221E;box-shadow:none}}',
+    '.mind-dream-card{position:relative;padding:18px 16px;margin-bottom:14px;border-radius:16px;background:#FFFDF9;background:color-mix(in srgb,#FFFDF9 60%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.3);backdrop-filter:blur(16px) saturate(1.3);border:1px solid rgba(255,255,255,.55);box-shadow:0 4px 16px rgba(60,50,40,.08),inset 0 1px 0 rgba(255,255,255,.6)}' +
+      '@media(prefers-color-scheme:dark){.mind-dream-card{background:rgba(37,34,30,.6);border-color:rgba(255,255,255,.1);box-shadow:0 4px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)}}',
     '.mind-dream-date{font:600 12px/1 var(--font-sans);color:#B5B0A6;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em}',
     '.mind-dream-head{display:flex;align-items:center;gap:6px;margin-bottom:8px}',
     '.mind-dream-moon{font-size:16px}',
@@ -285,8 +286,8 @@ function _initMindStyles() {
     '.mind-dream-open:active{background:rgba(0,0,0,.03)}',
 
     // Memory page
-    '.mind-mem-card{position:relative;padding:16px;margin-bottom:12px;border-radius:16px;background:#FFFDF9;border:1px solid rgba(180,160,120,.2)}' +
-      '@media(prefers-color-scheme:dark){.mind-mem-card{background:#25221E;border-color:rgba(180,160,120,.1)}}',
+    '.mind-mem-card{position:relative;padding:16px;margin-bottom:12px;border-radius:16px;background:#FFFDF9;background:color-mix(in srgb,#FFFDF9 60%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.3);backdrop-filter:blur(16px) saturate(1.3);border:1px solid rgba(255,255,255,.55);box-shadow:0 4px 16px rgba(60,50,40,.08),inset 0 1px 0 rgba(255,255,255,.6)}' +
+      '@media(prefers-color-scheme:dark){.mind-mem-card{background:rgba(37,34,30,.6);border-color:rgba(255,255,255,.1);box-shadow:0 4px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)}}',
     '.mind-mem-pin{position:absolute;top:12px;right:12px;font-size:14px;opacity:.5}',
     // 淡去 —— 按 weight 连续模糊，像想不起来的记忆。碰一下（hover / 点开）才看得清
     '.mind-mem-fade{transition:filter .45s ease,opacity .45s ease;will-change:filter}',
@@ -320,15 +321,15 @@ function _initMindStyles() {
     'html[data-theme="dark"] .mind-dir-bar{background:rgba(255,255,255,.06)!important}',
     'html[data-theme="dark"] .mind-feel-filter{background:rgba(255,255,255,.04)!important}',
     'html[data-theme="dark"] .mind-feel-filter-btn.active{background:#2C2821!important;color:#E8E4DB!important;box-shadow:none!important}',
-    'html[data-theme="dark"] .mind-feel-card{background:#25221E!important}',
+    'html[data-theme="dark"] .mind-feel-card{background:rgba(37,34,30,.6)!important;border-color:rgba(255,255,255,.1)!important;box-shadow:0 4px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)!important}',
     'html[data-theme="dark"] .mind-feel-body{color:#E8E4DB!important}',
     'html[data-theme="dark"] .mind-feel-meta{color:#8A8276!important}',
-    'html[data-theme="dark"] .mind-dream-card{background:#25221E!important;box-shadow:none!important}',
+    'html[data-theme="dark"] .mind-dream-card{background:rgba(37,34,30,.6)!important;border-color:rgba(255,255,255,.1)!important;box-shadow:0 4px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)!important}',
     'html[data-theme="dark"] .mind-dream-date{color:#8A8276!important}',
     'html[data-theme="dark"] .mind-dream-title{color:#E8E4DB!important}',
     'html[data-theme="dark"] .mind-dream-body{color:#9A948A!important}',
     'html[data-theme="dark"] .mind-dream-open{border-color:rgba(255,255,255,.1)!important;color:#8A8276!important}',
-    'html[data-theme="dark"] .mind-mem-card{background:#25221E!important;border-color:rgba(180,160,120,.1)!important}',
+    'html[data-theme="dark"] .mind-mem-card{background:rgba(37,34,30,.6)!important;border-color:rgba(255,255,255,.1)!important;box-shadow:0 4px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06)!important}',
     'html[data-theme="dark"] .mind-mem-title{color:#E8E4DB!important}',
     'html[data-theme="dark"] .mind-mem-summary{color:#9A948A!important}',
     'html[data-theme="dark"] .mind-mem-source{background:rgba(255,255,255,.05)!important;color:#8A8276!important}',

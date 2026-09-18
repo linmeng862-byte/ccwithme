@@ -2429,3 +2429,30 @@ html:not(.ui-plain) #chat.has-wall .composer-box{
 html[data-theme="dark"]:not(.ui-plain) #chat.has-wall .composer-box{
   background:rgba(28,25,22,.62);border-color:rgba(255,255,255,.14);
 }
+
+/* ---- 抽屉沿用壁纸（09-18 她要的）----
+   壁纸铺在 #drawer 上（JS 里贴的），内容层 .mobile-sidebar-inner 做一层磨砂玻璃：
+   照片从磨砂底下透出来当色调，字压在半透明白上还读得清。整块就是「一张贴着照片的毛玻璃侧栏」。
+   ⚠️ 只在 has-wall 时才玻璃，没铺壁纸时抽屉还是原来的实色 sidebar，不白花 backdrop 的钱。 */
+html:not(.ui-plain) #drawer.has-wall{background-color:var(--claude-sidebar-bg)}
+html:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
+  background:rgba(255,255,255,.48);
+  -webkit-backdrop-filter:blur(26px) saturate(1.5);backdrop-filter:blur(26px) saturate(1.5);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset -1px 0 0 rgba(255,255,255,.25);
+}
+/* 会话行/导航项选中态描一圈淡白，浮在玻璃上更立体 */
+html:not(.ui-plain) #drawer.has-wall .session-item.active,
+html:not(.ui-plain) #drawer.has-wall .session-item.is-active,
+html:not(.ui-plain) #drawer.has-wall .mobile-sidebar-nav-item:active{
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.5);
+}
+@media (prefers-color-scheme:dark){
+  html:not([data-theme="light"]):not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
+    background:rgba(28,25,22,.56);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset -1px 0 0 rgba(255,255,255,.06);
+  }
+}
+html[data-theme="dark"]:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
+  background:rgba(28,25,22,.56);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset -1px 0 0 rgba(255,255,255,.06);
+}

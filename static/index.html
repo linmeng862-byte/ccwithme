@@ -26,9 +26,11 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789665731">
+<link rel="stylesheet" href="/css/home.css?v=1789700000">
 <link rel="stylesheet" href="/design-system.css?v=3">
 <script src="/marked.min.js?v=2"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/6.0.0/xterm.js"></script>
 <link rel="stylesheet" href="/journey.css?v=1">
 <!-- 叠卡（微信式多图合并）：第三方组件 PhotoStack，非商用许可，见 vendor-licenses/ -->
 <link rel="stylesheet" href="/css/photo-stack.css?v=1">
@@ -366,9 +368,8 @@
             <button class="palette-dot" data-palette="cream" aria-label="奶油白" style="background:linear-gradient(135deg,#FCEAEB 50%,#F0ECE5 50%)"></button>
             <!-- 09-13：改配色之前那一版（git a93f2d8，09-12 10:37）。暖米白底 + Claude 橙强调，圆角 20px 无投影。 -->
             <button class="palette-dot" data-palette="warm" aria-label="暖米白" style="background:linear-gradient(135deg,#FBEDEF 50%,#EFEDE9 50%)"></button>
-            <!-- 09-18：她发的三张图里只留了墨蓝这张（新艺术）。色号是从图里真取的，见 home.css 末尾那段。
-                 另外两套（奶油奶黄 / 柠檬叶绿，都是小狗那两张）当天做出来她看了说「不协调」，已撤。
-                 备份在 backups/home.css.bak.pre-dogremove.*，真要翻回去从那儿取，别重做一遍。 -->
+            <button class="palette-dot" data-palette="pup" aria-label="小狗绘本" style="background:linear-gradient(135deg,#E4EDFA 50%,#FBF3D6 50%)"></button>
+            <button class="palette-dot" data-palette="asagao" aria-label="牵牛花" style="background:linear-gradient(135deg,#F2A6C0 38%,#3B404C 38% 62%,#8FA3DE 62%)"></button>
             <button class="palette-dot" data-palette="ink" aria-label="墨蓝" style="background:linear-gradient(135deg,#F6DCE7 50%,#E4E9F4 50%)"></button>
           </div>
         </div>
@@ -8374,8 +8375,37 @@ async function testEleven(btn){
     var plain = document.documentElement.classList.contains('ui-plain');
     var w = '';
     try { w = localStorage.getItem('chat_wallpaper') || ''; } catch(e) {}
-    if(w && !plain){ chat.style.backgroundImage = 'url(' + w + ')'; chat.classList.add('has-wall'); }
-    else { chat.style.backgroundImage = ''; chat.classList.remove('has-wall'); }
+    // 09-18：抽屉也沿用同一张壁纸（她要的）。直接把图铺到 #drawer 上，
+    // 不靠「让抽屉透出底下的 #chat」——抽屉开合会 transform #chat，靠透出不稳。
+    var drawer = document.getElementById('drawer');
+    var on = !!(w && !plain);
+    if(on){
+      chat.style.backgroundImage = 'url(' + w + ')';
+      chat.style.backgroundSize = 'cover';
+      chat.style.backgroundPosition = 'center center';
+      chat.style.backgroundRepeat = 'no-repeat';
+      chat.classList.add('has-wall');
+      if(drawer){
+        drawer.style.backgroundImage = 'url(' + w + ')';
+        drawer.style.backgroundSize = 'cover';
+        drawer.style.backgroundPosition = 'center center';
+        drawer.style.backgroundRepeat = 'no-repeat';
+        drawer.classList.add('has-wall');
+      }
+    } else {
+      chat.style.backgroundImage = '';
+      chat.style.backgroundSize = '';
+      chat.style.backgroundPosition = '';
+      chat.style.backgroundRepeat = '';
+      chat.classList.remove('has-wall');
+      if(drawer){
+        drawer.style.backgroundImage = '';
+        drawer.style.backgroundSize = '';
+        drawer.style.backgroundPosition = '';
+        drawer.style.backgroundRepeat = '';
+        drawer.classList.remove('has-wall');
+      }
+    }
   }
   window._applyChatWall = apply;      // 切官端开关的时候要再跑一次
   apply();
@@ -8409,6 +8439,10 @@ async function testEleven(btn){
     var p = b.dataset.palette || '';
     if(p) document.documentElement.dataset.palette = p; else delete document.documentElement.dataset.palette;
     try{ if(p) localStorage.setItem('chat_palette', p); else localStorage.removeItem('chat_palette'); }catch(e){}
+    // 09-18：配色和壁纸是互斥的两套「背景」。点任一固定配色 = 要纯色主题，
+    // 得把壁纸一起清掉，否则照片还压在上面，看着就是「配色没全变回去」（她碰到的）。
+    try{ localStorage.removeItem('chat_wallpaper'); }catch(e){}
+    if(window._applyChatWall) window._applyChatWall();
     mark();
   }, true);
 })();
