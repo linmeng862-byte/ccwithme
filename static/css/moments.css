@@ -98,6 +98,15 @@ html[data-theme="dark"] #momentsPanel.has-wall .mo-unread { background: rgba(40,
   cursor: pointer;
 }
 .mo-unread.show { display: flex; }
+
+/* 入口白点：他赞了/评论了她、她还没进朋友圈时，「家」里的 Moments 项亮一颗。
+   白底+淡描边，深浅背景都看得见。她一进朋友圈就灭（见 moments.js 的水位）。 */
+.home-nav-item[data-page="moments"] { position: relative; }
+.mo-nav-dot {
+  position: absolute; top: 7px; right: 7px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .18);
+}
 .mo-unread-av {
   flex: none; width: 26px; height: 26px; border-radius: 50%; overflow: hidden;
   background: var(--bg-surface); display: grid; place-items: center;

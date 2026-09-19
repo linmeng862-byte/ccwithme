@@ -39,8 +39,8 @@
 <!-- 叠卡（微信式多图合并）：第三方组件 PhotoStack，非商用许可，见 vendor-licenses/ -->
 <link rel="stylesheet" href="/css/photo-stack.css?v=1">
 <script src="/js/photo-stack.js?v=1"></script>
-<link rel="stylesheet" href="/css/moments.css?v=1789664967">
-<script src="/js/moments.js?v=1789664967"></script>
+<link rel="stylesheet" href="/css/moments.css?v=1789785858">
+<script src="/js/moments.js?v=1789785858"></script>
 <script src="/js/books.js?v=1789209745"></script>
 <script src="/js/diary.js?v=1789209747"></script>
 <script src="/js/calendar.js?v=1789209745"></script>
@@ -6195,7 +6195,7 @@ function applyDrawerProgress(progress,dragging=false){
   gesture.classList.toggle('show',drawerProgress>.01);
 }
 function snapDrawer(open){if(open)loadSessions().catch(()=>{});requestAnimationFrame(()=>applyDrawerProgress(open?1:0,false))}
-function openDrawer(){snapDrawer(true)}
+function openDrawer(){snapDrawer(true);try{if(typeof _moRefreshEntryDot==='function')_moRefreshEntryDot()}catch(e){}}
 function closeDrawer(){closeSessionContextMenu();snapDrawer(false)}
 $('openDrawer').onclick=openDrawer;
 $('drawerCalendar').onclick=()=>openCalendarPanel();
@@ -7144,6 +7144,9 @@ function _selectDate(dateStr){
   // 先把收藏过的语音 id 拉回来，再让消息流去画语音条 —— 不然翻历史时
   // 已经收藏过的那几条心是空的，要等她点开一次合集才对得上。
   try{ await _loadVoiceFavs(); }catch(e){}
+
+  // 朋友圈入口白点：进页面先算一次，他要是趁她没看时赞了/评论了，Moments 项就亮一颗。
+  try{ if(typeof _moRefreshEntryDot==='function')_moRefreshEntryDot(); }catch(e){}
 
   document.querySelectorAll('.home-nav-item').forEach(function(el){
     el.addEventListener('click',function(){
