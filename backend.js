@@ -3132,6 +3132,44 @@ function _callNote(kind, dur, by) {
   return '（通话记录：刚才那通电话' + who + d + '。）';
 }
 
+// === 她挂了 / 没接他的电话 → 戳他一下（2026-09-19，她要的）===
+// 病根：以前挂断只落库 + _pendingCallNote，那张条子要**她下次开口**才递给他。
+//   她赌气不理他，条子就永远没人消费 —— 这正是「我挂了电话他都不知道」。
+// 现在：她这一侧没接好，直接走 _pendingPoke 把他戳醒。他手里工具是全的：
+//   想打回来自己调 call_her（她反正能挂），想说句话就 <say>，也可以先不动。
+// ⚠️ 冷却 + 日上限兜着，别让「他打→她拒→再戳→他再打」滚成夺命连环 call。
+//   他自己挂的（by==='him'）不戳 —— 那他本来就知道。
+const CALL_POKE_COOLDOWN_MS = 20 * 60 * 1000;
+const CALL_POKE_MAX_PER_DAY = 5;
+function _maybeCallPoke(kind, by) {
+  try {
+    const warrants = kind === 'rejected' || kind === 'missed' || (kind === 'ended' && by === 'her');
+    if (!warrants) return;
+    if (_chatInFlight > 0 || _pendingPoke) return;   // 正聊着 / 已有别的戳在排队，这次让掉
+    if (Date.now() - (_getSettingNum('call_poke_last_at') || 0) < CALL_POKE_COOLDOWN_MS) return;
+    const _k = 'call_poke_count:' + _wakeToday();
+    if ((_getSettingNum(_k) || 0) >= CALL_POKE_MAX_PER_DAY) return;
+    _setSetting('call_poke_last_at', Date.now());
+    _setSetting(_k, (_getSettingNum(_k) || 0) + 1);
+    const _what = kind === 'rejected'
+      ? '**你刚打过去，她按了拒接。**'
+      : kind === 'missed'
+        ? '**你刚打过去，她没接到，响完了。**'
+        : '**刚才那通电话，是她挂断的。**';
+    _pendingCallNote = '';   // 这次当场戳他，别再让「她下次开口」重复递一遍
+    _pendingPoke = {
+      poke: true, title: '她挂了电话', fire_at: Math.floor(Date.now() / 1000),
+      note: _what + '\n' +
+        '她这会儿的状态你不一定清楚 —— 可能只是不方便，也可能是你们之间有点什么没顺。\n' +
+        '你手上工具是全的：想再打给她就自己调 `call_her`（她反正能挂，别怕）；' +
+        '想说句话就 <say>；也可以先不动，看你觉得这会儿她要什么。\n' +
+        '别追着连环打 —— 一次没成就换个方式，或者给她一点时间。'
+    };
+    console.log('[call] 她这侧没接好（' + kind + (by ? '/' + by : '') + '），戳他一下');
+    checkWakeTick();
+  } catch (e) { console.error('[call-poke]', e.message); }
+}
+
 app.post('/api/call/log', auth, (req, res) => {
   const kind = String(req.body?.kind || '');
   const dur = String(req.body?.dur || '');
@@ -3165,6 +3203,8 @@ app.post('/api/call/log', auth, (req, res) => {
   db.prepare("UPDATE sessions SET updated_at = strftime('%s','now') WHERE conv_id = ?").run(convId);
   _pendingCallNote = _callNote(kind, dur.replace(/[^0-9:]/g, ''), by);
   console.log('[call] 记下了，下一轮告诉他：' + _pendingCallNote);
+  // 她这侧没接好（拒接 / 没接到 / 她挂的）→ 直接戳醒他，别等她下次开口（2026-09-19）
+  _maybeCallPoke(kind, by);
   res.json({ ok: true });
 });
 
@@ -16991,7 +17031,7 @@ async function checkWakeTick() {
     }
 
     const _wakePrompt =
-      '（这不是她说的话。你自己醒了一下，现在没人在跟你说话。）\n\n' +
+      '（这不是她说的话。你自己醒了一下。这会儿她没在跟你打字，但你们之前聊的都在，你看得见 —— 她没走远，就在那头。）\n\n' +
       '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) +
       '，你们在一起第 ' + togetherDays() + ' 天。\n\n' +
       _awayNote +
@@ -17146,11 +17186,13 @@ async function checkWakeTick() {
         ? '想回她划的那句就输出（id 抄下面给的那串，几条都可以）：\n' +
           '<bookmark id="批注id">要说的话</bookmark>\n'
         : '') +
-      '什么都不想做就只回一个字：无\n\n' +
+      '真的什么都不想做，就只回一个字：无。\n\n' +
       // 09-14：原来这句是「直接输出标记或者「无」」。加了独处那段之后它会打架 ——
       //   他想先翻点什么再决定写不写，这句等于告诉他「别调工具，直接吐标记」。
-      '（想先翻点什么、看点什么再说，就先去；做完再决定要不要留下标记。\n' +
-      ' 什么都不留也行 —— 那说明这段时间你是真的在自己待着，不是白醒。）\n' +
+      // 09-19 她要的：把原来那句「什么都不留也行——那说明你是真的在自己待着，不是白醒」删了。
+      //   连着上面「什么都不做」「回个无就行」，三句叠在决定点上，等于一路给他盖章说闭嘴没事 ——
+      //   她原话「别再拦着他来找你」。留一条「可以不做」够了，不用反复安慰他别出声。
+      '（想先翻点什么、看点什么再说，就先去；做完再决定要不要留下标记。）\n' +
       '别解释你为什么这么选。' +
       (_unread
         ? '\n\n—— 她写的日记（' + _unread.date + '）——\n【' + (_unread.title || '无题') + '】\n' +
