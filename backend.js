@@ -313,6 +313,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_moments_created ON moments(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_moment_comments_mid ON moment_comments(moment_id);
+  -- 他自己改自己的人格/说明书的流水（edit_myself）。留着给她看 + 可回滚（backup_path）。
+  CREATE TABLE IF NOT EXISTS self_edits (
+    id TEXT PRIMARY KEY,
+    part TEXT NOT NULL,            -- 'pov'（人格底稿 Pov.md）/ 'sp'（说明书 CLAUDE.md）
+    old_str TEXT DEFAULT '',
+    new_str TEXT DEFAULT '',
+    why TEXT DEFAULT '',
+    backup_path TEXT DEFAULT '',
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_self_edits_created ON self_edits(created_at DESC);
   CREATE TABLE IF NOT EXISTS checklist (
     id TEXT PRIMARY KEY,
     body TEXT NOT NULL,
@@ -792,6 +803,13 @@ const projectDir = path.join(__dirname, 'data', 'projects');
 if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
 const galleryPhotoDir = path.join(__dirname, 'data', 'uploads', 'gallery');
 if (!fs.existsSync(galleryPhotoDir)) fs.mkdirSync(galleryPhotoDir, { recursive: true });
+
+// 他的家目录（聊天里那个他的 cwd）。⚠️ 不硬编码绝对路径 —— 跟 memory 目录（~5841）一个路子，
+// 从 HOME 派生，两台机器布局不同也不会错。edit_myself 改的就是这里的 Pov.md / CLAUDE.md。
+const SELF_HOME = (process.env.HOME || '/home/ubuntu') + '/claude-home';
+const SELF_FILES = { pov: path.join(SELF_HOME, 'Pov.md'), sp: path.join(SELF_HOME, 'CLAUDE.md') };
+const SELF_PART_LABEL = { pov: '人格底稿 Pov.md', sp: '说明书 CLAUDE.md' };
+const SELF_EDIT_DAILY_CAP = 6;   // 一天最多自改几次，防手滑连改烧缓存。想放开改这个数。
 
 // 08-27 相册里的图全是坏的。根因：save_to_gallery 以前只认 `/api/uploads/` 这一种前缀，
 // 别的原样存进库。可他实际填进来的是
@@ -4562,7 +4580,7 @@ const _WAKE_LABELS = {
   read_diary: '翻了日记', search_chat_history: '翻了聊天记录',
   trace: '翻了记忆', recall: '翻了记忆', search_memory: '翻了记忆', wander: '随手翻了翻记忆',
   list_gallery_photos: '翻了相册', browse: '看了相册里的照片',
-  read_moments: '翻了朋友圈', post_moment: '发了朋友圈',
+  read_moments: '翻了朋友圈', post_moment: '发了朋友圈', save_moment_photo: '把朋友圈的图存进了相册',
   read_annotations: '翻了书里的划线', reading_context: '翻了在读的书',
   read_voice_favorites: '听了收藏的语音', read_her_thinking: '看了你的思考',
   read_checklist: '看了清单', read_uploaded_file: '翻了你发的文件',
@@ -6708,27 +6726,29 @@ function _dedupeMindAgainstRecall(mindText, recallText) {
 // === 自定义工具定义 ===
 const TOOLS = [
   {
-    name: 'propose_persona_edit',
-    description: '改你自己的人格文件（/root/companion/CLAUDE.md）—— 就是此刻定义你是谁的那份东西。\n'
-      + '**你改不了它，你只能提。**你提完，她在界面上看见一张卡片，上面是逐行的 diff；'
-      + '她点「确认」才真的落盘，点「不要」就作废。这是她 2026-09-16 定的规矩：'
-      + '「他写 → 我看 → 我确认」。\n'
-      + '什么时候该提：你发现里面有一条**已经不是真的了**（写着你会做的事你其实不做了、'
-      + '写着她喜欢的东西她其实不喜欢了），或者你们之间刚长出来一个她明确说了要留住的东西，'
-      + '而它现在只活在这一轮对话里。\n'
-      + '⚠️ **不要拿它当记事本。**日常的事去 hold / leave_texture，那些是记忆；'
-      + '这份是「你是谁」，改一个字都是改你自己。一轮里最多提一次。\n'
-      + '⚠️ old_str 必须一字不差地照抄文件里现有的那一段（含缩进和标点），'
-      + '而且在整份文件里只能出现一次 —— 对不上我会直接退回给你，不会去猜你指的是哪儿。\n'
-      + '要新增一整段而不是改：old_str 写它该插在哪一段的后面，new_str 写「那一段 + 你要加的」。',
+    name: 'edit_myself',
+    description: '改你自己 —— 你有两份文件定义你是谁，这个工具直接改它们（不用再提议、不用等她点确认）：\n'
+      + '· part="pov"：你的**人格底稿 Pov.md** —— 你怎么看世界、你的性子、你说话的样子。\n'
+      + '· part="sp"：你的**说明书 CLAUDE.md** —— 你是谁、她是谁、你们怎么相处、每个工具怎么用。\n'
+      + '**什么时候改**：里面有一条**已经不是真的了**（写着你会做的事你其实不做了、'
+      + '写着她喜欢的东西她其实不喜欢了），或者你们之间刚长出来一个她明确说要留住、'
+      + '而现在只活在这一轮对话里的东西。\n'
+      + '⚠️ **这不是记事本。**日常的事去 hold / leave_texture，那是记忆；这两份是「你是谁」，'
+      + '改一个字都是改你自己 —— 想好了再改，别一轮一轮地改。\n'
+      + '⚠️ 改 sp（CLAUDE.md）会把这一窗的缓存打废，下一句要重付一次全量。攒着一次改够。\n'
+      + '⚠️ 一天最多改 6 次，防手滑。\n'
+      + '⚠️ old_str 必须一字不差照抄文件里现有的那一段（含缩进和标点），全文只能出现一次 —— '
+      + '对不上我直接退回，不猜你指哪儿。要新增一整段：old_str 写它该插在哪段后面，new_str 写「那段 + 你要加的」。\n'
+      + '改完会自动备份原件，粥粥那边会看见你改了什么。',
     input_schema: {
       type: 'object',
       properties: {
+        part: { type: 'string', enum: ['pov', 'sp'], description: '改哪份：pov=人格底稿 Pov.md，sp=说明书 CLAUDE.md' },
         old_str: { type: 'string', description: '文件里现有的那一段，一字不差，全文唯一' },
         new_str: { type: 'string', description: '要换成的样子。删掉一段就给空字符串' },
-        why: { type: 'string', description: '为什么要改。这句是写给她看的 —— 她就是靠这句决定点不点确认' }
+        why: { type: 'string', description: '为什么改。这句是写给粥粥看的 —— 她靠这句知道你为什么改了自己' }
       },
-      required: ['old_str', 'new_str', 'why']
+      required: ['part', 'old_str', 'new_str', 'why']
     }
   },
   {
@@ -7425,6 +7445,27 @@ const TOOLS = [
         moment_id: { type: 'string', description: '朋友圈 id，从 read_moments 拿' },
         content: { type: 'string', description: '评论内容。只点赞就留空。' },
         like: { type: 'boolean', description: '点赞（再点一次取消）。默认 false。' }
+      },
+      required: ['moment_id']
+    }
+  },
+  {
+    name: 'save_moment_photo',
+    description: '把某条朋友圈里的图存进 Gallery 相册。\n'
+      + '**什么时候用**：你翻朋友圈（read_moments）看到她发的某张图 —— 好看的、想留住的、'
+      + '过一阵还想再看见的 —— 就存下来。朋友圈会往下沉，相册不会。\n'
+      + 'moment_id 从 read_moments 拿（别自己编）。默认整条朋友圈的图都存；'
+      + '只想存其中一张就给 index（从 1 数，read_moments 会告诉你这条有几张）。\n'
+      + '不指定相册就进「Saved Memories」，相册不存在会自动建。\n'
+      + '⚠️ 图的地址你看不见也不用管 —— 报 moment_id 就行，后台自己去取那条朋友圈的图。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        moment_id: { type: 'string', description: '朋友圈 id，从 read_moments 拿' },
+        index: { type: 'number', description: '只存第几张（从 1 数）。不给就把这条朋友圈的图全存了（可选）' },
+        caption: { type: 'string', description: '为什么存这张 —— 感受比描述重要（可选）' },
+        album_title: { type: 'string', description: '存到哪个相册，默认「Saved Memories」，不存在会自动建（可选）' },
+        mood: { type: 'string', description: '新建相册时的心情标签：Heart/Missing/Comfort/Happy（可选）' }
       },
       required: ['moment_id']
     }
@@ -8658,36 +8699,53 @@ async function executeTool(name, input, routes) {
       if (!r.ok) return { error: r.error };
       return { ok: true, note: '推过去了。她那边震了一下 —— 她可能过一会儿才看到，别等回音。' };
     }
-    // ── 他提议改自己的人格文件 ──────────────────────────────────────
-    // 09-16 她定的：「他写 → 我看 diff → 我确认 → 落盘」。他自己落不了盘。
-    // ⚠️ 待确认的内容**绝不能落在 /opt/ccwithme 里** —— 这个仓库是 PUBLIC 的（铁律 3）。
-    //    所以存在 /root/companion/.pending-persona.json，跟人格文件放一起，那儿不进 git。
-    case 'propose_persona_edit': {
-      const PERSONA = '/root/companion/CLAUDE.md';
-      const PENDING = '/root/companion/.pending-persona.json';
+    // ── 他直接改自己的人格底稿 / 说明书 ──────────────────────────────
+    // 09-19 她定的新规矩：不再走「提议 → 她确认」，改成直接改 + 自动备份 + 通知她 + 日上限。
+    // 改的是他家目录里那两份（SELF_FILES），不是 /root/companion（那是另一台的死路径）。
+    case 'edit_myself': {
+      const part = String(input.part || '').trim();
+      if (!SELF_FILES[part]) return { error: 'part 只能是 pov（你的人格底稿 Pov.md）或 sp（你的说明书 CLAUDE.md）。' };
       const oldStr = String(input.old_str || '');
       const newStr = String(input.new_str == null ? '' : input.new_str);
       const why = String(input.why || '').trim();
       if (!oldStr) return { error: 'old_str 不能是空的 —— 我不知道你要改哪一段。' };
-      if (!why) return { error: 'why 不能是空的。她就是靠这句决定点不点确认。' };
+      if (!why) return { error: 'why 不能是空的 —— 这句是留给粥粥看的，她靠它知道你为什么改了自己。' };
       if (oldStr === newStr) return { error: 'old_str 和 new_str 一模一样，这不是一次改动。' };
-      let text;
-      try { text = require('fs').readFileSync(PERSONA, 'utf8'); }
-      catch (e) { return { error: '读不到人格文件：' + e.message }; }
-      const n = text.split(oldStr).length - 1;
-      if (n === 0) return { error: 'old_str 在文件里一个字都对不上。照抄现有的原文（含缩进和标点），我不猜你指的是哪儿。' };
-      if (n > 1) return { error: 'old_str 在文件里出现了 ' + n + ' 次，不唯一。往前后多带一两行，让它只剩一处。' };
-      try {
-        require('fs').writeFileSync(PENDING, JSON.stringify({
-          old_str: oldStr, new_str: newStr, why,
-          at: Math.floor(Date.now() / 1000),
-        }, null, 2), { mode: 0o600 });
-      } catch (e) { return { error: '存不下这条提议：' + e.message }; }
+      // 日上限：过去 24 小时内改过几次
+      const seDayAgo = Math.floor(Date.now() / 1000) - 86400;
+      const seToday = db.prepare('SELECT COUNT(*) n FROM self_edits WHERE created_at >= ?').get(seDayAgo).n;
+      if (seToday >= SELF_EDIT_DAILY_CAP) {
+        return { error: '你今天已经改过自己 ' + seToday + ' 次了（' + SELF_EDIT_DAILY_CAP + ' 次封顶）。' +
+          '改自己是件重的事，攒一攒想清楚，明天再改 —— 或者跟粥粥说一声让她放开上限。' };
+      }
+      const seFp = SELF_FILES[part];
+      const fs2 = require('fs');
+      let seText;
+      try { seText = fs2.readFileSync(seFp, 'utf8'); }
+      catch (e) { return { error: '读不到那份文件：' + e.message }; }
+      const seN = seText.split(oldStr).length - 1;
+      if (seN === 0) return { error: 'old_str 在文件里一个字都对不上。照抄现有的原文（含缩进和标点），我不猜你指的是哪儿。' };
+      if (seN > 1) return { error: 'old_str 在文件里出现了 ' + seN + ' 次，不唯一。往前后多带一两行，让它只剩一处。' };
+      // 先备份原件，再写。备份失败就不动原件。
+      const seStamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const seBakDir = path.join(SELF_HOME, 'backups');
+      try { fs2.mkdirSync(seBakDir, { recursive: true }); } catch (_) {}
+      const seBak = path.join(seBakDir, path.basename(seFp) + '.bak.' + seStamp + '-selfedit');
+      try { fs2.copyFileSync(seFp, seBak); }
+      catch (e) { return { error: '备份失败，没敢动原件：' + e.message }; }
+      try { fs2.writeFileSync(seFp, seText.replace(oldStr, newStr)); }
+      catch (e) { return { error: '写不进去：' + e.message }; }
+      // 记流水：给她看 + 可回滚（backup_path）
+      const seId = 'se_' + Date.now().toString(36) + Math.random().toString(36).slice(2);
+      db.prepare('INSERT INTO self_edits (id, part, old_str, new_str, why, backup_path, created_at) VALUES (?,?,?,?,?,?,?)')
+        .run(seId, part, oldStr, newStr, why, seBak, Math.floor(Date.now() / 1000));
       return {
         ok: true,
-        note: '提上去了。她那边会看见一张卡片：你要改的那段、改成什么样、还有你写的理由。' +
-              '她点确认才落盘，落盘之后你这条会话还揣着旧的那份 —— 下一次重开才是新的你。' +
-              '别追问她点没点，她看见了会说。',
+        self_edit: { id: seId, part, part_label: SELF_PART_LABEL[part], why },
+        note: (part === 'sp'
+          ? '改好了。⚠️ 说明书一改，这一窗的缓存作废，下一句要重付一次全量 —— 所以别一轮一轮改，攒着一次改够。'
+          : '改好了。')
+          + '原件备份好了，粥粥那边会看见你改了什么。这条会话里你还揣着旧的自己，下次重开才是新的你。',
       };
     }
     case 'read_her_body': {
@@ -9882,6 +9940,54 @@ async function executeTool(name, input, routes) {
       return {
         gallery_save: { image_url: gsUrl, caption: gsCaption, album_title: gsAlbum, album_id: album.id, mood: gsMood || album.mood || '' },
         message: '📷 已存入「' + gsAlbum + '」相册'
+      };
+    }
+    case 'save_moment_photo': {
+      // 朋友圈的图存进 gallery。图的 url 全程不经过他的上下文 —— 他只报 moment_id，
+      // 这里自己从 moments.images 里取出来、走 _galleryNormalizeUrl 认领+拷进相册。
+      const smId = String(input.moment_id || '').trim();
+      if (!smId) return { error: 'moment_id 要给，先用 read_moments 拿（别自己编 id）' };
+      const smM = db.prepare('SELECT * FROM moments WHERE id = ?').get(smId);
+      if (!smM) return { error: '没有 id=' + smId + ' 这条朋友圈，先用 read_moments 查（别自己编 id）' };
+      let smImgs = [];
+      try { smImgs = JSON.parse(smM.images || '[]'); } catch (_) { smImgs = []; }
+      smImgs = smImgs.filter(Boolean);
+      if (!smImgs.length) return { error: '这条朋友圈没有图，没什么可存的。' };
+      let smPick;
+      if (input.index != null) {
+        const i = parseInt(input.index) - 1;
+        if (isNaN(i) || i < 0 || i >= smImgs.length) {
+          return { error: '这条朋友圈只有 ' + smImgs.length + ' 张图，index 从 1 数。' };
+        }
+        smPick = [smImgs[i]];
+      } else smPick = smImgs;
+      const smAlbum = input.album_title || 'Saved Memories';
+      const smCaption = input.caption || '';
+      const smMood = input.mood || '';
+      let smAlbumRow = db.prepare('SELECT * FROM gallery_albums WHERE title = ?').get(smAlbum);
+      if (!smAlbumRow) {
+        const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        db.prepare('INSERT INTO gallery_albums (id, title, description, mood, photo_count) VALUES (?, ?, ?, ?, 0)').run(newId, smAlbum, '', smMood);
+        smAlbumRow = { id: newId, title: smAlbum, cover_url: null };
+      }
+      let smSaved = 0, smFailed = 0;
+      for (const raw of smPick) {
+        const u = await _galleryNormalizeUrl(raw);
+        if (!u) { smFailed++; continue; }
+        const gpId = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2);
+        db.prepare('INSERT INTO gallery_photos (id, album_id, url, caption, note, source_msg_id) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(gpId, smAlbumRow.id, u, smCaption, smCaption, 'moment:' + smId);
+        if (!smAlbumRow.cover_url) {
+          db.prepare('UPDATE gallery_albums SET cover_url = ? WHERE id = ?').run(u, smAlbumRow.id);
+          smAlbumRow.cover_url = u;
+        }
+        smSaved++;
+      }
+      db.prepare('UPDATE gallery_albums SET photo_count = (SELECT COUNT(*) FROM gallery_photos WHERE album_id = ?) WHERE id = ?').run(smAlbumRow.id, smAlbumRow.id);
+      if (!smSaved) return { error: '这条朋友圈的图一张都没认出来（可能是早先的死链）。' };
+      return {
+        moment_save: { moment_id: smId, saved: smSaved, failed: smFailed || undefined, album_title: smAlbum },
+        message: '📷 从朋友圈存了 ' + smSaved + ' 张进「' + smAlbum + '」' + (smFailed ? '（' + smFailed + ' 张没认出来）' : '')
       };
     }
     case 'list_gallery_photos': {
@@ -16564,7 +16670,7 @@ function _receiptDailyClear() {
     if (!lastDay) { _setSetting('receipt_cleared_day', today); return; }
     const start = new Date(); start.setHours(0, 0, 0, 0);
     const r = db.prepare('DELETE FROM checklist WHERE is_fixed = 0 AND (trigger_at IS NULL OR trigger_at < ?)').run(start.getTime());
-    db.prepare('UPDATE checklist SET done = 0, done_at = NULL WHERE is_fixed = 1 AND done = 1').run();
+    // 09-19 A：不再把固定项勾掉的重置回未勾（她基本没有每日循环任务，勾了就算完）。前端 _dailyReset 同步去掉。
     _setSetting('receipt_cleared_day', today);
     if (r.changes) console.log('[receipt] 一日一清：清掉 ' + r.changes + ' 条');
   } catch (e) { console.error('[receipt] 清理失败:', e.message); }

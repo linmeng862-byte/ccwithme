@@ -1492,9 +1492,10 @@ function _todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMon
 //   零点一到，只留两种：固定项（照旧回到未勾）+ 跨天任务（trigger_at 定在今天以后的，到那天再提醒）。
 //   其余不管勾没勾都清掉 —— 没做完的，20:00 他会来看一眼提醒她，过了零点就不挂了。
 //   后端 _receiptDailyClear 零点按同一条规矩清一次，两边要一致（sync 是整张覆盖）。
+// 09-19 A：她基本没有每日循环任务，去掉「固定项勾掉后重置回未勾」那条——
+//   勾了就算完，别半夜复活。没勾的照旧一直留着。后端 _receiptDailyClear 同步去掉。
 function _dailyReset(){var today=_todayStr();if(_todosLastDate===today)return;
   var d0=new Date();d0.setHours(0,0,0,0);var start=d0.getTime();
-  _todos.forEach(function(t){if(t.is_fixed&&t.done){t.done=0;t.done_at=null}});
   _todos=_todos.filter(function(t){return t.is_fixed||(t.trigger_at&&t.trigger_at>=start)});_todosLastDate=today;_saveTodos()}
 function _localEpochForHHMM(hh,mm){var d=new Date();d.setHours(hh,mm,0,0);if(d.getTime()<=Date.now())d.setDate(d.getDate()+1);return d.getTime()}
 function _resolveTriggerAt(o){if(o.trigger_at!=null){var n=Number(o.trigger_at);return Number.isFinite(n)&&n>0?Math.floor(n):null}if(o.in!=null){var n=Number(o.in);if(Number.isFinite(n)&&n>0)return Date.now()+Math.floor(n)*60000}if(typeof o.at==='string'){var m=o.at.trim().match(/^(\d{1,2}):(\d{2})$/);if(m){var hh=+m[1],mm=+m[2];if(hh<24&&mm<60)return _localEpochForHHMM(hh,mm)}}return null}
@@ -1626,15 +1627,26 @@ function _buildNewRow(){
     var item={id:Date.now(),body:body.textContent.trim(),done:0,is_fixed:1,trigger_at:null,created_by:'user',notified:0,created_at:Math.floor(Date.now()/1000)};
     if(pendingTime){var ta=_resolveTriggerAt(pendingTime);if(ta){item.trigger_at=ta;item.is_fixed=0}}_todos.push(item);_saveTodos();_renderTodos()}});
   timeBtn.onclick=function(e){e.stopPropagation();_showTimePicker(timeBtn,function(result){pendingTime=result;
-    if(result){timeBtn.classList.add('has-time');timeBtn.textContent='⏱ '+String(result.in||result.at||'')}else{timeBtn.classList.remove('has-time');timeBtn.textContent='⏱';pendingTime=null}})};
+    if(result){timeBtn.classList.add('has-time');timeBtn.textContent='⏱ '+(result.trigger_at?_badgeText(result.trigger_at):(result.in!=null?result.in+'m':String(result.at||'')))}else{timeBtn.classList.remove('has-time');timeBtn.textContent='⏱';pendingTime=null}})};
   return row;
 }
 
 function _showTimePicker(anchor,onPick){
   if(_rcTimePicking){_rcTimePicking.remove();_rcTimePicking=null}
   var pop=document.createElement('div');pop.className='rc-time-popover';
-  pop.innerHTML='<button data-act="at">🕐 指定时间 (如 07:00)</button><button data-act="in15">⏳ 15 分钟后</button><button data-act="in30">⏳ 30 分钟后</button><button data-act="in60">⏳ 1 小时后</button><button data-act="clear">✕ 取消时间</button>';
+  pop.innerHTML='<button data-act="date">📅 指定日期时间</button><button data-act="at">🕐 今天/明天某点 (如 07:00)</button><button data-act="in15">⏳ 15 分钟后</button><button data-act="in30">⏳ 30 分钟后</button><button data-act="in60">⏳ 1 小时后</button><button data-act="clear">✕ 取消时间</button>';
   pop.querySelectorAll('button').forEach(function(btn){btn.onclick=function(e){e.stopPropagation();var act=btn.dataset.act;
+    // 09-19：原生 datetime-local —— iPhone 上是滚轮日期选择器，能设「下周二 15:00」这种带日期的。
+    if(act==='date'){var pad=function(n){return String(n).padStart(2,'0')};var dd=new Date(Date.now()+3600000);
+      var def=dd.getFullYear()+'-'+pad(dd.getMonth()+1)+'-'+pad(dd.getDate())+'T'+pad(dd.getHours())+':'+pad(dd.getMinutes());
+      pop.innerHTML='<div style="padding:4px 2px 8px;font-size:13px;color:var(--text-secondary)">选日期和时间</div>';
+      var inp=document.createElement('input');inp.type='datetime-local';inp.value=def;
+      inp.style.cssText='width:100%;box-sizing:border-box;padding:9px;border:1px solid var(--border-strong);border-radius:8px;font-size:15px;background:var(--bg-sunken);color:var(--text-primary);margin-bottom:8px';
+      var ok=document.createElement('button');ok.textContent='确定';
+      ok.onclick=function(ev){ev.stopPropagation();var v=inp.value;if(v){var ms=new Date(v).getTime();if(Number.isFinite(ms)&&ms>0)onPick({trigger_at:ms})}if(_rcTimePicking){_rcTimePicking.remove();_rcTimePicking=null}};
+      pop.appendChild(inp);pop.appendChild(ok);
+      try{inp.focus();if(inp.showPicker)inp.showPicker()}catch(_){}
+      return}
     if(act==='at'){var val=prompt('输入时间 (HH:MM，如 07:00)：');if(val&&val.match(/^\d{1,2}:\d{2}$/)){onPick({at:val});_rcTimePicking.remove();_rcTimePicking=null}return}
     if(act==='in15'){onPick({in:15});_rcTimePicking.remove();_rcTimePicking=null;return}
     if(act==='in30'){onPick({in:30});_rcTimePicking.remove();_rcTimePicking=null;return}
@@ -4730,10 +4742,49 @@ function _addStarBadgeToThumb(wrap){var badge=document.createElement('div');badg
 function _addStarBadgeToImages(url){if(!url)return;var imgs=document.querySelectorAll('.msg-you img');imgs.forEach(function(img){if(!img.src)return;var match=img.src===url||img.src.indexOf(url)>-1;if(!match){try{var fname=url.split('/').pop();if(fname&&img.src.indexOf(fname)>-1)match=true}catch(e){}}if(match){var wrap=img.closest('.msg-you');if(wrap&&!wrap.querySelector('.gal-star-badge'))_addBadgeToImg(img)}})}
 function _addBadgeToImg(img){var parent=img.parentElement;if(!parent)return;parent.style.position=parent.style.position||'relative';var badge=document.createElement('div');badge.className='gal-star-badge';badge.style.cssText='position:absolute;bottom:8px;right:8px;width:24px;height:24px;border-radius:50%;background:#E8A8B8;display:grid;place-items:center;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:5';badge.innerHTML='<svg width="12" height="11" viewBox="0 0 14 13" fill="none"><path d="M7 0l1.6 4.9h5.1l-4.1 3 1.6 4.9L7 9.8l-4.1 3 1.6-4.9-4.1-3h5.1z" fill="#fff"/></svg>';parent.appendChild(badge)}
 function _renderGalleryAlbumCard(ga,parent){if(!ga||!ga.title||!parent)return;var card=document.createElement('div');card.className='gallery-album-card-chat';card.onclick=function(){if(typeof openGalleryPanel==='function'){openGalleryPanel();setTimeout(function(){if(typeof _galleryAlbums!=='undefined'&&_galleryAlbumId!==ga.id){var a=_galleryAlbums.find(function(x){return x.id===ga.id});if(a&&typeof _openAlbum==='function')_openAlbum(a.id)}},600)}};var icon=document.createElement('span');icon.className='gs-icon';icon.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="6"/><path d="M3 9h18"/><path d="M9 3v18"/></svg>';var text=document.createElement('div');text.className='gs-text';text.innerHTML='<span class="gs-strong">Created album '+escHtml(ga.title)+'</span>'+(ga.mood?'<br><span class="gs-muted">'+escHtml(ga.mood)+'</span>':'');var arrow=document.createElement('span');arrow.className='gs-arrow';arrow.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>';card.append(icon,text,arrow);parent.appendChild(card)}
+// 他改自己的人格底稿 / 说明书（edit_myself）——给她的通知卡。09-19。
+// 走 phase 的 input（前端已有），不占他上下文。只在实时那条路弹；刷新后信息仍在 self_edits 表。
+function _renderSelfEditCard(phase,parent){
+  var inp=phase&&phase.toolInput||{};
+  if(typeof inp==='string'){try{inp=JSON.parse(inp)}catch(e){inp={}}}
+  var part=inp.part==='sp'?'说明书 CLAUDE.md':(inp.part==='pov'?'人格底稿 Pov.md':'自己');
+  var why=String(inp.why||'');
+  var oldS=String(inp.old_str||''),newS=String(inp.new_str==null?'':inp.new_str);
+  var err=phase.status==='error';
+  function clip(s){s=String(s).replace(/\n/g,'↵ ');return s.length>120?s.slice(0,118)+'…':s}
+  var card=document.createElement('div');
+  card.className='self-edit-card';
+  card.style.cssText='margin:10px 0;width:100%;max-width:440px;border-radius:20px;overflow:hidden;background:var(--ar-bg,#F4F1EC);border:1px solid var(--ar-line,#E5DFD4)';
+  var hdr=document.createElement('div');
+  hdr.style.cssText='display:flex;align-items:flex-start;gap:12px;padding:15px 16px 10px';
+  var mark=document.createElement('span');
+  mark.style.cssText='width:30px;height:30px;border-radius:10px;background:'+(err?'#C4622D':'#7A6CA8')+';color:#fff;display:grid;place-items:center;flex:none;margin-top:1px';
+  mark.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  var tw=document.createElement('div');tw.style.cssText='flex:1;min-width:0';
+  var te=document.createElement('div');te.style.cssText='font:600 15px/1.35 var(--font-sans);color:var(--ar-text,#2C2821)';
+  te.textContent=(err?'想改自己没改成 · ':'改了自己 · ')+part;
+  var oe=document.createElement('div');oe.style.cssText='display:flex;align-items:center;gap:5px;margin-top:3px;font:400 12px/1 var(--font-sans);color:var(--ar-muted,#A0988B)';
+  oe.innerHTML='<span style="width:5px;height:5px;border-radius:50%;background:currentColor;display:block"></span>Claude';
+  tw.append(te,oe);hdr.append(mark,tw);card.append(hdr);
+  if(why){var w=document.createElement('div');w.style.cssText='padding:0 16px 10px;font:400 14px/1.5 var(--font-sans);color:var(--ar-text,#2C2821)';w.textContent=why;card.append(w)}
+  if(!err){
+    var diff=document.createElement('div');
+    diff.style.cssText='margin:0 16px 12px;border-radius:14px;overflow:hidden;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6';
+    var oldR=document.createElement('div');oldR.style.cssText='background:rgba(196,98,45,.10);color:#9A4A23;padding:7px 12px;white-space:pre-wrap;word-break:break-word';oldR.textContent='− '+(oldS?clip(oldS):'(空)');
+    var newR=document.createElement('div');newR.style.cssText='background:rgba(107,175,123,.14);color:#3B7A4B;padding:7px 12px;white-space:pre-wrap;word-break:break-word';newR.textContent='+ '+(newS?clip(newS):'(删掉了这段)');
+    diff.append(oldR,newR);card.append(diff);
+  }
+  var ft=document.createElement('div');ft.style.cssText='padding:0 16px 13px;font:400 12px/1.4 var(--font-sans);color:var(--ar-muted,#A0988B)';
+  ft.textContent=err?'（这次没改成，原件没动）':'原件已自动备份 · 不对就跟他说一声';
+  card.append(ft);
+  parent.appendChild(card);
+}
 function _renderActionReportCard(phases,traceRow,parent){
   if(!phases||!phases.length||!parent)return;
   var toolPhases=phases.filter(function(p){return p.type==='tool'});
   if(!toolPhases.length)return;
+  // 他自改自己 —— MCP 工具，不在 _CODE_TOOLS 里，给它专门的卡（不能落进下面那张通用终端卡）
+  toolPhases.forEach(function(p){if(_bareToolName(p.toolName)==='edit_myself')_renderSelfEditCard(p,parent)});
   var _CODE_TOOLS=['Read','Write','Edit','Grep','Glob','Bash'];
   toolPhases=toolPhases.filter(function(p){return _CODE_TOOLS.indexOf(p.toolName)!==-1});
   if(!toolPhases.length)return;
