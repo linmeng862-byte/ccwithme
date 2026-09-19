@@ -61,6 +61,10 @@ function openMomentsPanel() {
   try { closeDrawer(); } catch (e) {}
   var p = document.getElementById('momentsPanel');
   if (!p) return;
+  // 进朋友圈就算「白点看过了」——抬白点水位、灭掉入口那颗。
+  // ⚠️ 顶上那条胶囊是另一个水位 moments_seen_at，要她点了才灭，别在这动它。
+  try { localStorage.setItem('moments_dot_seen_at', String(Math.floor(Date.now() / 1000))); } catch (e) {}
+  _moSetEntryDot(false);
   p.classList.add('show');
   p.setAttribute('aria-hidden', 'false');
   _moRenderWall();
@@ -130,6 +134,37 @@ function _moRenderUnread() {
     _moRenderUnread();
   };
   bar.classList.add('show');
+}
+
+// ====== 入口白点（不进朋友圈也能知道他赞了/评论了）======
+// 跟顶上那条胶囊分开算：胶囊用 moments_seen_at（她点了才灭），
+// 白点用 moments_dot_seen_at（她一进朋友圈就灭）。只数**他**对**她的帖子**的动作。
+function _moUnreadCount(seenKey) {
+  var seen = parseInt(_moLS(seenKey), 10) || 0;
+  var n = 0;
+  _moData.forEach(function (m) {
+    if (m.author !== 'zhou') return;
+    (m.likes_at || []).forEach(function (l) { if (l.author === 'cis' && l.at > seen) n++; });
+    (m.comments || []).forEach(function (c) { if (c.author === 'cis' && c.created_at > seen) n++; });
+  });
+  return n;
+}
+function _moSetEntryDot(on) {
+  var btn = document.querySelector('.home-nav-item[data-page="moments"]');
+  if (!btn) return;
+  var dot = btn.querySelector('.mo-nav-dot');
+  if (on && !dot) { dot = document.createElement('span'); dot.className = 'mo-nav-dot'; btn.appendChild(dot); }
+  else if (!on && dot) { dot.remove(); }
+}
+// 打开抽屉 / 页面加载时拉一次，算出入口该不该亮。数据顺手存进 _moData（面板打开时复用）。
+async function _moRefreshEntryDot() {
+  try {
+    var r = await api('/api/moments?limit=60');
+    if (!r.ok) return;
+    var d = await r.json();
+    _moData = d.moments || [];
+    _moSetEntryDot(_moUnreadCount('moments_dot_seen_at') > 0);
+  } catch (e) {}
 }
 
 function _moRender() {
