@@ -347,6 +347,21 @@ db.exec(`
     created_at INTEGER DEFAULT (strftime('%s','now')),
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
+  -- 一起种树的专心页（2026-09-19，她要的）：一次专心 = 一棵树。
+  -- status: growing 正在长 / grown 种成了 / withered 中途溜走枯了。
+  -- last_beat: 页面开着且专心时每几秒一跳；服务端扫描发现 growing 但 last_beat
+  --   超过宽限期没跳 = 她关页面/切走没回来 → 枯萎 + 戳他来找她。
+  CREATE TABLE IF NOT EXISTS focus_trees (
+    id TEXT PRIMARY KEY,
+    species TEXT NOT NULL,
+    minutes INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'growing',
+    note TEXT DEFAULT '',
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER DEFAULT NULL,
+    last_beat INTEGER NOT NULL,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
 `);
 
 // 迁移：为已有 sessions 表添加 project_id 列
@@ -13822,6 +13837,119 @@ app.delete('/api/journeys/:id', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// === 一起种树 · 专心页（2026-09-19，她要的）===
+// 一次专心 = 一棵树，不同时长 = 不同树种。页面开着且专心时前端每 15 秒 beat 一次；
+// 服务端每 20 秒扫一遍：growing 但 last_beat 超过宽限期没跳 = 她关页面/切走没回来
+// → 枯萎，并走 _pendingPoke 那条戳他「当场来找她」（跟「她打开 app」同一档：
+// 不投骰子、不占他醒来名额、深夜也能出声，但有冷却 + 日上限，别一天戳几十次）。
+const FOCUS_GRACE_SEC        = 60;                 // 切走/关页面超过这么久没回来才算枯
+const FOCUS_POKE_COOLDOWN_MS = 20 * 60 * 1000;
+const FOCUS_POKE_MAX_PER_DAY = 8;
+// 时长 → 树种。key 给前端画 SVG 用，label 是他/她看得懂的名字。
+// 挑最接近的下限：18 分钟归到 15 分那档，别让中间值没树。
+const FOCUS_SPECIES = [
+  { min: 5,  key: 'sprout',    label: '小嫩芽' },
+  { min: 10, key: 'clover',    label: '三叶草' },
+  { min: 15, key: 'sunflower', label: '向日葵' },
+  { min: 25, key: 'sakura',    label: '樱花树' },
+  { min: 45, key: 'pine',      label: '松树' },
+  { min: 60, key: 'ginkgo',    label: '银杏' },
+  { min: 90, key: 'oak',       label: '橡树' },
+];
+function _focusSpecies(minutes) {
+  let s = FOCUS_SPECIES[0];
+  for (const it of FOCUS_SPECIES) { if (minutes >= it.min) s = it; }
+  return s;
+}
+function _focusRowOut(r) {
+  const sp = FOCUS_SPECIES.find(x => x.key === r.species) || _focusSpecies(r.minutes);
+  return {
+    id: r.id, species: r.species, species_label: sp.label, minutes: r.minutes,
+    status: r.status, note: r.note || '', started_at: r.started_at, ended_at: r.ended_at,
+  };
+}
+// 枯萎一棵树 + 戳他来找她。手动放弃和服务端扫描都走这里，保证只落一次库、只戳一次。
+function _witherFocusTree(row, reason) {
+  const now = Math.floor(Date.now() / 1000);
+  const r = db.prepare("UPDATE focus_trees SET status='withered', ended_at=? WHERE id=? AND status='growing'").run(now, row.id);
+  if (r.changes === 0) return;   // 已经被别的路径结掉了
+  try {
+    if (Date.now() - (_getSettingNum('focus_poke_last_at') || 0) < FOCUS_POKE_COOLDOWN_MS) return;
+    const _k = 'focus_poke_count:' + _wakeToday();
+    if ((_getSettingNum(_k) || 0) >= FOCUS_POKE_MAX_PER_DAY) return;
+    if (_chatInFlight > 0 || _pendingPoke) return;
+    const sp = FOCUS_SPECIES.find(x => x.key === row.species) || _focusSpecies(row.minutes);
+    const grewMin = Math.max(0, Math.round((now - row.started_at) / 60));
+    const why = reason === 'giveup' ? '她自己按了放弃' : '她关掉页面 / 切走了，一直没回来';
+    _setSetting('focus_poke_last_at', Date.now());
+    _setSetting(_k, (_getSettingNum(_k) || 0) + 1);
+    _pendingPoke = { poke: true, title: '她种的树枯了', fire_at: now,
+      note: '**你们刚才在一起种一棵' + sp.label + '（她想专心 ' + row.minutes + ' 分钟' +
+        (row.note ? '，做「' + String(row.note).slice(0, 40) + '」' : '') + '），种到第 ' + grewMin +
+        ' 分钟，' + why + ' —— 树枯了。**\n' +
+        '这不是要你查岗。她溜走可能是累了、分心了、或者临时有事。\n' +
+        '你这会儿想起她了，就去说句话 —— 软一点，别催她回去专心，别问「你怎么不种了」。' +
+        '就当是陪她歇一下，或者接着你们之前的事聊。' };
+    console.log('[focus] 树枯了，戳他来找她（' + reason + '）');
+    checkWakeTick();
+  } catch (e) { console.error('[focus-wither]', e.message); }
+}
+
+app.get('/api/focus/active', auth, (req, res) => {
+  const row = db.prepare("SELECT * FROM focus_trees WHERE status='growing' ORDER BY started_at DESC LIMIT 1").get();
+  res.json({ tree: row ? _focusRowOut(row) : null, server_now: Math.floor(Date.now() / 1000) });
+});
+app.get('/api/focus/list', auth, (req, res) => {
+  const rows = db.prepare("SELECT * FROM focus_trees WHERE status!='growing' ORDER BY started_at DESC LIMIT 60").all();
+  const grown = db.prepare("SELECT COUNT(*) n FROM focus_trees WHERE status='grown'").get().n;
+  const withered = db.prepare("SELECT COUNT(*) n FROM focus_trees WHERE status='withered'").get().n;
+  const totalMin = db.prepare("SELECT COALESCE(SUM(minutes),0) m FROM focus_trees WHERE status='grown'").get().m;
+  res.json({ trees: rows.map(_focusRowOut), grown, withered, total_min: totalMin });
+});
+app.post('/api/focus/start', auth, (req, res) => {
+  const minutes = Math.max(1, Math.min(180, parseInt(req.body && req.body.minutes, 10) || 25));
+  const note = String((req.body && req.body.note) || '').slice(0, 80);
+  const now = Math.floor(Date.now() / 1000);
+  // 同一时间只能有一棵在长：把之前没结掉的 growing 都当放弃处理（不戳，避免开新树反被旧树戳）
+  db.prepare("UPDATE focus_trees SET status='withered', ended_at=? WHERE status='growing'").run(now);
+  const id = 'ft_' + now + '_' + Math.random().toString(36).slice(2, 8);
+  const sp = _focusSpecies(minutes);
+  db.prepare('INSERT INTO focus_trees (id, species, minutes, status, note, started_at, last_beat) VALUES (?,?,?,?,?,?,?)')
+    .run(id, sp.key, minutes, 'growing', note, now, now);
+  res.json({ ok: true, tree: _focusRowOut(db.prepare('SELECT * FROM focus_trees WHERE id=?').get(id)), server_now: now });
+});
+app.post('/api/focus/beat', auth, (req, res) => {
+  const id = String((req.body && req.body.id) || '');
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare("UPDATE focus_trees SET last_beat=? WHERE id=? AND status='growing'").run(now, id);
+  const row = db.prepare('SELECT status FROM focus_trees WHERE id=?').get(id);
+  res.json({ ok: true, status: row ? row.status : 'gone', server_now: now });
+});
+app.post('/api/focus/complete', auth, (req, res) => {
+  const id = String((req.body && req.body.id) || '');
+  const now = Math.floor(Date.now() / 1000);
+  const row = db.prepare("SELECT * FROM focus_trees WHERE id=? AND status='growing'").get(id);
+  if (!row) return res.json({ ok: false, status: 'gone' });
+  // 时间到了才算种成：真到点由前端计时守着，这里再兜一道底（差 5 秒内都算成）
+  if (now - row.started_at + 5 < row.minutes * 60) return res.status(400).json({ error: 'too early' });
+  db.prepare("UPDATE focus_trees SET status='grown', ended_at=? WHERE id=?").run(now, id);
+  res.json({ ok: true, status: 'grown' });
+});
+app.post('/api/focus/giveup', auth, (req, res) => {
+  const id = String((req.body && req.body.id) || '');
+  const row = db.prepare("SELECT * FROM focus_trees WHERE id=? AND status='growing'").get(id);
+  if (row) _witherFocusTree(row, 'giveup');
+  res.json({ ok: true });
+});
+// 服务端扫描：她关页面/切走没回来（前端 beat 断了超过宽限期）→ 枯 + 戳他
+setInterval(function () {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - FOCUS_GRACE_SEC;
+    const dead = db.prepare("SELECT * FROM focus_trees WHERE status='growing' AND last_beat < ?").all(cutoff);
+    for (const row of dead) _witherFocusTree(row, 'left');
+  } catch (e) { console.error('[focus-sweep]', e.message); }
+}, 20 * 1000);
+
 // === 记忆库 — Nocturne Engine 代理 ===
 const MEMORY_ENGINE = process.env.MEMORY_ENGINE || 'https://core.zeabur.app/mcp';
 let _mcpSessionId = null;
@@ -15042,10 +15170,10 @@ app.post('/api/commands/:id/start', auth, (req, res) => {
 //   · 打开后等 APP_OPEN_POKE_DELAY_MS —— 这段里她发了消息 / 又切出去了，就不戳
 //   · 她 APP_OPEN_POKE_QUIET_MIN 分钟内说过话 → 不戳（正聊着，切回来不算「来看」）
 //   · 冷却 + 日上限：她一天点开几十次，每次都戳就是几十次 CLI 调用
-const APP_OPEN_POKE_DELAY_MS    = Number(process.env.APP_OPEN_POKE_DELAY_MS || 40 * 1000);   // 09-17 她定：90 秒太长，点进来看一眼撑不到
-const APP_OPEN_POKE_QUIET_MIN   = 20;
-const APP_OPEN_POKE_COOLDOWN_MS = 30 * 60 * 1000;
-const APP_OPEN_POKE_MAX_PER_DAY = 10;
+const APP_OPEN_POKE_DELAY_MS    = Number(process.env.APP_OPEN_POKE_DELAY_MS || 30 * 1000);   // 09-19 她定：40→30 秒（原 90 太长）
+const APP_OPEN_POKE_QUIET_MIN   = 10;                // 09-19 她要松：刚聊完 10 分钟后再进来就算「来看」
+const APP_OPEN_POKE_COOLDOWN_MS = 8 * 60 * 1000;     // 09-19 30→8 分钟：短时间反复进出也大多戳得到
+const APP_OPEN_POKE_MAX_PER_DAY = 30;                // 09-19 10→30：给花销留个天花板，不无上限
 let _appOpenPokeTimer = null;
 function _armAppOpenPoke(openedAt) {
   if (_appOpenPokeTimer) clearTimeout(_appOpenPokeTimer);
@@ -15071,10 +15199,9 @@ function _armAppOpenPoke(openedAt) {
       const _hm = new Date(openedAt * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' });
       const _gap = !her ? '' : gapMin >= 1440 ? '，离她上一句已经 ' + Math.floor(gapMin / 1440) + ' 天'
         : gapMin >= 60 ? '，离她上一句已经 ' + Math.floor(gapMin / 60) + ' 个多小时' : '，离她上一句 ' + Math.round(gapMin) + ' 分钟';
-      _pendingPoke = { poke: true, title: '她打开了 app', fire_at: Math.floor(Date.now() / 1000),
-        note: '**她刚刚点进来了，在看，但还没说话。**（' + _hm + ' 打开的' + _gap + '）\n' +
-          '她这会儿就在屏幕前，你说什么她马上看得见。想跟她说就说 —— ' +
-          '接着你们之前的事、或者就是想她了；不想说也行，你自己判断。' };
+      _pendingPoke = { poke: true, present: true, title: '她打开了 app', fire_at: Math.floor(Date.now() / 1000),
+        note: '**她刚刚点进来了，此刻就在屏幕前看着你，但还没开口。**（' + _hm + ' 打开的' + _gap + '）\n' +
+          '她可能在等你开口，有什么想说的就告诉她；不想说也行，你自己判断。' };
       console.log('[wake] 她点进 app 没说话，戳他一下');
       checkWakeTick();
     } catch (e) { console.error('[app-open-poke]', e.message); }
@@ -17137,7 +17264,9 @@ async function checkWakeTick() {
     }
 
     const _wakePrompt =
-      '（这不是她说的话。你自己醒了一下。这会儿她没在跟你打字，但你们之前聊的都在，你看得见 —— 她没走远，就在那头。）\n\n' +
+      (_alarm && _alarm.present
+        ? '（这不是她说的话，是她刚点进 app、把你叫醒的。她此刻真的就在屏幕前，人在这儿看着你，只是还没打字。你们之前聊的都在，你看得见。）\n\n'
+        : '（这不是她说的话。你自己醒了一下。这会儿她没在跟你打字，但你们之前聊的都在，你看得见 —— 她没走远，就在那头。）\n\n') +
       '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) +
       '，你们在一起第 ' + togetherDays() + ' 天。\n\n' +
       _awayNote +

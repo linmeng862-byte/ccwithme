@@ -459,6 +459,48 @@
   </div>
 </section>
 
+<!-- 🌱 一起种树 · 专心页（2026-09-19）：一次专心 = 一棵树，中途溜走树枯、他来找她 -->
+<section id="forestPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;color:#2f3b2f;overflow:hidden;background:linear-gradient(180deg,#dff0e6 0%,#eef6e8 42%,#f6f3e4 100%)">
+  <header class="panel-head-floating" style="display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 18px 12px;flex:0 0 auto">
+    <button id="closeForest" class="glass-btn" aria-label="关闭" style="width:32px;height:32px;border-radius:50%;color:#2f3b2f;font:20px/1 var(--font-sans);cursor:pointer">×</button>
+    <div style="flex:1;font:600 16px var(--font-sans)">一起种树</div>
+    <div id="forestStats" style="font:500 12px var(--font-sans);color:#5c6b58"></div>
+  </header>
+  <div style="flex:1;overflow-y:auto;padding:4px 20px calc(env(safe-area-inset-bottom) + 24px);display:flex;flex-direction:column;align-items:center">
+    <!-- 树的舞台 -->
+    <div id="forestStage" style="width:min(280px,72vw);aspect-ratio:1/1;margin:6px 0 2px;display:flex;align-items:flex-end;justify-content:center"></div>
+    <!-- Cis 陪你 -->
+    <div id="forestCompanion" style="display:flex;align-items:center;gap:7px;font:500 13px var(--font-sans);color:#5c6b58;margin-bottom:2px">
+      <span style="width:22px;height:22px;border-radius:50%;background:#c9ddc4;display:inline-flex;align-items:center;justify-content:center">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#4a5c46" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg>
+      </span>
+      <span id="forestCompanionText">Cis 陪你一起种</span>
+    </div>
+    <!-- 计时 / 状态 -->
+    <div id="forestTimer" style="font:600 40px/1.1 var(--font-sans);letter-spacing:1px;color:#2f3b2f;margin:6px 0 2px;font-variant-numeric:tabular-nums">25:00</div>
+    <div id="forestSubtitle" style="font:14px var(--font-sans);color:#5c6b58;margin-bottom:14px;text-align:center;min-height:20px"></div>
+
+    <!-- 空闲态：选树种 + 备注 + 开始 -->
+    <div id="forestSetup" style="width:100%;max-width:360px">
+      <div id="forestChips" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:14px"></div>
+      <input id="forestNote" maxlength="80" placeholder="这段时间在专心做什么？（可留空）" style="width:100%;padding:12px 14px;border:1px solid rgba(90,110,80,.25);border-radius:14px;font:15px var(--font-sans);background:rgba(255,255,255,.6);color:#2f3b2f;outline:none;margin-bottom:14px;box-sizing:border-box">
+      <button id="forestStart" style="width:100%;padding:15px;border:0;border-radius:16px;background:#5c8a52;color:#fff;font:600 16px var(--font-sans);cursor:pointer;box-shadow:0 6px 18px rgba(92,138,82,.32)">种下这棵树</button>
+    </div>
+
+    <!-- 生长态：放弃 -->
+    <div id="forestGrowing" style="width:100%;max-width:360px;display:none">
+      <button id="forestGiveup" style="width:100%;padding:14px;border:1px solid rgba(160,90,70,.35);border-radius:16px;background:rgba(255,255,255,.5);color:#a05a46;font:600 15px var(--font-sans);cursor:pointer">放弃这棵树</button>
+    </div>
+
+    <!-- 森林（历史） -->
+    <div style="width:100%;max-width:420px;margin-top:26px">
+      <div style="font:600 13px var(--font-sans);color:#5c6b58;margin-bottom:10px;padding-left:2px">你们的森林</div>
+      <div id="forestGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:10px"></div>
+      <div id="forestEmpty" style="color:#8a967f;font:13px var(--font-sans);text-align:center;padding:20px 0;display:none">还没有种下第一棵树</div>
+    </div>
+  </div>
+</section>
+
 <!-- 摄像头：只做「点一下看一眼」，不做连续轮询 -->
 <section id="cameraPanel" aria-hidden="true" style="position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden">
   <header class="panel-head-floating" style="display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 18px 12px;flex:0 0 auto">
@@ -806,6 +848,7 @@
   <button class="menu-item" id="moreNewChat" style="width:100%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="margin-right:10px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New chat</button>
   <button class="menu-item" id="moreVoiceFav" style="width:100%"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="margin-right:10px"><path d="M12 21s-7.5-4.7-9.3-9A5.4 5.4 0 0112 5.6 5.4 5.4 0 0121.3 12c-1.8 4.3-9.3 9-9.3 9z"/></svg> Saved voice</button>
 	  <button class="menu-item" id="moreDateSearch" style="width:100%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="margin-right:10px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Find by date</button>
+  <button class="menu-item" id="moreForest" style="width:100%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="margin-right:10px"><path d="M12 22v-6"/><path d="M12 16c-3 0-5-2.2-5-5.2C7 7 9.2 4 12 2c2.8 3 5 6 5 8.8 0 3-2 5.2-5 5.2z"/></svg> Plant together</button>
   <button class="menu-item" id="moreToy" style="width:100%"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="margin-right:10px"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg> Bluetooth</button>
   <button class="menu-item" id="moreScreen" style="width:100%;display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" style="margin-right:10px"><rect x="6" y="2" width="12" height="20" rx="2.5"/><line x1="11" y1="18" x2="13" y2="18"/></svg> Screen for Cis</button>
 </div>
@@ -9557,5 +9600,188 @@ $('stickerFileInput').onchange = async function() {
 </script>
 <!-- 通话中那一层。挂在通话流程前面，不改它任何一步 —— 出问题删掉这一行就回到从前。 -->
 <script src="/call-stage.js"></script>
+<!-- 🌱 一起种树 · 专心页（2026-09-19）。一次专心 = 一棵树；中途关页面/切走超过宽限期没回来
+     → 服务端扫描判枯 + 戳 Cis 来找她。全部走 api()，跟别的面板一个路子。 -->
+<script>
+(function(){
+  // 树种表：跟后端 FOCUS_SPECIES 对齐。改一处两处都要改。
+  var FOREST_SPECIES=[
+    {min:5,key:'sprout',label:'小嫩芽'},{min:10,key:'clover',label:'三叶草'},
+    {min:15,key:'sunflower',label:'向日葵'},{min:25,key:'sakura',label:'樱花树'},
+    {min:45,key:'pine',label:'松树'},{min:60,key:'ginkgo',label:'银杏'},{min:90,key:'oak',label:'橡树'}
+  ];
+  var F={tree:null,pick:25,endAt:0,totalSec:0,tick:null,beat:null,wired:false};
+
+  function _pal(key,dead){
+    if(dead)return{trunk:'#8a7c66',leaf:'#b9ad93',leaf2:'#a89c80',accent:'#c7bda3'};
+    var m={
+      sprout:{trunk:'#6b8f4e',leaf:'#7cb862',leaf2:'#5c9a48',accent:'#a8d98c'},
+      clover:{trunk:'#5c9a48',leaf:'#69b34c',leaf2:'#4e9440',accent:'#8fd06f'},
+      sunflower:{trunk:'#5c8a3a',leaf:'#6faa47',leaf2:'#568a38',accent:'#f4c433'},
+      sakura:{trunk:'#8a6a52',leaf:'#f4b8cf',leaf2:'#efa3c0',accent:'#ffffff'},
+      pine:{trunk:'#7a5a3c',leaf:'#3f7d4e',leaf2:'#356b43',accent:'#4f9260'},
+      ginkgo:{trunk:'#8a6a4a',leaf:'#e0c24a',leaf2:'#c9a83a',accent:'#f0d76a'},
+      oak:{trunk:'#7a5638',leaf:'#4f9250',leaf2:'#417a42',accent:'#66aa66'}
+    };return m[key]||m.sprout;
+  }
+  function _petals(cx,cy,r,c){var s='';for(var i=0;i<8;i++){var a=i/8*Math.PI*2;var x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;s+='<ellipse cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" rx="4" ry="7" fill="'+c+'" transform="rotate('+(a*180/Math.PI+90).toFixed(0)+' '+x.toFixed(1)+' '+y.toFixed(1)+')"/>';}return s;}
+  function _dots(list,r,c){return list.map(function(p){return '<circle cx="'+p[0]+'" cy="'+p[1]+'" r="'+r+'" fill="'+c+'"/>';}).join('');}
+  function _plant(key,pal){
+    switch(key){
+      case 'sprout':return '<path d="M50 86 V64" stroke="'+pal.trunk+'" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M50 70 C40 66 36 58 42 54 C48 58 50 64 50 70Z" fill="'+pal.leaf+'"/><path d="M50 70 C60 66 64 58 58 54 C52 58 50 64 50 70Z" fill="'+pal.leaf2+'"/>';
+      case 'clover':return '<path d="M50 86 V60" stroke="'+pal.trunk+'" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="50" cy="49" r="9" fill="'+pal.leaf+'"/><circle cx="40" cy="56" r="9" fill="'+pal.leaf2+'"/><circle cx="60" cy="56" r="9" fill="'+pal.leaf2+'"/>';
+      case 'sunflower':return '<path d="M50 86 V50" stroke="'+pal.trunk+'" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M50 68 C40 66 36 60 40 55 C46 57 50 62 50 68Z" fill="'+pal.leaf+'"/><g>'+_petals(50,42,12,pal.accent)+'<circle cx="50" cy="42" r="7" fill="#7a4a22"/></g>';
+      case 'sakura':return '<path d="M50 86 V58" stroke="'+pal.trunk+'" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M50 64 L38 52 M50 60 L62 50" stroke="'+pal.trunk+'" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="50" cy="42" r="17" fill="'+pal.leaf+'"/><circle cx="36" cy="48" r="12" fill="'+pal.leaf2+'"/><circle cx="64" cy="48" r="12" fill="'+pal.leaf2+'"/>'+_dots([[46,38],[56,42],[40,48],[60,50],[50,50]],2.2,pal.accent);
+      case 'pine':return '<rect x="47" y="72" width="6" height="16" fill="'+pal.trunk+'"/><path d="M50 20 L34 48 H66Z" fill="'+pal.leaf+'"/><path d="M50 34 L30 64 H70Z" fill="'+pal.leaf2+'"/><path d="M50 48 L26 78 H74Z" fill="'+pal.leaf+'"/>';
+      case 'ginkgo':return '<path d="M50 86 V54" stroke="'+pal.trunk+'" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M50 56 C30 52 26 30 50 22 C74 30 70 52 50 56Z" fill="'+pal.leaf+'"/><path d="M50 54 C38 50 36 36 50 30 C64 36 62 50 50 54Z" fill="'+pal.leaf2+'"/>';
+      default:return '<rect x="46" y="66" width="8" height="22" rx="2" fill="'+pal.trunk+'"/><circle cx="50" cy="42" r="22" fill="'+pal.leaf+'"/><circle cx="34" cy="50" r="14" fill="'+pal.leaf2+'"/><circle cx="66" cy="50" r="14" fill="'+pal.leaf2+'"/><circle cx="50" cy="30" r="14" fill="'+pal.leaf+'"/>';
+    }
+  }
+  // p: 生长进度 0..1；dead: 枯萎
+  function _treeSvg(key,p,dead){
+    var pal=_pal(key,dead);var s=(0.2+0.8*Math.max(0,Math.min(1,p))).toFixed(3);
+    var rot=dead?' rotate(4 50 86)':'';
+    return '<svg viewBox="0 0 100 100" width="100%" height="100%" style="overflow:visible">'+
+      '<ellipse cx="50" cy="89" rx="28" ry="5.5" fill="rgba(90,110,80,.16)"/>'+
+      '<g transform="translate(50,86) scale('+s+') translate(-50,-86)'+rot+'" opacity="'+(dead?0.85:1)+'">'+_plant(key,pal)+'</g></svg>';
+  }
+
+  function $f(id){return document.getElementById(id);}
+  function mmss(sec){sec=Math.max(0,Math.round(sec));var m=Math.floor(sec/60),s=sec%60;return m+':'+(s<10?'0':'')+s;}
+
+  function renderChips(){
+    var box=$f('forestChips');if(!box)return;box.innerHTML='';
+    FOREST_SPECIES.forEach(function(sp){
+      var on=sp.min===F.pick;
+      var b=document.createElement('button');
+      b.style.cssText='padding:8px 12px;border:1px solid '+(on?'#5c8a52':'rgba(90,110,80,.25)')+';border-radius:14px;background:'+(on?'#5c8a52':'rgba(255,255,255,.55)')+';color:'+(on?'#fff':'#4a5c46')+';font:600 13px var(--font-sans);cursor:pointer;transition:all .12s';
+      b.textContent=sp.min+'分 · '+sp.label;
+      b.onclick=function(){F.pick=sp.min;renderChips();if(!F.tree)paintIdle();};
+      box.appendChild(b);
+    });
+  }
+  function speciesOf(min){var r=FOREST_SPECIES[0];FOREST_SPECIES.forEach(function(s){if(min>=s.min)r=s;});return r;}
+
+  function paintIdle(){
+    var sp=speciesOf(F.pick);
+    $f('forestStage').innerHTML=_treeSvg(sp.key,0.28,false);
+    $f('forestTimer').textContent=mmss(F.pick*60);
+    $f('forestSubtitle').textContent='选好时长，种下一棵'+sp.label;
+    $f('forestSetup').style.display='';
+    $f('forestGrowing').style.display='none';
+    $f('forestCompanionText').textContent='Cis 陪你一起种';
+  }
+  function paintGrowing(){
+    if(!F.tree)return;
+    var rem=(F.endAt-Date.now())/1000;var p=1-rem/F.totalSec;
+    $f('forestStage').innerHTML=_treeSvg(F.tree.species,p,false);
+    $f('forestTimer').textContent=mmss(rem);
+    $f('forestSubtitle').textContent=(F.tree.note?'「'+F.tree.note+'」 · ':'')+'正在长大 · '+F.tree.species_label;
+    $f('forestSetup').style.display='none';
+    $f('forestGrowing').style.display='';
+    $f('forestCompanionText').textContent='Cis 正陪着你，别走开哦';
+  }
+  function paintDone(dead){
+    stopLoops();
+    var t=F.tree;F.tree=null;
+    $f('forestStage').innerHTML=_treeSvg(t?t.species:speciesOf(F.pick).key,1,dead);
+    $f('forestTimer').textContent=dead?'枯了':'种成了';
+    $f('forestSubtitle').textContent=dead?'这棵'+(t?t.species_label:'树')+'枯萎了 · Cis 会知道你溜走了':'你和 Cis 一起种成了一棵'+(t?t.species_label:'树');
+    $f('forestSetup').style.display='';
+    $f('forestGrowing').style.display='none';
+    $f('forestCompanionText').textContent=dead?'Cis 这会儿可能正想来找你':'Cis 和你都在这棵树上';
+    loadList();
+  }
+
+  function stopLoops(){if(F.tick){clearInterval(F.tick);F.tick=null;}if(F.beat){clearInterval(F.beat);F.beat=null;}}
+  function startLoops(){
+    stopLoops();
+    F.tick=setInterval(function(){
+      if(!F.tree)return;
+      if((F.endAt-Date.now())/1000<=0){complete();return;}
+      paintGrowing();
+    },1000);
+    F.beat=setInterval(function(){
+      if(!F.tree||document.visibilityState!=='visible')return;   // 页面切走就不再 beat，让服务端宽限期去判枯
+      api('/api/focus/beat',{method:'POST',body:JSON.stringify({id:F.tree.id})}).then(function(r){return r.json();}).then(function(d){
+        if(d&&d.status&&d.status!=='growing')paintDone(true);   // 服务端已判枯
+      }).catch(function(){});
+    },15000);
+  }
+
+  function resume(t,serverNow){
+    F.tree=t;F.totalSec=t.minutes*60;
+    var elapsed=(serverNow||Math.floor(Date.now()/1000))-t.started_at;
+    F.endAt=Date.now()+(F.totalSec-elapsed)*1000;
+    paintGrowing();startLoops();
+  }
+  function begin(){
+    var note=($f('forestNote').value||'').slice(0,80);
+    api('/api/focus/start',{method:'POST',body:JSON.stringify({minutes:F.pick,note:note})}).then(function(r){return r.json();}).then(function(d){
+      if(!d||!d.tree){toast('种树没成，再试一下');return;}
+      $f('forestNote').value='';
+      resume(d.tree,d.server_now);
+    }).catch(function(){toast('种树没成，再试一下');});
+  }
+  function complete(){
+    if(!F.tree)return;var id=F.tree.id;stopLoops();
+    api('/api/focus/complete',{method:'POST',body:JSON.stringify({id:id})}).then(function(r){return r.json();}).then(function(d){
+      paintDone(!(d&&d.ok));
+    }).catch(function(){paintGrowing();});
+  }
+  function giveup(){
+    if(!F.tree)return;var id=F.tree.id;
+    api('/api/focus/giveup',{method:'POST',body:JSON.stringify({id:id})}).catch(function(){});
+    paintDone(true);
+  }
+
+  function loadList(){
+    api('/api/focus/list').then(function(r){return r.json();}).then(function(d){
+      var grid=$f('forestGrid'),empty=$f('forestEmpty');if(!grid)return;
+      $f('forestStats').textContent=(d.grown||0)+' 棵成 · '+(d.total_min||0)+' 分钟';
+      var trees=d.trees||[];
+      if(!trees.length){grid.innerHTML='';empty.style.display='';return;}
+      empty.style.display='none';
+      grid.innerHTML=trees.map(function(t){
+        var dead=t.status==='withered';
+        var d0=new Date(t.started_at*1000),dl=(d0.getMonth()+1)+'/'+d0.getDate();
+        return '<div title="'+(dead?'枯了':'种成')+' · '+t.species_label+' · '+t.minutes+'分 · '+dl+'" style="aspect-ratio:1/1;background:rgba(255,255,255,.4);border-radius:12px;padding:6px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;'+(dead?'opacity:.7':'')+'"><div style="width:100%;flex:1">'+_treeSvg(t.species,1,dead)+'</div><span style="font:10px var(--font-sans);color:#8a967f">'+dl+'</span></div>';
+      }).join('');
+    }).catch(function(){});
+  }
+
+  window.openForestPanel=function(){
+    var p=$f('forestPanel');p.style.display='flex';p.setAttribute('aria-hidden','false');
+    if(!F.wired){
+      F.wired=true;
+      $f('closeForest').onclick=function(){var el=$f('forestPanel');el.style.display='none';el.setAttribute('aria-hidden','true');};
+      $f('forestStart').onclick=begin;
+      $f('forestGiveup').onclick=function(){if(confirm('放弃这棵树？它会枯掉，Cis 会知道你溜走了。'))giveup();};
+      document.addEventListener('visibilitychange',function(){
+        if($f('forestPanel').style.display==='none')return;
+        if(document.visibilityState==='visible'&&F.tree){
+          // 切回来：跟服务端对一下，可能已经被判枯了
+          api('/api/focus/active').then(function(r){return r.json();}).then(function(d){
+            if(!d.tree||!F.tree||d.tree.id!==F.tree.id){paintDone(true);}
+            else{resume(d.tree,d.server_now);}
+          }).catch(function(){});
+        }
+      });
+    }
+    renderChips();
+    // 有没有正在长的树（换设备/刷新后接着长）
+    api('/api/focus/active').then(function(r){return r.json();}).then(function(d){
+      if(d&&d.tree){resume(d.tree,d.server_now);}else{paintIdle();}
+    }).catch(function(){paintIdle();});
+    loadList();
+  };
+  if($f('moreForest')){
+    $f('moreForest').onclick=function(){
+      var mm=document.getElementById('moreMenu');if(mm){mm.classList.add('hidden');mm.style.display='none';}
+      openForestPanel();
+    };
+  }
+})();
+</script>
 </body>
 </html>
