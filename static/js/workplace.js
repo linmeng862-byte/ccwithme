@@ -376,7 +376,25 @@
     wsInBox.append(wsIn);
     var wsEnter = h('button', 'flex:none;padding:9px 13px;border:1px solid var(--wt-shell-line);border-radius:10px;' +
       'background:var(--wt-shell-key);color:var(--wt-shell-txt);font:12px ' + MONO + ';cursor:pointer', 'Enter');
-    wsInputRow.append(wsInBox, wsEnter);
+    // 传图（09-19）：终端页也能发图/文件，不用退回对话页。复用主线 /api/upload，
+    //   真实路径经 /api/room/attach 送进房间输入行（不敲 Enter），她补一句再回车。
+    var wsPicker = document.createElement('input');
+    wsPicker.type = 'file'; wsPicker.multiple = true; wsPicker.style.display = 'none';
+    var wsClip = h('button', 'flex:none;padding:9px 11px;border:1px solid var(--wt-shell-line);border-radius:10px;' +
+      'background:var(--wt-shell-key);color:var(--wt-shell-txt);font:12px ' + MONO + ';cursor:pointer',
+      (typeof icon === 'function' ? '' : '+'));
+    if (typeof icon === 'function') wsClip.innerHTML = icon('paperclip');
+    wsClip.title = '发图 / 文件给房间里的他（他会 Read）';
+    wsClip.setAttribute('aria-label', '发文件');
+    wsClip.addEventListener('pointerdown', function (e) { e.preventDefault(); });
+    wsClip.onclick = function () { wsPicker.click(); };
+    wsPicker.onchange = function () {
+      var fl = Array.prototype.slice.call(wsPicker.files || []);
+      wsPicker.value = '';
+      if (fl.length) wsSendImages(fl);
+    };
+    wsInputRow.append(wsClip, wsInBox, wsEnter);
+    wsDock.append(wsPicker);
 
     var wsHist = [], wsHistI = 0;
 
@@ -455,6 +473,17 @@
     wsEnter.addEventListener('pointerdown', function (e) { e.preventDefault(); });
     wsEnter.onclick = wsSendClick;
     wsIn.addEventListener('input', function () {});
+    // 粘贴图片（截图直接 Ctrl/⌘V）也走传图。
+    wsIn.addEventListener('paste', function (e) {
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      var imgs = [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file' && /^image\//.test(items[i].type)) {
+          var f = items[i].getAsFile(); if (f) imgs.push(f);
+        }
+      }
+      if (imgs.length) { e.preventDefault(); wsSendImages(imgs); }
+    });
     wsIn.onkeydown = function (e) {
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); wsSend(); }
       else if (e.key === 'ArrowUp' && wsHistI > 0) { e.preventDefault(); wsIn.value = wsHist[--wsHistI] || ''; }
@@ -949,7 +978,15 @@
       wsWelcomeGone();
       roomEnsureScreen();
       if (roomTerm) roomTerm.write('正在起房间…（第一次要十几秒）');
-      roomApi('open', { model: wpModel, cols: roomCols(), rows: roomRows() }).then(function () {
+      // 09-19：默认「每次打开开新的」（像 SSH 敲 `claude`）。房间还活着 = 接着那段没断的
+      //   继续（切个 tab 回来别打断）；房间是死的（闲置收了 / 从没起过）= 先 reset 忘掉钉死的
+      //   会话 id，再开 = 全新一段。想回溯上次直接去 SSH `--resume` 那个 id，前端不做接回按钮（她定的）。
+      var roomBoot = roomApi('status').then(function (st) {
+        var open = function () { return roomApi('open', { model: wpModel, cols: roomCols(), rows: roomRows() }); };
+        if (st && st.alive) return open();       // 活着=接着用
+        return roomApi('reset').then(open, open); // 死了=开新的（reset 失败也照样开，别卡住）
+      });
+      roomBoot.then(function () {
         // 告诉房间里的 CLI 她这会儿是浅色还是深色 —— 它据此决定正文发什么色。
         // 不告诉的话它默认按深色终端发浅灰字，白天就是白底白字。
         // ⚠️ 一个房间只发一次。原来每次进页面都发，她屏幕上叠了三条
@@ -999,6 +1036,52 @@
       roomApi('send', { text: text || '', keys: keys || [] })
         .then(function () { setTimeout(roomPoll, 250); setTimeout(roomPoll, 900); })
         .catch(function () {});
+    }
+
+    // 传图进房间：压缩 → /api/upload 拿 id → /api/room/attach 把真实路径送进输入行。
+    // 房间没起就先起（第一次十几秒，上传本身也要点时间，正好等它）。函数声明会被提升，
+    // 上面那颗按钮/粘贴引用它没问题。
+    function wsSendImages(files) {
+      files = (files || []).filter(Boolean);
+      if (!files.length) return;
+      var restore = wsClip.innerHTML;
+      wsClip.innerHTML = '…'; wsClip.disabled = true;
+      var prep = roomOn ? Promise.resolve()
+        : roomApi('open', { model: wpModel, cols: roomCols(), rows: roomRows() })
+            .then(function () { if (!roomOn) roomStart(); });
+      Promise.all(files.map(function (f) {
+        if (!/^image\//.test(f.type) || typeof _shrinkImage !== 'function') return Promise.resolve(f);
+        return _shrinkImage(f).catch(function () { return f; });
+      })).then(function (ready) {
+        var BATCH = 10, batches = [], ids = [];
+        for (var i = 0; i < ready.length; i += BATCH) batches.push(ready.slice(i, i + BATCH));
+        return batches.reduce(function (chain, group) {
+          return chain.then(function () {
+            var fd = new FormData();
+            group.forEach(function (f) { fd.append('files', f); });
+            return fetch('/api/upload', { method: 'POST', headers: authHeaders(), body: fd })
+              .then(function (r) {
+                if (!r.ok) return r.json().catch(function () { return {}; })
+                  .then(function (j) { throw new Error(j.detail || ('上传失败 ' + r.status)); });
+                return r.json();
+              })
+              .then(function (j) { (j.attachments || []).forEach(function (a) { ids.push(a.path); }); });
+          });
+        }, Promise.resolve()).then(function () { return ids; });
+      }).then(function (ids) {
+        if (!ids.length) throw new Error('没有文件传上去');
+        return prep.then(function () { return roomApi('attach', { upload_ids: ids }); });
+      }).then(function (d) {
+        if (d && d.error) throw new Error(d.error);
+        roomPinned = false; roomFast();
+        toast((d && d.sent ? d.sent : 0) + ' 个文件已递进去，补一句话再回车');
+        setTimeout(roomPoll, 300); setTimeout(roomPoll, 900);
+        if (wsIn && wsIn.focus) wsIn.focus();
+      }).catch(function (e) {
+        toast((e && e.message) || '传图失败');
+      }).then(function () {
+        wsClip.innerHTML = restore; wsClip.disabled = false;
+      });
     }
 
     // ── 开屏的欢迎框（她 09-16 指定：「登陆会有 clawd 的那个小像素」）────────

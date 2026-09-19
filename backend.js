@@ -11545,6 +11545,44 @@ app.post('/api/room/kill', auth, async (req, res) => {
   try { res.json(await roomProxy('/kill', { method: 'POST' })); }
   catch (e) { res.json({ error: e.message }); }
 });
+// 忘掉钉死的会话 id + 关房间 —— 下次开就是全新一段（= 她 SSH 敲 `claude`）。
+// 09-19：默认改成「每次打开开新的」，前端开房间前先 reset；想接回上次用带 session_id 的 open。
+app.post('/api/room/reset', auth, async (req, res) => {
+  try { res.json(await roomProxy('/reset', { method: 'POST' })); }
+  catch (e) { res.json({ error: e.message }); }
+});
+
+// 传图进终端房间（09-19）：她上传的文件（走主线 /api/upload）经这里把**真实路径**
+// 送进房间输入行、**不敲 Enter** —— 她补一句话再回车。路径解析只在后端做（跟牢笼一致，
+// 房间里的 claude 只有 data/uploads 的只读口子）。校验照 wpAttachmentContext：realpath 必须
+// 落在 uploadDir 内，防越界 id / 软链穿墙。
+app.post('/api/room/attach', auth, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body && req.body.upload_ids) ? req.body.upload_ids : [];
+    const clean = ids.map(String).filter(Boolean).slice(0, 30);
+    if (!clean.length) return res.json({ error: '没有文件' });
+    const realUploadDir = fs.realpathSync(uploadDir);
+    const paths = [], names = [];
+    for (const id of clean) {
+      const u = db.prepare('SELECT id, filename, path FROM uploads WHERE id = ?').get(id);
+      if (!u || !fs.existsSync(u.path)) continue;
+      let real;
+      try { real = fs.realpathSync(u.path); } catch { continue; }
+      if (path.relative(realUploadDir, real).startsWith('..')) {
+        console.warn('[room] 附件越界，已跳过:', id);
+        continue;
+      }
+      paths.push(real); names.push(u.filename || '文件');
+    }
+    if (!paths.length) return res.json({ error: '文件找不到了' });
+    const text = (paths.length === 1 ? '请 Read 看这个文件 ' : '请 Read 看这些文件 ') + paths.join(' ') + ' ';
+    const r = await roomProxy('/send', { method: 'POST', body: JSON.stringify({ text, keys: [] }) });
+    if (r && r.error) return res.json({ error: r.error });
+    res.json({ sent: paths.length, names });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
 
 // === 他给她的文件（出口目录）=================================================
 // 09-16 她说「你要是要给我传文件可以在工作台对话页面发给我」。
