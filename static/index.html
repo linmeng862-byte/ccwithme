@@ -1549,9 +1549,54 @@ function _todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMon
 //   后端 _receiptDailyClear 零点按同一条规矩清一次，两边要一致（sync 是整张覆盖）。
 // 09-19 A：她基本没有每日循环任务，去掉「固定项勾掉后重置回未勾」那条——
 //   勾了就算完，别半夜复活。没勾的照旧一直留着。后端 _receiptDailyClear 同步去掉。
-function _dailyReset(){var today=_todayStr();if(_todosLastDate===today)return;
+// 09-20：加了返回值 —— 真清掉了东西才 true，上面那个零点定时器靠它决定要不要重画。
+// ⚠️ 过滤条件里的 `trigger_at >= start`（start = 今天 00:00）就是「带日期的将来任务别被刷掉」那一条：
+//    设在 9/25 的任务，每天零点比的都是当天 00:00，它一直大于，所以一路活到那天为止。
+//    昨天到期没做的才会被清 —— 这是她要的「第二天恢复原状」。
+function _dailyReset(){var today=_todayStr();if(_todosLastDate===today)return false;
   var d0=new Date();d0.setHours(0,0,0,0);var start=d0.getTime();
-  _todos=_todos.filter(function(t){return t.is_fixed||(t.trigger_at&&t.trigger_at>=start)});_todosLastDate=today;_saveTodos()}
+  var before=_todos.length;
+  // ⚠️ 第三个条件（created_at 是今天的就留）是 09-20 补的保险，别删。
+  //    同一天改默认值之前，她写的条目都是 is_fixed:1，所以永远躲得过这个过滤；
+  //    默认改成 0 之后就躲不过了 —— 而 _todosLastDate 存在 localStorage 里，
+  //    换设备 / 清缓存 / 隐私窗口一打开它就是空的，跟今天对不上 → 这个函数当场开清，
+  //    把她**今天刚写的**一并清掉。日期守卫只防重复跑，防不住「没有昨天的记录」。
+  //    加这条之后：不管守卫是否失效，今天写的一律留着，最多只清掉昨天及以前的。
+  //    （created_at 单位是秒，trigger_at 是毫秒，别混。）
+  _todos=_todos.filter(function(t){
+    return t.is_fixed
+        || (t.trigger_at && t.trigger_at>=start)
+        || (t.created_at && t.created_at*1000>=start);
+  });_todosLastDate=today;_saveTodos();
+  return _todos.length!==before}
+
+// ── 零点准时刷新（2026-09-20 她要的）────────────────────────────────────
+// 在这之前 _dailyReset 只在「她打开小票」或 _checkAlarms 跑到时才被调用 ——
+// 所以不是零点刷新，是「零点之后她下次碰到才刷」。挂一个真定时器。
+// ⚠️ 不用 setInterval(24h)：手机休眠 / 切后台会漂，而且夏令时或改系统时间就全错。
+//    每次都重新算「到下一个本地 00:00 还有多少毫秒」，睡醒再算一遍。
+// ⚠️ setTimeout 在后台标签页里不保证准时（浏览器会节流），所以再挂一道
+//    visibilitychange/focus 兜底 —— _dailyReset 自己按日期去重，多调几次没有副作用。
+var _midnightTimer=null;
+function _scheduleMidnightReset(){
+  if(_midnightTimer){clearTimeout(_midnightTimer);_midnightTimer=null}
+  var n=new Date(),nx=new Date(n);
+  nx.setHours(24,0,1,0);                      // 下一个 00:00:01，给它一秒余量别卡在边界上
+  var ms=nx.getTime()-n.getTime();
+  if(ms<1000)ms=1000;
+  if(ms>2147483647)ms=2147483647;             // setTimeout 上限，超了就先睡到上限再重排
+  _midnightTimer=setTimeout(function(){
+    try{ if(_dailyReset()&&typeof _renderTodos==='function')_renderTodos(); }catch(e){}
+    _scheduleMidnightReset();
+  },ms);
+}
+function _midnightCatchUp(){                  // 从后台回来 / 手机睡醒，补一次
+  try{ if(_dailyReset()&&typeof _renderTodos==='function')_renderTodos(); }catch(e){}
+  _scheduleMidnightReset();
+}
+document.addEventListener('visibilitychange',function(){if(!document.hidden)_midnightCatchUp()});
+window.addEventListener('focus',_midnightCatchUp);
+_scheduleMidnightReset();
 function _localEpochForHHMM(hh,mm){var d=new Date();d.setHours(hh,mm,0,0);if(d.getTime()<=Date.now())d.setDate(d.getDate()+1);return d.getTime()}
 function _resolveTriggerAt(o){if(o.trigger_at!=null){var n=Number(o.trigger_at);return Number.isFinite(n)&&n>0?Math.floor(n):null}if(o.in!=null){var n=Number(o.in);if(Number.isFinite(n)&&n>0)return Date.now()+Math.floor(n)*60000}if(typeof o.at==='string'){var m=o.at.trim().match(/^(\d{1,2}):(\d{2})$/);if(m){var hh=+m[1],mm=+m[2];if(hh<24&&mm<60)return _localEpochForHHMM(hh,mm)}}return null}
 function _badgeText(ts){var d=new Date(ts),n=new Date();var hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0');return d.toDateString()===n.toDateString()?hh+':'+mm:String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+hh+':'+mm}

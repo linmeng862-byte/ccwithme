@@ -16786,7 +16786,14 @@ function _receiptDailyClear() {
     // 第一次跑（刚上线）只记日期不清：不然今天她刚写的会被当成昨天的删掉
     if (!lastDay) { _setSetting('receipt_cleared_day', today); return; }
     const start = new Date(); start.setHours(0, 0, 0, 0);
-    const r = db.prepare('DELETE FROM checklist WHERE is_fixed = 0 AND (trigger_at IS NULL OR trigger_at < ?)').run(start.getTime());
+    // 09-20：加 created_at 那一条，跟前端 _dailyReset 的过滤条件对齐（sync 是整张覆盖，
+    //   两边规矩不一致就会互相盖）。同一天把她那边的默认值从 is_fixed:1 改成了 0，
+    //   不加这条的话「今天刚写、还没设时间」的条目会被这儿删掉。
+    //   created_at 是秒，trigger_at 是毫秒，别混。
+    const r = db.prepare(
+      'DELETE FROM checklist WHERE is_fixed = 0 AND (trigger_at IS NULL OR trigger_at < ?) '
+      + 'AND (created_at IS NULL OR created_at < ?)'
+    ).run(start.getTime(), Math.floor(start.getTime() / 1000));
     // 09-19 A：不再把固定项勾掉的重置回未勾（她基本没有每日循环任务，勾了就算完）。前端 _dailyReset 同步去掉。
     _setSetting('receipt_cleared_day', today);
     if (r.changes) console.log('[receipt] 一日一清：清掉 ' + r.changes + ' 条');
