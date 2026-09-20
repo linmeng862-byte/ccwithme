@@ -19,6 +19,24 @@ var css = `
   padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
   animation:csIn .28s ease}
 html[data-theme="dark"] .call-stage{background:linear-gradient(180deg,#24221E 0%,#1B1917 100%)}
+/* 09-20 自定义壁纸时通话界面也走玻璃（她要的）。它 position:fixed 盖在聊天上，
+   底色半透 + backdrop-filter，后面铺着壁纸的 #chat 就磨砂透上来。
+   门跟 home.css 末尾那批一致：wall-on 且不是主题背景（主题背景她要求不玻璃）。
+   ⚠️ 这段必须写在 call-stage.js 里 —— 这套样式是运行时注入的 <style>，
+      在 home.css 之后，同特异度下 home.css 压不住它。 */
+html.wall-on:not(.wall-theme):not(.ui-plain) .call-stage{
+  background:linear-gradient(180deg,rgba(255,255,255,.44) 0%,rgba(255,255,255,.36) 100%);
+  backdrop-filter:blur(34px) saturate(1.2);-webkit-backdrop-filter:blur(34px) saturate(1.2)}
+html.wall-on:not(.wall-theme):not(.ui-plain) .cs-ctrl button{
+  background:rgba(255,255,255,.5);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) .call-stage{
+  background:linear-gradient(180deg,rgba(28,25,22,.56) 0%,rgba(20,18,16,.6) 100%)}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) .cs-ctrl button{background:rgba(255,255,255,.12)}
+@media (prefers-color-scheme:dark){
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) .call-stage{
+    background:linear-gradient(180deg,rgba(28,25,22,.56) 0%,rgba(20,18,16,.6) 100%)}
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) .cs-ctrl button{background:rgba(255,255,255,.12)}
+}
 .call-stage.out{animation:csOut .25s ease forwards}
 @keyframes csIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes csOut{to{opacity:0;transform:translateY(14px)}}

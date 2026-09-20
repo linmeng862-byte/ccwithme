@@ -319,3 +319,7 @@ html[data-theme="dark"] {
   --mo-her: #D99BAF;
   --mo-him: #8FB3CE;
 }
+
+/* 09-20 评论里的「回复」两个字：夹在两个名字中间，压得比名字淡一档，
+   免得一条评论里出现两块一样重的彩色粗体。 */
+.mo-cmt .mo-reply-to { color: var(--mo-ink); opacity: .65; font-weight: 400; }

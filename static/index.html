@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=1789743575">
+<link rel="stylesheet" href="/css/home.css?v=20260920d">
 <!-- 站酷快乐体：只用于自定义壁纸下的聊天气泡（见 home.css）。若她网络到不了 Google Fonts 会静默回退系统字体。 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,8 +39,8 @@
 <!-- 叠卡（微信式多图合并）：第三方组件 PhotoStack，非商用许可，见 vendor-licenses/ -->
 <link rel="stylesheet" href="/css/photo-stack.css?v=1">
 <script src="/js/photo-stack.js?v=1"></script>
-<link rel="stylesheet" href="/css/moments.css?v=1789785858">
-<script src="/js/moments.js?v=1789785858"></script>
+<link rel="stylesheet" href="/css/moments.css?v=20260920a">
+<script src="/js/moments.js?v=20260920a"></script>
 <script src="/js/books.js?v=1789209745"></script>
 <script src="/js/diary.js?v=1789209747"></script>
 <script src="/js/calendar.js?v=1789209745"></script>
@@ -50,7 +50,7 @@
 <script src="/js/cinema.js?v=19"></script>
 <script src="/js/mcp.js?v=1"></script>
 <script src="/js/journey.js?v=1"></script>
-<script src="/js/persona-pending.js?v=1" defer></script><script src="/js/workplace.js?v=71"></script>
+<script src="/js/persona-pending.js?v=1" defer></script><script src="/js/workplace.js?v=73"></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -1454,6 +1454,18 @@ function _renderVoiceFavs(){
 var _todos=JSON.parse(localStorage.getItem('chat_todos')||'[]');
 // 迁移旧格式：{id,text,done} → {id,body,done,is_fixed,trigger_at,created_by}
 if(_todos.length&&_todos[0].text!==undefined){_todos=_todos.map(function(t){return {id:t.id,body:t.text,done:t.done?1:0,is_fixed:1,trigger_at:null,created_by:'user',notified:0}})}
+// 09-20 一次性迁移：把她以前写的条目从「固定项」解钉。
+// 旧默认值是 is_fixed:1，所以她随手写的待办全被钉成了零点不清的那一档
+// （她当场的症状：勾选过后小票整体上移，第二天还是那样，不恢复原状）。
+// ⚠️ 只动 created_by==='user' 且没有 trigger_at 的；他下发的 task 本来就是 0，不碰。
+// ⚠️ 打个标记只跑一次 —— 不然她哪天真想钉一条，下次开页又被解掉。
+try{
+  if(!localStorage.getItem('chat_todos_unpin_v1')){
+    _todos.forEach(function(t){ if(t.is_fixed&&t.created_by!=='assistant'&&!t.trigger_at) t.is_fixed=0; });
+    localStorage.setItem('chat_todos_unpin_v1','1');
+    try{localStorage.setItem('chat_todos',JSON.stringify(_todos))}catch(_){}
+  }
+}catch(e){}
 var _todosLastDate=localStorage.getItem('chat_todos_date')||'';
 // 09-10：他下发的 task 在小票上的 id **从命令 id 推出来**，不再是 `Date.now()+Math.random()`。
 //   随机 id 是「显示两遍」的病根，而且比多一行更坏 —— 09-10 当场抓到的：
@@ -1654,6 +1666,15 @@ function _buildRow(it){
   var row=document.createElement('div');row.className='rc-item'+(it.done?' done':'');
   row.dataset.todoId=it.id;   // 08-27：点他设的 task 胶囊要能定位到这行闪一下
   var check=document.createElement('button');check.className='rc-check';check.onclick=function(){_toggleItem(it)};row.appendChild(check);
+  // 09-20 补：以前只有新建那一行有 ⏱，已经躺在清单上的条目**加不了时间**，
+  //   她写完敲回车就定死了。现在每行都有：没设过点一下设，设过了点一下改或清。
+  var tb=document.createElement('button');tb.className='rc-time-btn'+(it.trigger_at?' has-time':'');
+  tb.textContent='⏱';tb.title=it.trigger_at?'改时间 / 清掉':'设个日期时刻';
+  tb.onclick=function(e){e.stopPropagation();_showTimePicker(tb,function(result){
+    if(result){var ta=_resolveTriggerAt(result);if(ta){it.trigger_at=ta;it.notified=0}}
+    else{it.trigger_at=null;it.notified=0}
+    _saveTodos();_renderTodos();});};
+  row.appendChild(tb);
   if(it.trigger_at){var t=document.createElement('span');t.className='rc-trigger'+(it.trigger_at<=Date.now()&&!it.done?' overdue':'');t.textContent=_badgeText(it.trigger_at);row.appendChild(t)}
   var body=document.createElement('div');body.className='rc-body';body.textContent=it.body;row.appendChild(body);
   if(it.trigger_at&&it.trigger_at<=Date.now()&&!it.done){var bang=document.createElement('span');bang.className='rc-overdue-bang';bang.textContent='!';row.appendChild(bang)}
@@ -1667,8 +1688,11 @@ function _buildNewRow(){
   row.innerHTML='<button class="rc-check"></button><button class="rc-time-btn">⏱</button><div class="rc-body" contenteditable></div><button class="rc-del"></button>';
   var body=row.querySelector('.rc-body');var timeBtn=row.querySelector('.rc-time-btn');var pendingTime=null;
   body.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey&&body.textContent.trim()){e.preventDefault();
-    var item={id:Date.now(),body:body.textContent.trim(),done:0,is_fixed:1,trigger_at:null,created_by:'user',notified:0,created_at:Math.floor(Date.now()/1000)};
-    if(pendingTime){var ta=_resolveTriggerAt(pendingTime);if(ta){item.trigger_at=ta;item.is_fixed=0}}_todos.push(item);_saveTodos();_renderTodos()}});
+    // 09-20：默认从 is_fixed:1 改成 0。她说「我没有每天要重做的」——
+    //   固定项是零点不清的那一档，她随手写的今日待办不该进这一档。
+    //   改完：第二天零点自动清空，小票回到原状（这正是她要的「恢复原状」）。
+    var item={id:Date.now(),body:body.textContent.trim(),done:0,is_fixed:0,trigger_at:null,created_by:'user',notified:0,created_at:Math.floor(Date.now()/1000)};
+    if(pendingTime){var ta=_resolveTriggerAt(pendingTime);if(ta){item.trigger_at=ta}}_todos.push(item);_saveTodos();_renderTodos()}});
   timeBtn.onclick=function(e){e.stopPropagation();_showTimePicker(timeBtn,function(result){pendingTime=result;
     if(result){timeBtn.classList.add('has-time');timeBtn.textContent='⏱ '+(result.trigger_at?_badgeText(result.trigger_at):(result.in!=null?result.in+'m':String(result.at||'')))}else{timeBtn.classList.remove('has-time');timeBtn.textContent='⏱';pendingTime=null}})};
   return row;
@@ -1677,7 +1701,8 @@ function _buildNewRow(){
 function _showTimePicker(anchor,onPick){
   if(_rcTimePicking){_rcTimePicking.remove();_rcTimePicking=null}
   var pop=document.createElement('div');pop.className='rc-time-popover';
-  pop.innerHTML='<button data-act="date">📅 指定日期时间</button><button data-act="at">🕐 今天/明天某点 (如 07:00)</button><button data-act="in15">⏳ 15 分钟后</button><button data-act="in30">⏳ 30 分钟后</button><button data-act="in60">⏳ 1 小时后</button><button data-act="clear">✕ 取消时间</button>';
+  // 09-20：去掉这一屏 emoji（她 09-18 定的规矩：UI 不要 emoji）。
+  pop.innerHTML='<button data-act="date">指定日期和时刻</button><button data-act="at">今天/明天某点</button><button data-act="in15">15 分钟后</button><button data-act="in30">30 分钟后</button><button data-act="in60">1 小时后</button><button data-act="clear">取消时间</button>';
   pop.querySelectorAll('button').forEach(function(btn){btn.onclick=function(e){e.stopPropagation();var act=btn.dataset.act;
     // 09-19：原生 datetime-local —— iPhone 上是滚轮日期选择器，能设「下周二 15:00」这种带日期的。
     if(act==='date'){var pad=function(n){return String(n).padStart(2,'0')};var dd=new Date(Date.now()+3600000);
@@ -9599,7 +9624,7 @@ $('stickerFileInput').onchange = async function() {
 })();
 </script>
 <!-- 通话中那一层。挂在通话流程前面，不改它任何一步 —— 出问题删掉这一行就回到从前。 -->
-<script src="/call-stage.js"></script>
+<script src="/call-stage.js?v=20260920a"></script>
 <!-- 🌱 一起种树 · 专心页（2026-09-19）。一次专心 = 一棵树；中途关页面/切走超过宽限期没回来
      → 服务端扫描判枯 + 戳 Cis 来找她。全部走 api()，跟别的面板一个路子。 -->
 <script>

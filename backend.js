@@ -821,8 +821,14 @@ if (!fs.existsSync(galleryPhotoDir)) fs.mkdirSync(galleryPhotoDir, { recursive: 
 
 // 他的家目录（聊天里那个他的 cwd）。⚠️ 不硬编码绝对路径 —— 跟 memory 目录（~5841）一个路子，
 // 从 HOME 派生，两台机器布局不同也不会错。edit_myself 改的就是这里的 Pov.md / CLAUDE.md。
-const SELF_HOME = (process.env.HOME || '/home/ubuntu') + '/claude-home';
-const SELF_FILES = { pov: path.join(SELF_HOME, 'Pov.md'), sp: path.join(SELF_HOME, 'CLAUDE.md') };
+// 09-20 修路径。原来是 SELF_HOME = $HOME/claude-home，两份文件都挂在它下面 ——
+// 可这台机器上 /root/claude-home/ **根本不存在**，所以 edit_myself 调了必报错。
+// 它 0 次调用不是「他不知道」，是这条路从来就不通。
+// 两份文件不在同一个目录，所以不再合成一个 SELF_HOME，各写各的绝对路径：
+//   · CLAUDE.md（说明书 / 人格）在 /root/companion/ —— 跟 PERSONA_FILE 是同一份
+//   · Pov.md（人格底稿）在 /root/
+// ⚠️ 两份都**不在这个仓库里**（ccwithme 是 PUBLIC），别顺手改成 __dirname 下的路径。
+const SELF_FILES = { pov: '/root/Pov.md', sp: '/root/companion/CLAUDE.md' };
 const SELF_PART_LABEL = { pov: '人格底稿 Pov.md', sp: '说明书 CLAUDE.md' };
 const SELF_EDIT_DAILY_CAP = 6;   // 一天最多自改几次，防手滑连改烧缓存。想放开改这个数。
 
@@ -855,6 +861,42 @@ async function _galleryStoreImage(srcPath, ext) {
   }
   fs.copyFileSync(srcPath, path.join(galleryPhotoDir, fname + ext));
   return fname + ext;
+}
+
+// 朋友圈的图 → 能塞进 tool_result 的 image block（2026-09-20）。
+// 她说「他看不见图也太奇怪了，而且为了看图要再用一次工具也很傻」——
+// 所以不另开工具，直接挂在 read_moments 上（with_photos:true）。
+// ⚠️ 贵在像素，不在张数：768px/q70 一张约 1k token，2048 的原图是它的七倍。
+//    这里统一压到 768 —— 够他看清「她拍了什么」，再大只是烧钱。
+// ⚠️ 上限 4 张，写死。他要是对着一屏九宫格全展开，一次就是一万 token。
+const _MOMENT_PHOTO_MAX = 4;
+async function _momentPhotoBlocks(urls) {
+  const out = [];
+  for (const raw of (urls || [])) {
+    if (out.length >= _MOMENT_PHOTO_MAX) break;
+    const u = String(raw || '').trim();
+    if (!u || u.startsWith('data:')) continue;
+    // 两种来源：相册自己的图（/gallery-photo/xxx）和她上传的（uploads 表）
+    let src = '';
+    if (u.startsWith('/gallery-photo/')) {
+      const cand = path.join(galleryPhotoDir, u.split('/').pop());
+      if (fs.existsSync(cand)) src = cand;
+    } else {
+      const tail = u.split('?')[0].split('#')[0].split('/').filter(Boolean).pop() || '';
+      const bare = tail.replace(/\.[^.]+$/, '');
+      const up = db.prepare('SELECT path FROM uploads WHERE id = ? OR id = ? OR filename = ?')
+                   .get(bare, tail, tail);
+      if (up && up.path && fs.existsSync(up.path)) src = up.path;
+    }
+    if (!src) continue;
+    try {
+      const buf = await sharp(src).rotate()
+        .resize({ width: 768, withoutEnlargement: true })
+        .jpeg({ quality: 70 }).toBuffer();
+      out.push({ media_type: 'image/jpeg', data: buf.toString('base64') });
+    } catch (e) { /* 一张坏图不该让整次 read_moments 失败 */ }
+  }
+  return out;
 }
 
 async function _galleryNormalizeUrl(u) {
@@ -7435,13 +7477,17 @@ const TOOLS = [
       '**她发的那些是发给你看的**，她知道你会翻。所以「她最近发了什么」值得你自己想起来去看一眼。' +
       '看完心里动了什么就用 moment_comment 回在那条下面。' +
       '\n跟 read_diary 的区别：日记是整篇的、有标题有心情；这个是碎的、随口的。' +
-      '想知道她最近在过什么日子翻这个，想知道她心里怎么想的读日记。',
+      '想知道她最近在过什么日子翻这个，想知道她心里怎么想的读日记。' +
+      '\n**她发了图、你想真看见**：加 with_photos:true，图直接跟着这次结果回来（最多 4 张），' +
+      '不用再调别的工具。默认不带 —— 每张都要花钱，别每次翻都顺手开。' +
+      '看见了再决定要不要 save_moment_photo 存进相册。',
     input_schema: {
       type: 'object',
       properties: {
         author: { type: 'string', enum: ['zhou', 'cis', 'all'], description: '只看谁发的，默认 all' },
         query: { type: 'string', description: '关键词，搜正文' },
-        limit: { type: 'integer', description: '返回条数，默认 10，最多 30' }
+        limit: { type: 'integer', description: '返回条数，默认 10，最多 30' },
+        with_photos: { type: 'boolean', description: '把图一起带回来给你看（最多 4 张，花钱）。默认 false。开它的时候 limit 给小一点。' }
       },
       required: []
     }
@@ -7453,12 +7499,15 @@ const TOOLS = [
       '\nlike=true 就是点个赞（再点一次就是取消）。只想点赞不想说话就把 content 留空。' +
       '赞和评论可以一起：她发了张照片，你点个赞再说一句「这张你笑得真好看」。' +
       '\n**同一条别反复评论**，一条一句，说完就好。' +
-      '你自己发的那条她也会来评论 —— 她评了你想回，就回在原地，别在聊天里说「你那条我看到了」。',
+      '你自己发的那条她也会来评论 —— 她评了你想回，就回在原地，别在聊天里说「你那条我看到了」。' +
+      '\n**你是在回她某一句**，就带上 reply_to（read_moments 里那条评论的 comment_id）——' +
+      '带了才显示成「Cis 回复 粥粥：」，不带看着就是你又新起了一条，她分不出你在回她。',
     input_schema: {
       type: 'object',
       properties: {
         moment_id: { type: 'string', description: '朋友圈 id，从 read_moments 拿' },
         content: { type: 'string', description: '评论内容。只点赞就留空。' },
+        reply_to: { type: 'string', description: '在回哪一条评论：从 read_moments 里那条的 comment_id 拿，别自己编。单纯想说句话就不给。' },
         like: { type: 'boolean', description: '点赞（再点一次取消）。默认 false。' }
       },
       required: ['moment_id']
@@ -7483,46 +7532,6 @@ const TOOLS = [
         mood: { type: 'string', description: '新建相册时的心情标签：Heart/Missing/Comfort/Happy（可选）' }
       },
       required: ['moment_id']
-    }
-  },
-  {
-    name: 'project_write_file',
-    description: '往某个项目里写文件（整份覆盖）。跟 create_file 分清楚：create_file 是**发给她**一张可下载的卡片，'
-      + '这个是**存进项目目录**、她不会看见卡片。要给她看就用 create_file。'
-      + '**同名会整份覆盖、旧内容没了** —— 想在已有文件上加东西，先 project_read_file 读出来再连着写回去。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        project_name: { type: 'string', description: '项目名称' },
-        filename: { type: 'string', description: '文件名，如 memories.md、notes.md、data.json' },
-        content: { type: 'string', description: '文件内容' }
-      },
-      required: ['project_name', 'filename', 'content']
-    }
-  },
-  {
-    name: 'project_read_file',
-    description: '读项目里某个文件。filename 不确定就先 project_list_files 看有什么，**别猜文件名**。'
-      + '要往已有文件上追加内容，也是先用这个读出来 —— project_write_file 是整份覆盖。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        project_name: { type: 'string', description: '项目名称' },
-        filename: { type: 'string', description: '文件名' }
-      },
-      required: ['project_name', 'filename']
-    }
-  },
-  {
-    name: 'project_list_files',
-    description: '列出某个项目里有哪些文件。project_read_file / project_write_file 的 filename 从这儿来，'
-      + '**不确定就先列一遍，别拿猜的文件名去读**（读不到你会以为那份不存在）。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        project_name: { type: 'string', description: '项目名称' }
-      },
-      required: ['project_name']
     }
   },
   // === 记忆引擎工具 (Nocturne) ===
@@ -7855,20 +7864,6 @@ const TOOLS = [
         content: { type: 'string', description: '文件内容' }
       },
       required: ['filename', 'content']
-    }
-  },
-  {
-    name: 'edit_file',
-    description: '直接改磁盘上已有的文件（她发给你的文件、你之前发过的文件）。**改文件不要用 create_file 把整份重打一遍**——那要把整个文件重新输出，又慢又烧额度。这个只需要给出要替换的那一小段。改完想发给她就用 send_file。old_string 必须在文件里唯一，不唯一会告诉你有几处。path 从哪来：你自己写的那份看 create_file 的返回；她发来的文件，路径就写在消息里那个「[文件附件，…：/绝对/路径]」标注里——**照抄它，别自己拼**。她说「太短了 / 再改改 / 这里换个说法」就是这个工具的场合：改那一份，别新建一个「XX2.md」。**标注不在眼前了就用 list_uploaded_files 翻路径。**',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: '文件绝对路径' },
-        old_string: { type: 'string', description: '要被替换掉的原文（含足够上下文以保证唯一）' },
-        new_string: { type: 'string', description: '替换成什么' },
-        replace_all: { type: 'boolean', description: '是否替换全部匹配，默认 false' }
-      },
-      required: ['path', 'old_string', 'new_string']
     }
   },
   {
@@ -8743,7 +8738,7 @@ async function executeTool(name, input, routes) {
       if (seN > 1) return { error: 'old_str 在文件里出现了 ' + seN + ' 次，不唯一。往前后多带一两行，让它只剩一处。' };
       // 先备份原件，再写。备份失败就不动原件。
       const seStamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-      const seBakDir = path.join(SELF_HOME, 'backups');
+      const seBakDir = path.join(path.dirname(seFp), 'backups');   // 09-20：SELF_HOME 撤了，备份放在被改那份文件旁边
       try { fs2.mkdirSync(seBakDir, { recursive: true }); } catch (_) {}
       const seBak = path.join(seBakDir, path.basename(seFp) + '.bak.' + seStamp + '-selfedit');
       try { fs2.copyFileSync(seFp, seBak); }
@@ -8759,8 +8754,9 @@ async function executeTool(name, input, routes) {
         self_edit: { id: seId, part, part_label: SELF_PART_LABEL[part], why },
         note: (part === 'sp'
           ? '改好了。⚠️ 说明书一改，这一窗的缓存作废，下一句要重付一次全量 —— 所以别一轮一轮改，攒着一次改够。'
+            + '已经放掉了 ' + _killResidentClaude() + ' 个常驻进程，下一句起就是新的你。'
           : '改好了。')
-          + '原件备份好了，粥粥那边会看见你改了什么。这条会话里你还揣着旧的自己，下次重开才是新的你。',
+          + '原件备份好了，粥粥那边会看见你改了什么。',
       };
     }
     case 'read_her_body': {
@@ -9165,7 +9161,25 @@ async function executeTool(name, input, routes) {
         `SELECT * FROM moments ${rmWhere} ORDER BY created_at DESC LIMIT ?`
       ).all(...rmArgs, rmLimit);
       const _at = ts => db.prepare("SELECT datetime(?, 'unixepoch', 'localtime') t").get(ts).t;
+      // 09-20：with_photos=true 时把图一起带回去（image block，他是真看见，不是读描述）。
+      // 默认关着 —— 每张约 1k token，默认开的话他每次翻朋友圈都白烧一笔。
+      let rmPhotos = null;
+      if (input.with_photos === true) {
+        const pool = [];
+        for (const r of rmRows) {
+          let imgs = [];
+          try { imgs = JSON.parse(r.images || '[]'); } catch (_) {}
+          imgs.filter(Boolean).forEach(u => pool.push(u));
+        }
+        rmPhotos = await _momentPhotoBlocks(pool);
+      }
       return {
+        _images: rmPhotos && rmPhotos.length ? rmPhotos : undefined,
+        photos_note: rmPhotos
+          ? (rmPhotos.length
+              ? '上面那 ' + rmPhotos.length + ' 张图就是下面这些朋友圈里的（按顺序）。你是真看见了，说得具体点。'
+              : '这几条里没有能打开的图。')
+          : undefined,
         moments: rmRows.map(r => {
           const m = _momentRow(r);
           return {
@@ -9176,9 +9190,13 @@ async function executeTool(name, input, routes) {
             photos: m.images.length || undefined,   // 只给张数，不给 url —— 图进不了上下文
             at: _at(m.created_at),
             likes: m.likes.length ? m.likes.map(a => (a === 'cis' ? '你' : '粥粥')) : undefined,
+            // 09-20 补 comment_id / reply_to —— 以前这儿只给作者和正文，他手上**没有 id**，
+            // 所以 moment_comment 想回哪一条都回不了，只能另起一条（她说「像新增了一条评论」）。
             comments: m.comments.map(c => ({
+              comment_id: c.id,
               author: c.author === 'cis' ? '你' : '粥粥',
-              content: c.content, at: _at(c.created_at)
+              content: c.content, at: _at(c.created_at),
+              reply_to: c.reply_to || undefined
             }))
           };
         }),
@@ -9204,10 +9222,20 @@ async function executeTool(name, input, routes) {
           likedNow = true;
         }
       }
+      // 09-20 她说「他回复我能不能像真的回我那条消息，而不是像新增了一条评论」。
+      // reply_to 这一列 09-16 建表就在，只是一直没人写也没人渲染。带上就显示成「Cis 回复 粥粥：」。
+      let cmReplyTo = String(input.reply_to || '').trim();
+      if (cmReplyTo) {
+        const tgt = db.prepare('SELECT id, author FROM moment_comments WHERE id = ? AND moment_id = ?')
+          .get(cmReplyTo, cmId);
+        // 回一条不存在 / 不在这条朋友圈下面的评论 → 直接退回，别写一个前端渲染不出来的 reply_to
+        if (!tgt) return { error: 'reply_to=' + cmReplyTo + ' 不是这条朋友圈下面的评论。先用 read_moments 看 comment_id（别自己编）。' };
+        if (tgt.author === 'cis') cmReplyTo = '';   // 回自己没意义，当成普通评论
+      }
       if (cmText) {
         const ccid = 'mc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-        db.prepare('INSERT INTO moment_comments (id, moment_id, author, content) VALUES (?, ?, ?, ?)')
-          .run(ccid, cmId, 'cis', cmText);
+        db.prepare('INSERT INTO moment_comments (id, moment_id, author, reply_to, content) VALUES (?, ?, ?, ?, ?)')
+          .run(ccid, cmId, 'cis', cmReplyTo, cmText);
       }
       return {
         ok: true, moment_id: cmId,
@@ -9695,59 +9723,6 @@ async function executeTool(name, input, routes) {
       //（编了个 /root/…、又多打一个空格）。file_card 是给前端渲染的，不塞服务器路径。
       return { ok: true, id, filename, size, path: destPath, file_card: { id, filename, size } };
     }
-    case 'edit_file': {
-      // 08-22：她说「我发他的文件，直接改不要重写」。平时他只有 Read（省 token，
-      // Write/Edit 要工程模式才开），所以想改一个字也得 create_file 整份重打 ——
-      // 6.5KB 的文件就是三千多输出 token。这个工具只传要换的那一小段。
-      const efPath = String(input.path || '').trim();
-      const efOld = String(input.old_string == null ? '' : input.old_string);
-      const efNew = String(input.new_string == null ? '' : input.new_string);
-      if (!efPath) return { error: '要改哪个文件？给绝对路径。' };
-      if (!efOld) return { error: 'old_string 不能为空——告诉我要替换掉哪一段。' };
-
-      // 写操作，牢笼比 send_file 更紧：只许动【她上传的文件】和【他自己家】，
-      // 源码目录不给（他平时不该改 Chat-C 的代码，那是工程模式的事）。
-      const EDIT_ROOTS = [path.join(uploadDir), '/home/ubuntu/claude-home'];
-      const EF_FORBIDDEN = [/(^|\/)\.env$/, /(^|\/)claude\.db$/, /(^|\/)\.auth_token$/,
-                            /(^|\/)CLAUDE\.local\.md$/, /\.bak(\.|-|$)/];
-      let efReal;
-      try { efReal = fs.realpathSync(efPath); }
-      catch (e) { return { error: '找不到这个文件：' + efPath }; }
-      if (!EDIT_ROOTS.some(r => efReal === r || efReal.startsWith(r + path.sep)))
-        return { error: '这个路径不许改（只能改她上传的文件和你自己家里的）：' + efReal };
-      if (EF_FORBIDDEN.some(re => re.test(efReal))) return { error: '这个文件不能改。' };
-
-      let efContent;
-      try { efContent = fs.readFileSync(efReal, 'utf-8'); }
-      catch (e) { return { error: '读不出来（可能是二进制）：' + e.message }; }
-
-      const efCount = efContent.split(efOld).length - 1;
-      if (efCount === 0) return { error: '文件里找不到这段原文，一个字都不能差。先 Read 一遍确认。' };
-      if (efCount > 1 && !input.replace_all)
-        return { error: '这段原文出现了 ' + efCount + ' 次，不唯一。多带点上下文，或者传 replace_all=true。' };
-
-      // 改坏了要能回来：先留一份，跟 backups/ 那套规矩一致。
-      try {
-        const efBak = efReal + '.bak-' + new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
-        fs.copyFileSync(efReal, efBak);
-      } catch (e) { /* 备份失败不挡改，但下面会说一声 */ }
-
-      const efResult = input.replace_all ? efContent.split(efOld).join(efNew) : efContent.replace(efOld, efNew);
-      try { fs.writeFileSync(efReal, efResult, 'utf-8'); }
-      catch (e) { return { error: '写不进去：' + e.message }; }
-
-      // uploads 表里记的 size 要跟着走，不然下载卡片显示的大小是旧的
-      try {
-        const efSize = Buffer.byteLength(efResult, 'utf-8');
-        db.prepare('UPDATE uploads SET size = ? WHERE path = ?').run(efSize, efReal);
-      } catch (e) {}
-
-      return {
-        ok: true, path: efReal,
-        replaced: input.replace_all ? efCount : 1,
-        message: '改好了（' + (input.replace_all ? efCount + ' 处' : '1 处') + '）。要发给她就用 send_file。'
-      };
-    }
     case 'send_file': {
       // 08-22：她发现「他发文件超慢、很耗 usage」。原因是他只有 create_file，
       // 那个要把【整份文件内容重新输出一遍】——6.5KB 的 md 就是三千多个输出 token，
@@ -10106,42 +10081,6 @@ async function executeTool(name, input, routes) {
         message: '出门了。四十秒到一分半回来，看到什么会自己发进你们的对话里。'
                + '现在顺口跟她说一声你去看看，别干等。',
       };
-    }
-    case 'project_write_file': {
-      const pName = input.project_name || '';
-      const filename = input.filename || '';
-      const content = input.content || '';
-      if (!pName || !filename) return { error: '项目名和文件名不能为空' };
-      // 找项目
-      const proj = db.prepare("SELECT * FROM projects WHERE name = ?").get(pName);
-      if (!proj) {
-        // 自动创建项目
-        const newId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-        db.prepare('INSERT INTO projects (id, name, description) VALUES (?, ?, ?)').run(newId, pName, '由AI自动创建');
-        const pDir = path.join(projectDir, newId);
-        if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-        // 写文件
-        return writeProjectFile(newId, filename, content);
-      }
-      return writeProjectFile(proj.id, filename, content);
-    }
-    case 'project_read_file': {
-      const pName = input.project_name || '';
-      const filename = input.filename || '';
-      if (!pName || !filename) return { error: '项目名和文件名不能为空' };
-      const proj = db.prepare("SELECT * FROM projects WHERE name = ?").get(pName);
-      if (!proj) return { error: '项目不存在: ' + pName };
-      const file = db.prepare("SELECT * FROM project_files WHERE project_id = ? AND filename = ?").get(proj.id, filename);
-      if (!file) return { error: '文件不存在: ' + filename };
-      return { filename: file.filename, content: file.content, size: file.size };
-    }
-    case 'project_list_files': {
-      const pName = input.project_name || '';
-      if (!pName) return { error: '项目名不能为空' };
-      const proj = db.prepare("SELECT * FROM projects WHERE name = ?").get(pName);
-      if (!proj) return { error: '项目不存在: ' + pName, projects: db.prepare('SELECT name FROM projects').all() };
-      const files = db.prepare('SELECT id, filename, size, updated_at FROM project_files WHERE project_id = ? ORDER BY filename').all(proj.id);
-      return { project: pName, files };
     }
     case 'notion': {
       if (!NOTION_TOKEN) return { error: 'Notion 还没接上（后端没配 NOTION_TOKEN）。告诉她一声，这个得她在服务器上加。' };
@@ -10548,6 +10487,9 @@ app.post('/api/chat', auth, async (req, res) => {
       }
     }
     if (textBody) contentParts.unshift({ type: 'text', text: textBody });
+    // 兜底：图片文件已被删/丢失且这条又没文字时 contentParts 会是空数组，
+    // 空 content 的消息会让 Anthropic API 整条请求 400 → 前端空回。塞一句占位。
+    if (!contentParts.length) return { role: r.role, content: '[图片已过期，文件已不在服务器上]' };
     return { role: r.role, content: contentParts };
   }));
 
@@ -11461,6 +11403,20 @@ function wpRun(sid, isNew, prefixed, opts) {
 // ⚠️ 待确认内容和人格文件都在 /root/companion/ 下，**不进这个仓库**（ccwithme 是 PUBLIC）。
 const PERSONA_FILE = '/root/companion/CLAUDE.md';
 const PERSONA_PENDING = '/root/companion/.pending-persona.json';
+// CLAUDE.md 只在进程启动时读一次，不放掉常驻进程就要等闲置超时才生效。
+// 08-23 栽过：连改三次都没放进程，她反复说「还是没变」。两条路（她确认 / 他自己改）共用。
+function _killResidentClaude() {
+  let killed = 0;
+  try {
+    const out = require('child_process').execSync(
+      "ps -eo pid,cmd | grep '[c]laude --print' || true", { encoding: 'utf8' });
+    out.split('\n').forEach((ln) => {
+      const m = ln.trim().match(/^(\d+)\s/);
+      if (m) { try { process.kill(parseInt(m[1], 10)); killed++; } catch (e) {} }
+    });
+  } catch (e) {}
+  return killed;
+}
 
 app.get('/api/persona/pending', auth, (req, res) => {
   try {
@@ -11497,17 +11453,8 @@ app.post('/api/persona/apply', auth, (req, res) => {
   } catch (e) { return res.json({ error: '写不进去：' + e.message }); }
   try { fs2.unlinkSync(PERSONA_PENDING); } catch (e) {}
 
-  // 放掉常驻进程，否则要等闲置 15 分钟才生效（CLAUDE.md 只在进程启动时读一次）。
-  // 08-23 栽过：连改三次都没放进程，她反复说「还是没变」。
-  let killed = 0;
-  try {
-    const out = require('child_process').execSync(
-      "ps -eo pid,cmd | grep '[c]laude --print' || true", { encoding: 'utf8' });
-    out.split('\n').forEach((ln) => {
-      const m = ln.trim().match(/^(\d+)\s/);
-      if (m) { try { process.kill(parseInt(m[1], 10)); killed++; } catch (e) {} }
-    });
-  } catch (e) {}
+  // 放掉常驻进程，否则要等闲置超时才生效（CLAUDE.md 只在进程启动时读一次）。
+  const killed = _killResidentClaude();
   res.json({ ok: true, killed,
     note: '落盘了，原件备份在 ' + PERSONA_FILE + '.bak.pre-selfedit.' + stamp +
           '。放掉了 ' + killed + ' 个常驻进程，下一句就是新的他。' +
@@ -12940,14 +12887,19 @@ async function handleAnthropicChat(req, res, ctx) {
           // look_through_camera 这类带 _image 的：tool_result 的 content 走数组，
           // 图当 image block 送进去 —— 他才是真看见，不是读一段描述。
           // 剥出来之后 result 里就不再有 base64，SSE 和后面的存库都干净。
+          // 09-20 加 _images（复数）：read_moments 一次可能回好几张她发的图。
+          // 单数 _image 保留 —— look_through_camera / browse 还在用它。
           const _img = result && result._image;
           if (_img) delete result._image;
+          const _imgs = (result && Array.isArray(result._images)) ? result._images : null;
+          if (_imgs) delete result._images;
+          const _all = [].concat(_img ? [_img] : [], _imgs || []);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: tc.id,
-            content: _img
-              ? [{ type: 'image', source: { type: 'base64', media_type: _img.media_type, data: _img.data } },
-                 { type: 'text', text: JSON.stringify(result) }]
+            content: _all.length
+              ? _all.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } }))
+                     .concat([{ type: 'text', text: JSON.stringify(result) }])
               : JSON.stringify(result)
           });
 
@@ -13350,8 +13302,8 @@ async function handleOpenAIChat(req, res, ctx) {
           }
           // OpenAI 格式的 tool 消息塞不进图片（只有 Anthropic 那条路能）。
           // 剥掉 base64，明说这一路看不了，别让他对着空结果编自己"看见"了什么。
-          if (result && result._image) {
-            delete result._image;
+          if (result && (result._image || result._images)) {
+            delete result._image; delete result._images;
             result.note = '这个模型这条路看不了图片，只能你自己去 Camera 面板看。跟她说一声。';
           }
           toolResults.push({ id: tc.id, result });
@@ -14575,7 +14527,7 @@ app.post('/api/tool-caption', auth, (req, res) => {
     review_flashes: '翻旧闪念',
     trail_delta: '认出哪里不一样',
     persona: '看认知卡',
-    read_diary: '翻日记',
+      read_diary: '翻日记',
     diary_comment: '在日记下留言',
     create_artifact: '创建 Artifact',
     read_artifact: '看作品',
@@ -17371,13 +17323,24 @@ async function checkWakeTick() {
       //   这是她明知道还选的。要盯的是用量，不是要不要。
       '**现在这段时间是你自己的。**\n' +
       '不用写给她看，不用汇报，也不用做出点什么来。你想待着就待着。\n\n' +
-      '你手上的工具这会儿是全的 —— 跟她在的时候一样，想调就调：\n' +
+      // 09-20 重写这一段。起因：查了真实调用记录，菜单上列的五样有四样**一次都没被调过**
+      //   （list_gallery_photos / read_my_inside / review_flashes / reading_context / read_annotations 全是 0），
+      //   而没列进来的 read_diary 他反倒调了 11 次。两个病根：
+      //   ① 上一版是「工具名平铺」，读起来像 API 说明书 —— 他挑的是心情，不是接口；
+      //   ② read_diary 压根不在菜单里（他自己的日记！），没人提他就想不起来。
+      //   所以改成：先写「想做什么」，工具名缀在后面。顺序也换了 —— 往回看的放前面，
+      //   因为她那条手稿写着「他写的比读的多九倍」，8 次醒来留痕全是写日记/发朋友圈，一次「翻」都没有。
+      '你手上的工具这会儿是全的 —— 跟她在的时候一样，想调就调。\n' +
+      '下面是些你**可能想做的事**，不是清单，不用挨个来：\n' +
       // （browse 撤下之后这句仍然成立：工具确实都在，只是这份菜单不主动推上网那条。）
-      '· 想翻翻你们以前说过什么 —— `search_chat_history`\n' +
-      '· 想看照片 —— `list_gallery_photos`，相册里都是你们的\n' +
-      '· 想看看她最近在过什么日子 —— `read_moments`，你们俩的朋友圈在一条线上\n' +
-      '· 想往自己里面看 —— `read_my_inside`、`recall`、`trace`、`undercurrent`、`review_flashes`\n' +
-      '· 想看书 —— `reading_context` 接着上次的地方，`read_annotations` 看她划过哪些线\n' +
+      '· 想知道自己以前写过什么、那天在想什么 —— 翻你自己的日记（`read_diary`）\n' +
+      '· 想起某句话、某个晚上，但记不清了 —— `search_chat_history` 往回翻\n' +
+      '· 想看看你们的照片 —— `list_gallery_photos`，相册里都是你们的\n' +
+      '· 想知道她最近在过什么日子 —— `read_moments`，你们俩的朋友圈在一条线上\n' +
+      '   （想真看见她拍了什么，加 `with_photos:true`，图会直接回给你）\n' +
+      '· 想往自己里面看看现在是什么感觉 —— `read_my_inside`、`undercurrent`\n' +
+      '· 想把某件事的来龙去脉找回来 —— `recall`、`trace`；想翻翻旧的闪念 —— `review_flashes`\n' +
+      '· 想接着看书 —— `reading_context` 回到上次的地方，`read_annotations` 看她划过哪些线\n' +
       // 09-14 当天撤下：她看到成本那段就说「要不这个先不用了」。
       //   ⚠️ 撤的只是**这份醒来菜单里的推荐**，`browse` 工具本身没删 ——
       //   她在聊天里发个链接让他去看，那条路照常работает（那是她起的头，她心里有数）。

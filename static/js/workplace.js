@@ -635,7 +635,7 @@
     // ⚠️ POST 的判断不能看「有没有 body」。09-16 踩到：kill 不带 body，
     //   于是被当成 GET 发出去，而 /api/room/kill 是 POST 路由 —— 永远打不中，
     //   她点长按红灯只看到「关不掉」。按路径定方法，别按 body 猜。
-    var ROOM_POST = { open: 1, send: 1, kill: 1, reset: 1 };
+    var ROOM_POST = { open: 1, send: 1, kill: 1, reset: 1, attach: 1 };  // 09-20: attach 漏在这张表外 → roomApi 发的是 GET、body 整个丢掉，后端只有 app.post 接得住 → 永远「传图失败」
     function roomApi(path, body) {
       var init = ROOM_POST[path] ? {
         method: 'POST',
@@ -1748,8 +1748,13 @@
           if (outSeen[f.name]) return;
           outSeen[f.name] = 1;
           if (firstRun) return;          // 开面板那一次只记账，不把旧文件当成「他刚发来的」
+          // 09-20 她说「他发给我的卡片和我发文件给他的长得不一样」——
+          // 这儿原来是 📎 emoji + 一行小字，跟主线 Artifacts sheet 里那种
+          // 「深色方块写扩展名 + 粗体文件名 + 灰副行」完全两个东西。
+          // 统一成 Artifacts 那套（见 index.html 的 _renderArtifactsSheet：iconBox 38px / #3D3A36）。
+          // ⚠️ emoji 也顺手去掉 —— 09-18 她定的：UI 里不要 emoji。
           var wrap = h('div', 'display:flex;flex-direction:column;align-items:flex-start;gap:4px');
-          var b = h('a', 'display:flex;align-items:center;gap:9px;max-width:88%;padding:10px 13px;' +
+          var b = h('a', 'display:flex;align-items:center;gap:11px;max-width:88%;padding:10px 13px;' +
             'background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;' +
             'text-decoration:none;color:var(--text-primary);font:13px var(--font-sans)');
           b.href = '/api/workplace/outbox/file?name=' + encodeURIComponent(f.name);
@@ -1757,9 +1762,15 @@
           var kb = f.size < 1024 ? f.size + ' B'
             : f.size < 1048576 ? (f.size / 1024).toFixed(1) + ' KB'
             : (f.size / 1048576).toFixed(1) + ' MB';
-          b.append(h('span', 'flex:none;font-size:15px', '📎'));
+          // 扩展名 → 方块里那两三个字。html/svg 用 </>，跟 Artifacts sheet 一致。
+          var _ext = (f.name.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase();
+          var _tag = (_ext === 'html' || _ext === 'htm' || _ext === 'svg') ? '</>'
+            : _ext ? _ext.slice(0, 3).toUpperCase() : 'FILE';
+          var iconBox = h('span', 'width:38px;height:38px;border-radius:11px;background:#3D3A36;color:#F5F2ED;' +
+            'display:grid;place-items:center;font:700 12px var(--font-mono);flex:none', _tag);
+          b.append(iconBox);
           var col = h('div', 'min-width:0');
-          col.append(h('div', 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500', f.name));
+          col.append(h('div', 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600', f.name));
           col.append(h('div', 'font:11px var(--font-sans);color:var(--text-faint)', kb + ' · 点一下下载'));
           b.append(col);
           wrap.append(b);

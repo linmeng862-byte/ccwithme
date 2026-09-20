@@ -2835,3 +2835,136 @@ html.wall-theme:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
 html[data-theme="dark"].wall-theme:not(.ui-plain) #drawer.has-wall .mobile-sidebar-inner{
   background:transparent;
 }
+
+/* ============ 2026-09-20 自定义背景下剩的几块米黄 → 玻璃（她指的那几处）============
+   之前 09-18 那轮只玻璃了 #chat 里的东西（气泡/卡片/输入框）和 usagePanel/drawer。
+   浮在聊天**上层**的几块还是实心米黄 #FAF6EC：⋯菜单、Artifacts sheet、免责声明、
+   来电卡、通话界面。她截图指的就是这几处。
+
+   ⚠️ 门是 `html.wall-on:not(.wall-theme)` ——
+      · wall-on 挂在 <html>（index.html 8518），所以选得到 #chat 外面的浮层；
+      · :not(.wall-theme) 是把「主题背景（小狗绘本 pup）」排除掉 —— 见本文件 2537，
+        她 09-18 明确要主题背景**不玻璃**，别把这套联动过去。
+   ⚠️ 手法沿用 usagePanel 那招（2673）：面板内部的卡片/按钮全是内联 var(--bg-*)，
+      在容器上**重定义**这两个变量就整片跟着变玻璃，不用 !important、不用改一堆内联。 */
+
+/* ---- ⋯ 更多菜单（#moreMenu，内联 background:var(--bg-primary)）---- */
+html.wall-on:not(.wall-theme):not(.ui-plain) #moreMenu{
+  --bg-primary:rgba(255,255,255,.55);
+  border-color:rgba(255,255,255,.5);
+  backdrop-filter:blur(30px) saturate(1.2);
+  -webkit-backdrop-filter:blur(30px) saturate(1.2);
+  box-shadow:0 8px 28px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.55);
+}
+html.wall-on:not(.wall-theme):not(.ui-plain) #moreMenu .menu-item:active{
+  background:rgba(255,255,255,.35);
+}
+
+/* ---- Artifacts sheet（#artifactsSheet，.sheet 底是 var(--bg-primary)；
+        里面「工具」条 var(--bg-surface)、文件行 var(--bg-primary)，一起跟着变）---- */
+html.wall-on:not(.wall-theme):not(.ui-plain) #artifactsSheet{
+  --bg-primary:rgba(255,255,255,.5);
+  --bg-surface:rgba(255,255,255,.4);
+  border-color:rgba(255,255,255,.45);
+  backdrop-filter:blur(30px) saturate(1.2);
+  -webkit-backdrop-filter:blur(30px) saturate(1.2);
+}
+html.wall-on:not(.wall-theme):not(.ui-plain) #artifactsSheet .sheet-content{background:transparent}
+
+/* 09-20 免责声明本来也玻璃过，她说「免责声明那里不要玻璃」——整条撤了，保持原样的裸字。 */
+
+/* ---- 来电卡（.incoming-call-card，实色 #EDEBE7）----
+   外面的 .incoming-call-overlay 本来就有 blur(20px)，卡片自己透了就能看见背后磨糊的壁纸。 */
+html.wall-on:not(.wall-theme):not(.ui-plain) .incoming-call-card{
+  background:rgba(255,255,255,.42);
+  border:1px solid rgba(255,255,255,.5);
+  backdrop-filter:blur(30px) saturate(1.25);
+  -webkit-backdrop-filter:blur(30px) saturate(1.25);
+  box-shadow:0 24px 70px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.6);
+}
+
+/* 深色：上面五块统一换深玻璃。两套写法（@media 跟随系统 + data-theme 显式）照本文件惯例各写一遍。 */
+@media (prefers-color-scheme:dark){
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #moreMenu{
+    --bg-primary:rgba(28,25,22,.6);border-color:rgba(255,255,255,.14);
+    box-shadow:0 8px 28px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.1);
+  }
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #moreMenu .menu-item:active{background:rgba(255,255,255,.1)}
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #artifactsSheet{
+    --bg-primary:rgba(28,25,22,.58);--bg-surface:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14);
+  }
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) .incoming-call-card{
+    background:rgba(28,25,22,.58);border-color:rgba(255,255,255,.14);
+    box-shadow:0 24px 70px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.1);
+  }
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #moreMenu{
+  --bg-primary:rgba(28,25,22,.6);border-color:rgba(255,255,255,.14);
+  box-shadow:0 8px 28px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.1);
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #moreMenu .menu-item:active{background:rgba(255,255,255,.1)}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #artifactsSheet{
+  --bg-primary:rgba(28,25,22,.58);--bg-surface:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14);
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) .incoming-call-card{
+  background:rgba(28,25,22,.58);border-color:rgba(255,255,255,.14);
+  box-shadow:0 24px 70px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.1);
+}
+
+/* ---- 日记「Thoughts」那一条（09-20 她说自定义背景下还是黄的）----
+   #diaryPanel 的 --d-bg / --d-card 是实色米白（定义在 js/diary.js 注入的那段样式里），
+   底下壁纸透不上来，就剩这条输入栏和评论卡是黄的。
+   ⚠️ 特异度要压过 diary.js —— 它那段 <style> 是运行时注入的，排在 home.css 后面，
+      同特异度压不住。这里带 html.wall-on + #diaryPanel（ID），够了，不用 !important。 */
+html.wall-on:not(.wall-theme):not(.ui-plain) #diaryPanel .diary-comment-input-wrap{
+  background:rgba(255,255,255,.4);
+  border-top-color:rgba(255,255,255,.5);
+  backdrop-filter:blur(24px) saturate(1.15);
+  -webkit-backdrop-filter:blur(24px) saturate(1.15);
+}
+html.wall-on:not(.wall-theme):not(.ui-plain) #diaryPanel .diary-comment-input,
+html.wall-on:not(.wall-theme):not(.ui-plain) #diaryPanel .diary-comment-card{
+  background:rgba(255,255,255,.42);
+  backdrop-filter:blur(20px) saturate(1.1);
+  -webkit-backdrop-filter:blur(20px) saturate(1.1);
+}
+@media (prefers-color-scheme:dark){
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #diaryPanel .diary-comment-input-wrap{
+    background:rgba(28,25,22,.55);border-top-color:rgba(255,255,255,.14);
+  }
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #diaryPanel .diary-comment-input,
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #diaryPanel .diary-comment-card{
+    background:rgba(28,25,22,.58);
+  }
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #diaryPanel .diary-comment-input-wrap{
+  background:rgba(28,25,22,.55);border-top-color:rgba(255,255,255,.14);
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #diaryPanel .diary-comment-input,
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #diaryPanel .diary-comment-card{
+  background:rgba(28,25,22,.58);
+}
+
+/* ---- 回到底部那颗圆钮（09-20 她说它还不是玻璃）----
+   #scrollToBottom 浮在输入框正上方，底色是实心 var(--bg-surface)，
+   壁纸铺上来之后就剩它一颗白点。按输入框（.composer-box）那套配方走，两个挨着才是一体的。 */
+html.wall-on:not(.wall-theme):not(.ui-plain) #scrollToBottom{
+  background:rgba(242,239,237,.25);
+  border:1px solid rgba(255,255,255,.45);
+  backdrop-filter:blur(28px) saturate(1.1);
+  -webkit-backdrop-filter:blur(28px) saturate(1.1);
+  box-shadow:0 8px 32px rgba(0,0,0,.08),0 0 0 1px rgba(255,255,255,.3) inset;
+}
+html.wall-on:not(.wall-theme):not(.ui-plain) #scrollToBottom:active{background:rgba(255,255,255,.45)}
+@media (prefers-color-scheme:dark){
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #scrollToBottom{
+    background:rgba(28,25,22,.45);border-color:rgba(255,255,255,.14);
+    box-shadow:0 8px 32px rgba(0,0,0,.3),0 0 0 1px rgba(255,255,255,.08) inset;
+  }
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #scrollToBottom:active{background:rgba(255,255,255,.12)}
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #scrollToBottom{
+  background:rgba(28,25,22,.45);border-color:rgba(255,255,255,.14);
+  box-shadow:0 8px 32px rgba(0,0,0,.3),0 0 0 1px rgba(255,255,255,.08) inset;
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #scrollToBottom:active{background:rgba(255,255,255,.12)}

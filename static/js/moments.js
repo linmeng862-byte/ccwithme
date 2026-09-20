@@ -203,9 +203,27 @@ function _moCard(m) {
         : '') +
       comments.map(function (c) {
         var ca = c.author === 'cis' ? 'cis' : 'zhou';
-        return '<div class="mo-cmt">' +
+        // 09-20 她要的「回复 XX」：reply_to 这一列从 09-16 建表起就在，前后端**一直没人渲染**，
+        // 所以他回她的话看着像新起了一条评论。这里补上读的那半（微信的排法：A 回复 B：正文）。
+        // ⚠️ 只在被回的那条真的还在这一屏里、且不是回自己时才显示 —— 对方删了评论就退回普通样子，
+        //    别显示成「回复 undefined」。
+        var rt = null;
+        if (c.reply_to) {
+          for (var ri = 0; ri < comments.length; ri++) {
+            if (comments[ri].id === c.reply_to) { rt = comments[ri]; break; }
+          }
+          if (rt && rt.author === c.author) rt = null;
+        }
+        var ra = rt ? (rt.author === 'cis' ? 'cis' : 'zhou') : '';
+        // 点他那条评论 = 回它（跟微信一样）。自己那条不给点 —— 回自己没意义。
+        var onc = ca === 'cis'
+          ? ' onclick="_moReplyTo(\'' + id + '\',\'' + _moEsc(c.id) + '\',\'' + _moEsc(_moName(c.author)) + '\')" style="cursor:pointer"'
+          : '';
+        return '<div class="mo-cmt"' + onc + '>' +
           (ca === 'zhou' ? '<button class="mo-del" onclick="_moDelComment(\'' + id + '\',\'' + _moEsc(c.id) + '\')">×</button>' : '') +
-          '<b class="' + ca + '">' + _moEsc(_moName(c.author)) + '</b>：' + _moEsc(c.content) +
+          '<b class="' + ca + '">' + _moEsc(_moName(c.author)) + '</b>' +
+          (rt ? '<span class="mo-reply-to"> 回复 </span><b class="' + ra + '">' + _moEsc(_moName(rt.author)) + '</b>' : '') +
+          '：' + _moEsc(c.content) +
           '</div>';
       }).join('') +
       '</div>';
@@ -339,6 +357,19 @@ function _moToggleReply(id) {
   if (box.classList.contains('show')) box.querySelector('input').focus();
 }
 
+// 她点他那条评论 → 这一条朋友圈的输入框改成「回复 Cis」，发出去带 reply_to。
+// 存在 map 里不存在 DOM 上：_moLoad() 会整块重画，挂 DOM 上的状态活不过一次刷新。
+var _moReplyTarget = {};
+function _moReplyTo(id, cid, name) {
+  var box = document.getElementById('moReply_' + id);
+  if (!box) return;
+  _moReplyTarget[id] = cid;
+  box.classList.add('show');
+  var input = box.querySelector('input');
+  input.placeholder = '回复 ' + name + '…';
+  input.focus();
+}
+
 async function _moSendComment(id) {
   var box = document.getElementById('moReply_' + id);
   if (!box) return;
@@ -346,9 +377,12 @@ async function _moSendComment(id) {
   var text = (input.value || '').trim();
   if (!text) return;
   input.value = '';
+  var rt = _moReplyTarget[id] || '';
+  delete _moReplyTarget[id];
+  input.placeholder = '说点什么…';
   try {
     var r = await api('/api/moments/' + encodeURIComponent(id) + '/comments', {
-      method: 'POST', body: JSON.stringify({ author: 'zhou', content: text })
+      method: 'POST', body: JSON.stringify({ author: 'zhou', content: text, reply_to: rt })
     });
     if (!r.ok) throw Error(r.status);
     await _moLoad();
