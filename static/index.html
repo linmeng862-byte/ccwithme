@@ -4505,6 +4505,14 @@ function _buildClaudeRow(text,userText='',thinking='',timestamp='',userAttachmen
     // 思考单独一条，工具单独一条——跟实时渲染一致，别再揉成一行。
     if(thinking){body.append(thoughtSummary(thinking))}
     if(toolTraces.length){var tr=_buildTraceRowFromHistory(toolTraces,'');if(tr){tr.style.display='none';tr.classList.add('tr-collapsed');body.append(tr);var _tp=_getPhases(tr).filter(function(p){return p.type==='tool'});var _lbl=_tp.length+' tool'+(_tp.length>1?'s':'')+' used';var btn=document.createElement('button');btn.className='thinking-summary show';btn.innerHTML=toolSummaryHtml();btn.querySelector('.thinking-summary-text').textContent=_lbl;btn.onclick=function(){return openTraceSheet(tr)};body.append(btn)}}
+    // 09-20：人格自改（edit_myself）刷新后也渲染那张卡。实时走 _renderActionReportCard，
+    //   历史这条路以前只留一条折叠的「1 tool used」，那张「改了自己」的卡就没了。
+    //   从 traces 直接重建：只挑 edit_myself，不碰别的工具（别的历史仍只留折叠行，她不要终端卡）。
+    try{toolTraces.forEach(function(t){
+      if(t.type!=='tool_use'||_bareToolName(t.name)!=='edit_myself')return;
+      var _res=toolTraces.find(function(r){return r.type==='tool_result'&&r.tool_use_id===t.id});
+      _renderSelfEditCard({toolInput:t.input,status:(_res&&_res.is_error)?'error':'completed'},body);
+    })}catch(e){console.warn('[history] self-edit card:',e)}
   }else if(thinking){body.append(thoughtSummary(thinking))}
   }catch(e){console.warn('[history] trace row:',e)}
   var b=document.createElement('div');b.className='bubble';
