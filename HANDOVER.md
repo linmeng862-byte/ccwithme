@@ -5,6 +5,41 @@
 > **最新的写在最上面。**
 
 
+## 🎨 2026-09-21 · 出图参考图接口修通 + 中断叫停（已 push 到 main）
+
+拉下来 `git pull` + **重启后端**（`pm2 restart chat-c`）就生效。**你那台还要补一件**见下。
+
+### 1. 参考图（保持同一张脸）—— packy / cf.api.fan 的真实契约
+
+`generate_image` 带参考图时走的是 `/v1/images/edits`，跟纯文生图的 generations 是两条路。
+中转站的字段名是逐个试出来的（报错会自相矛盾地打转，别信文案 —— 见 `data/wp-notes/20260921.md` 全过程）：
+
+```
+POST /v1/images/edits   (application/json)
+{ model, prompt, size, n, images: [ { image_url: "<公网 https 链接>" } ] }
+→ 返回 data[0].url（腾讯云 COS 临时链接），照旧下载落盘
+```
+
+- `images` 是**数组**，元素是**对象** `{image_url: "url字符串"}`。不是 `image`、不是文件上传、不是 data URL。
+- `image_url` 必须是中转站能 fetch 的**真公网链接**。用的是 `/gallery-photo/`（本就不鉴权的公网静态路由，
+  `[IMAGE:]` 免 token 渲染就靠它），图早已在公网，不新增暴露。
+- **⚠️ 你那台要补：** 公网域名读 `settings.public_base_url`，**故意没写死进仓库**（这是 public repo）。
+  这台已把这个键设成本机的公网入口（域名见 `CLAUDE.local.md`，不进 git）。
+  你那台域名不同、且这个键不同步（库不进 git）→ 拉下来后没配它，参考图出图会报「public_base_url 没配」。
+  在设置里 / 直接写库把这个键补成**你那台的公网域名**（`https://` 开头，无尾斜杠）。
+- 一起提交的还有下午那半截脚手架：`reference_image` 工具参数、`refImage` 默认那张脸
+  （`/gallery-photo/gal_muatbb4zpsxx.jpg`）、`generate_image` 的 90s 超时预算。
+
+### 2. 中断后「下一句他不回了」
+
+打字聊天 `handleGatewayChat` 的 `res.on('close')` 以前只减 `_chatInFlight` 计数，没叫停网关那一轮。
+她一中断：浏览器断了 SSE，后端还把网关那轮读到底，常驻进程占着这条会话；她紧接着发的下一句
+`--resume` 撞上「同一会话还在跑」被网关挡下 → 表现成不回。
+修法：close 时若这轮没正常收尾（`_turnDone` 未置）就 `interruptGatewayTurn(convId)`
+（复用通话那条 `/interrupt`，进程不死、缓存不丢）。这条是纯 backend 逻辑，你那台拉下来直接生效。
+
+
+
 ## 📱 2026-09-17 · iOS 独立页 `static/ios.html`（工作台做的，未提交，终端接着改）
 
 她照小红书截图要的：**锁屏专注模式胶囊 + iOS 26 iMessage 对话页**，跟主页主题完全分开。
