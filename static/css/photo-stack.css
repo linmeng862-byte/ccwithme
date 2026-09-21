@@ -52,8 +52,12 @@
 /* ── 接进 Chat-C 的部分（09-12）──
    叠卡只替「收起来的样子」；摊开后的横排和点开的 .image-expand 灯箱都是原来那套。
    收起时把原横排 display:none 掉（不是删掉）—— 摊开就是把它放回来，DOM 一直在。 */
-.photo-stack-host{display:flex;justify-content:flex-end;width:100%;margin:2px 0 4px}
-.photo-stack-host.is-left{justify-content:flex-start}
+/* ⚠️ 叠卡是**往两边探出舞台**的（peek 15 + peekStep 12，最深一层探出约 27~30px），
+   而 host 贴着气泡边缘对齐 —— 不留余量的话探出去那截会压到旁边的头像上
+   （09-21 她报的：「我的堆叠有点靠右会挡我头像」）。
+   这里给探边留 32px，两侧对称：她的靠右留右边，他的 is-left 留左边。 */
+.photo-stack-host{display:flex;justify-content:flex-end;width:100%;margin:2px 0 4px;padding-right:32px}
+.photo-stack-host.is-left{justify-content:flex-start;padding-right:0;padding-left:32px}
 .user-images.stack-collapsed,.claude-images.stack-collapsed{display:none}
 .claude-images{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-end}
 

@@ -2430,13 +2430,15 @@ html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .bubble{
     inset 0 1px 1px rgba(255,255,255,.6),
     inset 0 -6px 10px -6px rgba(70,55,45,.08);
 }
-/* 09-18：这个主题下语音条/通话条也走同一套玻璃（只改视觉，不碰它自己的圆角和内部布局）。
+/* 09-18：这个主题下语音条/通话条/文件卡也走同一套玻璃（只改视觉，不碰它自己的圆角和内部布局）。
    选择器带 #chat.has-wall = 优先级远高于 1157/1158 的 .msg-claude .voice-msg{background:var(--bubble-him)}，
    不用 !important 就压得过。 */
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .voice-msg,
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .call-msg,
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .file-card,
 html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .voice-msg,
-html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg,
+html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .file-card{
   -webkit-backdrop-filter:blur(2px) saturate(1.18) brightness(1.02);
   backdrop-filter:blur(2px) saturate(1.18) brightness(1.02);
   background:
@@ -2452,8 +2454,10 @@ html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
 @media (prefers-color-scheme:dark){
   html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .voice-msg,
   html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .call-msg,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .file-card,
   html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .voice-msg,
-  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg,
+  html:not([data-theme="light"]):not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .file-card{
     -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
     backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
     background:
@@ -2466,8 +2470,10 @@ html:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
 }
 html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .voice-msg,
 html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .call-msg,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-user .file-card,
 html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .voice-msg,
-html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg{
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .call-msg,
+html[data-theme="dark"]:not(.ui-plain):not(.wall-theme) #chat.has-wall .msg-claude .file-card{
   -webkit-backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
   backdrop-filter:blur(2px) saturate(1.5) contrast(1.05) brightness(1.0);
   background:
