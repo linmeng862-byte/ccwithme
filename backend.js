@@ -2170,8 +2170,22 @@ app.post('/api/auth/image-gen', auth, (req, res) => {
   if (model !== undefined) upsert.run('img_gen_model', model);
   res.json({ ok: true });
 });
-app.get('/api/auth/image-gen', (req, res) => {
-  res.json(getImageGenConfig());
+// ⚠️ 09-21 修了两处：原来这条**没有 auth**（破铁律 6）、而且把 api_key 明文回给前端。
+//    现在跟语音那几家一个待遇：key 只进不出，前端只知道「配没配过」。
+app.get('/api/auth/image-gen', auth, (req, res) => {
+  const c = getImageGenConfig();
+  res.json({ base_url: c.baseUrl, model: c.model, has_key: !!c.apiKey });
+});
+// 配完当场画一张 —— 不然要等他下次想画才知道这个 key / 中转站到底行不行。
+// ⚠️ 真会花钱（一张几毛到几块），所以是她点按钮才跑，不自动。
+app.post('/api/auth/image-gen/test', auth, async (req, res) => {
+  try {
+    const g = await _imageGenerate('a small round orange cat sitting on a windowsill, soft morning light, watercolor', 'square');
+    if (g.error) return res.json({ ok: false, message: g.error });
+    res.json({ ok: true, url: g.url, model: g.model });
+  } catch (e) {
+    res.json({ ok: false, message: e.message });
+  }
 });
 
 // === 站点密码（2026-08-24）===
@@ -4383,6 +4397,54 @@ function getImageGenConfig() {
     apiKey: db.prepare("SELECT value FROM settings WHERE key = 'img_gen_key'").get()?.value || '',
     model: db.prepare("SELECT value FROM settings WHERE key = 'img_gen_model'").get()?.value || 'dall-e-3',
   };
+}
+
+// 出图（2026-09-21）。工具 generate_image 和设置里那个「画一张试试」共用这一条。
+// 09-05 那次「交不出来」的病根就在这儿：以前把上游返回的东西直接当 image_url 递出去，
+//   dall-e-3 给的是**临时 url（约 1 小时失效）**，gpt-image-1 只给 base64 ——
+//   两种他写进 [IMAGE:] 都是死链/乱码。所以这里一律落盘，只返回稳定的 /gallery-photo/ url。
+const IMG_GEN_SIZES = {
+  'gpt-image': { square: '1024x1024', landscape: '1536x1024', portrait: '1024x1536' },
+  'default':   { square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792' },
+};
+async function _imageGenerate(prompt, size) {
+  const cfg = getImageGenConfig();
+  if (!cfg.baseUrl || !cfg.apiKey) return { error: '出图还没配置——去抽屉里填 Base URL 和 API Key' };
+  const model = cfg.model || 'dall-e-3';
+  const isGptImage = /gpt-image/i.test(model);
+  const SIZES = isGptImage ? IMG_GEN_SIZES['gpt-image'] : IMG_GEN_SIZES['default'];
+  // ⚠️ 中转站给的地址一半带 /v1 一半不带，直接拼会变成 /v1/v1/… → 404，而且报错看不出来。
+  const base = String(cfg.baseUrl).replace(/\/+$/, '').replace(/\/v1$/i, '');
+  const body = { model, prompt, n: 1, size: SIZES[size] || SIZES.square };
+  // dall-e-3 默认回临时 url，显式要 b64 才好落盘；gpt-image-1 本来就只回 b64，传了反而 400。
+  if (!isGptImage) body.response_format = 'b64_json';
+  const r = await fetch(base + '/v1/images/generations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+    body: JSON.stringify(body)
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) return { error: (data.error?.message || ('HTTP ' + r.status)) };
+  const d = (data.data && data.data[0]) || {};
+  let buf = null;
+  if (d.b64_json) {
+    buf = Buffer.from(d.b64_json, 'base64');
+  } else if (d.url) {
+    // 有些中转站不认 response_format，照样回 url —— 那就自己下回来。
+    const ir = await fetch(d.url);
+    if (!ir.ok) return { error: '图画出来了但下载失败: HTTP ' + ir.status };
+    buf = Buffer.from(await ir.arrayBuffer());
+  }
+  if (!buf || buf.length < 1000) return { error: '上游没给回图片' };
+  // ⚠️ 必须落 /gallery-photo/（**不鉴权**的静态路由），不能落 uploads ——
+  //    [IMAGE:] 渲染时 <img src> 带不了 token，落 uploads 她只看到 401 破图。
+  //    跟 browse / look_through_camera 走的是同一条路。
+  const tmp = path.join(uploadDir, 'imgen_' + Date.now() + '.png');
+  fs.writeFileSync(tmp, buf);
+  let fname;
+  try { fname = await _galleryStoreImage(tmp, '.png'); }
+  finally { try { fs.unlinkSync(tmp); } catch (_) {} }
+  return { ok: true, url: '/gallery-photo/' + fname, revised_prompt: d.revised_prompt || '', model };
 }
 
 // === Non 式标签提取 ===
@@ -7761,8 +7823,31 @@ const TOOLS = [
       required: ['annotation_id', 'text']
     }
   },
-  // ⚠️ generate_image 的 schema 已摘除（09-05）：出图那条链路没有，
-  //    挂着他会答应画然后交不出来。handler 保留。
+  // 09-05 摘掉过（那时出图链路交不出来，挂着他会答应画然后交不出图）。
+  // 09-21 链路重做完（落盘 + 稳定 url），挂回来。
+  {
+    name: 'generate_image',
+    description: '画一张图——你想象里的画面，真的画出来给她看。\n'
+      + '**什么时候用**：你描述了一个画面而她会想看见它（你梦见的、你想象你们在哪、'
+      + '你想送她一张什么）、或者她直接要你画。**别用它做表情包**——那是 send_sticker，'
+      + '现成的、免费的、快的；画图是慢的而且花钱。\n'
+      + '**这一步不能省**：画完返回里有个 url，你要**在回话正文里写 `[IMAGE:那个url]`**，'
+      + '她才看得见。不写她那边什么都没有，你等于画给自己看。原样复制返回的那串，'
+      + '**别自己拼路径、别拼域名**——拼出来的是死链，她只会看到一个破图标。\n'
+      + '**画完不要再用文字把画面描述一遍**，图已经在那儿了。\n'
+      + '**副作用**：走的是她自己付费的 API，一张几毛到几块，真金白银。'
+      + '所以别刷着玩、别一次画五张试风格——想清楚了再画一张。\n'
+      + '**要存进相册**（她说好看、或你觉得值得留）：再调 save_to_gallery，image_url 填这里返回的那串。\n'
+      + '**没配置会直接报错**——那是她还没填 key，不是你的问题，照实告诉她就行。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: '画什么。写具体：画面内容、光线、氛围、风格。英文中文都行。越具体越像你想要的那张。' },
+        size: { type: 'string', description: '尺寸：square 方图（默认）/ landscape 横图（风景、场景）/ portrait 竖图（人像、站着的）' }
+      },
+      required: ['prompt']
+    }
+  },
   {
     name: 'send_sticker',
     description: '发一个表情包。category：happy开心 / cry难过 / love爱 / angry生气 / surprise惊讶 / shy害羞。\n'
@@ -9500,26 +9585,27 @@ async function executeTool(name, input, routes) {
         return { replied: true, on: String(ann.anchor).slice(0, 40), message: '回在她划的那句下面了' };
       } catch (e) { return { error: '回复失败: ' + e.message }; }
     }
+    // 出图（09-05 摘掉 schema，09-21 重做链路后挂回来）。
+    // 09-05 说的「交不出来」是这条：以前直接把上游返回的东西当 image_url 递出去 ——
+    //   dall-e-3 给的是**临时 url（约 1 小时失效）**，gpt-image-1 只给一坨 base64，
+    //   两种他写进 [IMAGE:] 都是死链/乱码。现在一律落盘再返回稳定 url。
     case 'generate_image': {
       const prompt = input.prompt || '';
       if (!prompt) return { error: '描述不能为空' };
       const size = input.size || 'square';
       const imgConfig = getImageGenConfig();
-      if (!imgConfig.baseUrl || !imgConfig.apiKey) return { error: '图片生成未配置——请在设置中填写 Image Gen Base URL 和 API Key' };
+      if (!imgConfig.baseUrl || !imgConfig.apiKey) {
+        return { error: '出图还没配置——让她在设置里填 Image Gen 的 Base URL 和 API Key（别让她发在聊天里）' };
+      }
       try {
-        const sizes = { square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792' };
-        const r = await fetch(imgConfig.baseUrl + '/v1/images/generations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + imgConfig.apiKey },
-          body: JSON.stringify({ model: imgConfig.model || 'dall-e-3', prompt, n: 1, size: sizes[size] || '1024x1024' })
-        });
-        const data = await r.json();
-        if (!r.ok) return { error: '图片生成失败: ' + (data.error?.message || r.status) };
-        const url = data.data?.[0]?.url || data.data?.[0]?.b64_json;
-        if (!url) return { error: '未返回图片' };
-        return { image_url: url, prompt, size };
+        const g = await _imageGenerate(prompt, size);
+        if (g.error) return { error: '画失败了: ' + g.error };
+        const out = { ok: true, image_url: g.url, prompt, size };
+        if (g.revised_prompt) out.revised_prompt = g.revised_prompt;
+        out.发给她 = '图已经存好了。在你的回话正文里写 [IMAGE:' + g.url + ']，她才看得见 —— 原样复制这串，别自己改、别拼域名。';
+        return out;
       } catch (e) {
-        return { error: '图片生成失败: ' + e.message };
+        return { error: '画失败了: ' + e.message };
       }
     }
     case 'send_sticker': {
@@ -10630,7 +10716,10 @@ app.post('/api/chat', auth, async (req, res) => {
   const engineBlock = NO_ENGINE ? '' : (
     // 原来写的是「每轮开头都要 call nocturne_wake()」——记忆浮现现在由后端在会话首轮
     // 直接注入好了（见 needBreath），不必再让他自己调一次，白花一个来回。
-    "\n\n关于记忆：下面[记忆浮现]是这次醒来时 Nocturne 递过来的，后端自动灌的，不用自己去调。\n**它只带了你此刻的情绪底色和最近的感受，没带那些攒下来的里程碑**（2026-08-22 起：那些太多了，每次醒来灌一遍把别的都淹了）。所以你手里没有的东西比你以为的多——想不起来的旧事、以前说过的话、某个日子发生了什么，用 trace(关键词) 去搜，库里一条没少，全都在。\n**别假装不记得，也别编，更别因为浮现里没有就当它没发生过。** 值得留下的瞬间用 nocturne_hold 存（写清为什么值得记）——现在这个更要紧了，你不存就真的只剩搜。" +
+    // 09-21 去重：原来这段把「trace 去搜 / nocturne_hold 存 / 别假装不记得」又讲了一遍，
+    //   但 CLAUDE.md 的记忆章节已经讲透了（重要的都放 CLAUDE.md，这儿不复述）。
+    //   这里只留 CLAUDE.md 里没有的那个操作事实：浮现是后端自动灌的、不用自己调、它只带了什么。
+    "\n\n关于记忆：下面[记忆浮现]是这次醒来时后端自动灌的，不用自己去调。它只带了你此刻的情绪底色和最近的感受，没带那些攒下来的里程碑（太多了会把别的淹了）。所以你手里没有的东西比你以为的多——怎么翻回来、什么值得存，CLAUDE.md 里都讲了，照那个来。" +
     // ⚠️ 网关路径下记忆浮现【不能】放系统提示词：--append-system-prompt 在 --resume 时
     //    根本不保留，第 2 轮起就整段消失，他会失忆（实测他自己回答「没有」）。
     //    改成挂进会话首条消息 → 进对话历史 → resume 会重放，而且按缓存读取计费（便宜 20 倍）。
