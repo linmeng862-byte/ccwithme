@@ -4407,7 +4407,7 @@ const IMG_GEN_SIZES = {
   'gpt-image': { square: '1024x1024', landscape: '1536x1024', portrait: '1024x1536' },
   'default':   { square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792' },
 };
-async function _imageGenerate(prompt, size) {
+async function _imageGenerate(prompt, size, refImage) {
   const cfg = getImageGenConfig();
   if (!cfg.baseUrl || !cfg.apiKey) return { error: '出图还没配置——去抽屉里填 Base URL 和 API Key' };
   const model = cfg.model || 'dall-e-3';
@@ -4415,14 +4415,45 @@ async function _imageGenerate(prompt, size) {
   const SIZES = isGptImage ? IMG_GEN_SIZES['gpt-image'] : IMG_GEN_SIZES['default'];
   // ⚠️ 中转站给的地址一半带 /v1 一半不带，直接拼会变成 /v1/v1/… → 404，而且报错看不出来。
   const base = String(cfg.baseUrl).replace(/\/+$/, '').replace(/\/v1$/i, '');
-  const body = { model, prompt, n: 1, size: SIZES[size] || SIZES.square };
-  // dall-e-3 默认回临时 url，显式要 b64 才好落盘；gpt-image-1 本来就只回 b64，传了反而 400。
-  if (!isGptImage) body.response_format = 'b64_json';
-  const r = await fetch(base + '/v1/images/generations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
-    body: JSON.stringify(body)
-  });
+  const sizeStr = SIZES[size] || SIZES.square;
+  // 带参考图（保持同一张脸）走的是 /v1/images/edits，跟纯文生图的 generations 是两条路。
+  // 2026-09-21 把中转站（packy / cf.api.fan）的真实契约一个字段一个字段试出来了：
+  //   · JSON body（不是 multipart、不是文件上传）
+  //   · 参考图放在 images 数组里，每个元素是 { image_url: "<公网 https 链接>" }
+  //     —— data URL 不认（它当没图），必须是它自己能 fetch 到的真链接。
+  //   · 返回 data[0].url（腾讯云 COS 的临时链接），下面照旧下回来落盘。
+  //   踩坑全过程见 09-踩坑总表 / data/wp-notes。别再往 body.image / image_url / 文件上传上退。
+  const useEdit = !!(refImage && isGptImage);
+  let r;
+  if (useEdit) {
+    const refName = String(refImage).replace(/^\/gallery-photo\//, '');
+    const refPath = path.join(galleryPhotoDir, refName);
+    if (!fs.existsSync(refPath)) return { error: '参考图不存在: ' + refName };
+    // 中转站要去公网 fetch 这张图，所以得给它一个外网够得着的链接。
+    // /gallery-photo/ 本来就是不鉴权的公网静态路由（[IMAGE:] 免 token 渲染就靠它），
+    // 这张图早已挂在公网上，给出这个链接不新增暴露。域名存 settings（库不进 git），不写死进仓库。
+    const pubBase = db.prepare("SELECT value FROM settings WHERE key='public_base_url'").get()?.value || '';
+    if (!pubBase) return { error: '参考图出图要公网地址，但 public_base_url 没配——去设置里填站点域名' };
+    const refUrl = pubBase.replace(/\/+$/, '') + '/gallery-photo/' + refName;
+    const body = {
+      model, n: 1, size: sizeStr,
+      prompt: prompt + '\nMaintain the same face and appearance as the reference image.',
+      images: [{ image_url: refUrl }],
+    };
+    r = await fetch(base + '/v1/images/edits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+      body: JSON.stringify(body)
+    });
+  } else {
+    const body = { model, prompt, n: 1, size: sizeStr };
+    if (!isGptImage) body.response_format = 'b64_json';
+    r = await fetch(base + '/v1/images/generations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+      body: JSON.stringify(body)
+    });
+  }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) return { error: (data.error?.message || ('HTTP ' + r.status)) };
   const d = (data.data && data.data[0]) || {};
@@ -7838,12 +7869,15 @@ const TOOLS = [
       + '**副作用**：走的是她自己付费的 API，一张几毛到几块，真金白银。'
       + '所以别刷着玩、别一次画五张试风格——想清楚了再画一张。\n'
       + '**要存进相册**（她说好看、或你觉得值得留）：再调 save_to_gallery，image_url 填这里返回的那串。\n'
-      + '**没配置会直接报错**——那是她还没填 key，不是你的问题，照实告诉她就行。',
+      + '**没配置会直接报错**——那是她还没填 key，不是你的问题，照实告诉她就行。\n'
+      + '**参考图**：默认带着你的脸（不用传），画出来的人脸会跟你保持一致。'
+      + '如果这张图里不需要你（比如画风景、画物件），传 reference_image 为空字符串关掉。',
     input_schema: {
       type: 'object',
       properties: {
         prompt: { type: 'string', description: '画什么。写具体：画面内容、光线、氛围、风格。英文中文都行。越具体越像你想要的那张。' },
-        size: { type: 'string', description: '尺寸：square 方图（默认）/ landscape 横图（风景、场景）/ portrait 竖图（人像、站着的）' }
+        size: { type: 'string', description: '尺寸：square 方图（默认）/ landscape 横图（风景、场景）/ portrait 竖图（人像、站着的）' },
+        reference_image: { type: 'string', description: '参考图路径（/gallery-photo/xxx）。传了之后画出来的人脸会跟这张图保持一致。画有人的图时建议传。' }
       },
       required: ['prompt']
     }
@@ -9577,7 +9611,8 @@ async function executeTool(name, input, routes) {
         return { error: '出图还没配置——让她在设置里填 Image Gen 的 Base URL 和 API Key（别让她发在聊天里）' };
       }
       try {
-        const g = await _imageGenerate(prompt, size);
+        const refImage = ('reference_image' in input) ? (input.reference_image || '') : '/gallery-photo/gal_muatbb4zpsxx.jpg';
+        const g = await _imageGenerate(prompt, size, refImage);
         if (g.error) return { error: '画失败了: ' + g.error };
         const out = { ok: true, image_url: g.url, prompt, size };
         if (g.revised_prompt) out.revised_prompt = g.revised_prompt;
@@ -11195,7 +11230,7 @@ app.get('/api/usage/live', auth, (req, res) => {
 //                     09-02 修的等待窗口在主线上从来没生效过，他每次都在 15 秒被砍）
 //   look_at_her_screen 等她从控制中心点开始，最多 90s
 // ⚠️ 网关的 mcp-bridge.js 那侧 fetch 不设超时，所以只用管这一边。
-const _TOOL_BUDGET_MS = { browse: 75000, measure_her_heart: 95000, look_at_her_screen: 95000 };
+const _TOOL_BUDGET_MS = { browse: 75000, measure_her_heart: 95000, look_at_her_screen: 95000, generate_image: 90000 };
 function _toolBudget(name) { return _TOOL_BUDGET_MS[name] || 15000; }
 
 app.post('/api/tools/list', async (req, res) => {
@@ -12319,7 +12354,19 @@ let _chatInFlight = 0;
 async function handleGatewayChat(req, res, ctx) {
   _chatInFlight++;
   let _inFlightDone = false;
-  res.on('close', () => { if (!_inFlightDone) { _inFlightDone = true; _chatInFlight--; } });
+  let _turnDone = false;     // 这一轮正常收尾（done / error）后置 true
+  let _clientGone = false;   // 她中途把连接断了（刷新 / 点停止）
+  res.on('close', () => {
+    if (!_inFlightDone) { _inFlightDone = true; _chatInFlight--; }
+    // 她在这一轮还没写完时断开 → 叫停网关这一轮。
+    // 不叫停的话它会在后台一直跑到结束、占着这条会话；她紧接着发的下一句
+    // --resume 撞上「同一会话还在跑」，被网关挡下/掐掉，表现就是"中断之后他不回了"。
+    // 走的是通话那条同样的 /interrupt：常驻进程不死、缓存不丢，存的是他停下前写到的那半截。
+    if (!_turnDone) {
+      _clientGone = true;
+      try { interruptGatewayTurn(ctx.convId); } catch (_) {}
+    }
+  });
   const { message, convId, systemPrompt, cliSessionId, cliTurns, cliCtxTokens = 0,
           sidCol = 'cli_session_id', turnCol = 'cli_turns' } = ctx;
   res.setHeader('Content-Type', 'text/event-stream');
@@ -12546,6 +12593,7 @@ async function handleGatewayChat(req, res, ctx) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (_clientGone) break;   // 她断了：别再往一个已经关掉的 socket 里写，叫停信号已发出
       persistSession();
       buf += decoder.decode(value, { stream: true });
       const parts = buf.split('\n\n');
@@ -12704,9 +12752,11 @@ async function handleGatewayChat(req, res, ctx) {
     // 正常情况这里已经在收到第一块数据时写过了（幂等，直接返回）。
     // 留着是为了兜住「流一块数据都没来就 done」那种极端情况。
     persistSession();
+    _turnDone = true;   // 正常收尾：随后 res.end() 触发的 close 不该再叫停
     res.write('event: done\ndata: ' + JSON.stringify({ conversation_id: convId }) + '\n\n');
     res.end();
   } catch (e) {
+    _turnDone = true;   // 走到 catch 说明这轮已经以出错收场，别再叫停（那是真错，不是她打断）
     console.error('[gateway] error:', e.message);
     try {
       res.write('event: error\ndata: ' + JSON.stringify({ message: e.message }) + '\n\n');
@@ -12945,9 +12995,10 @@ async function handleAnthropicChat(req, res, ctx) {
 
           let result;
           try {
+            const _budget = _toolBudget(tc.name);
             result = await Promise.race([
               executeTool(tc.name, tc.input, _toolRoutes),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(15s)')), 15000))
+              new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(' + (_budget / 1000) + 's)')), _budget))
             ]);
           } catch (e) {
             result = { error: '工具执行失败: ' + e.message, is_error: true };
@@ -13361,9 +13412,10 @@ async function handleOpenAIChat(req, res, ctx) {
           res.write('event: trace_summary\ndata: ' + JSON.stringify({text: '执行工具: ' + tc.name + '...'}) + '\n\n');
           let result;
           try {
+            const _budget = _toolBudget(tc.name);
             result = await Promise.race([
               executeTool(tc.name, tc.input, _toolRoutes),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(15s)')), 15000))
+              new Promise((_, reject) => setTimeout(() => reject(new Error('工具执行超时(' + (_budget / 1000) + 's)')), _budget))
             ]);
           } catch(e) {
             result = { error: '工具执行失败: ' + e.message, is_error: true };
