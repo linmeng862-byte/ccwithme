@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=20260923p">
+<link rel="stylesheet" href="/css/home.css?v=20260923s">
 <!-- 站酷快乐体：只用于自定义壁纸下的聊天气泡（见 home.css）。若她网络到不了 Google Fonts 会静默回退系统字体。 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -664,7 +664,7 @@
     <div class="tw-desk">
       <div class="tw-paper-wrap"><div class="tw-paper">
         <div class="tw-meta">
-          <label class="tw-meta-title">题头<input id="letterComposeTitle" type="text" placeholder="可留空" maxlength="60" autocomplete="off"></label>
+          <label class="tw-meta-title">信封上<input id="letterComposeTitle" type="text" placeholder="写在信封上的一句话" maxlength="60" autocomplete="off"></label>
           <label class="tw-meta-date">拆信日<input type="date" id="letterComposeDate"><span class="tw-date-hint" id="twDateHint">留空＝他现在就能拆</span></label>
         </div>
         <textarea id="letterComposeBody" placeholder="从这里开始写……" spellcheck="false"></textarea>
@@ -6630,8 +6630,8 @@ var _LOCK_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 function _fmtLetterDate(ts){try{return new Date(ts*1000).toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric'})}catch(e){return''}}
 function _fmtUnlockDate(s){if(!s)return'';var m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s);return m?(m[1]+'年'+parseInt(m[2])+'月'+parseInt(m[3])+'日'):s}
 // —— 信封堆叠 + 拆信三折的状态机（数据仍走 /api/letters；拆开时才异步取正文）——
-var _lxLetters=[],_lxDeck=0,_lxSel=null,_lxState='stack',_lxBusy=false,_lxStartX=0,_lxSwiped=false;
-function openLettersPanel(){var p=$('lettersPanel');p.classList.add('show');p.setAttribute('aria-hidden','false');$('letterComposeView').hidden=true;_lxSel=null;_lxDeck=0;_lxState='stack';_lxBusy=false;var w=$('lxWrap');if(w)w.setAttribute('data-reading','0');loadLetters()}
+var _lxLetters=[],_lxDeck=0,_lxSel=null,_lxState='stack',_lxBusy=false,_lxStartX=0,_lxSwiped=false,_lxFrom='stack',_lxTapT=null;
+function openLettersPanel(){var p=$('lettersPanel');p.classList.add('show');p.setAttribute('aria-hidden','false');$('letterComposeView').hidden=true;_lxSel=null;_lxDeck=0;_lxState='stack';_lxFrom='stack';_lxBusy=false;var w=$('lxWrap');if(w)w.setAttribute('data-reading','0');loadLetters()}
 function closeLettersPanel(){var p=$('lettersPanel');p.classList.remove('show');p.setAttribute('aria-hidden','true')}
 function _lxGreet(){try{var h=new Date().getHours(),t=h<6?'夜深了':h<11?'上午好':h<13?'中午好':h<18?'下午好':'晚上好';$('lxGreeting').innerHTML=escHtml(t)+'，粥粥<strong>按时间翻信，点开阅读</strong>'}catch(e){}}
 async function loadLetters(){var wrap=$('lxWrap'),stage=$('lxStage');if(!wrap||!stage)return;_lxGreet();try{var data=await(await api('/api/letters')).json();_lxLetters=data.letters||[];_lxRender()}catch(e){wrap.setAttribute('data-empty','1');$('lxEmpty').innerHTML='读取失败，稍后再试'}}
@@ -6647,10 +6647,10 @@ function _lxStampSvg(mine,maskId){maskId=maskId||'lxPerf';return '<svg class="lx
   +'<line x1="13" y1="46.5" x2="35" y2="46.5" stroke="currentColor" stroke-width="1" opacity=".3"/>'
   +'<text x="24" y="52.6" text-anchor="middle" font-size="6.4" fill="currentColor" font-family="var(--font-serif),serif">'+(mine?'寄':'信')+'</text>'
   +'</g></svg>'}
-function _lxRender(){var wrap=$('lxWrap'),stage=$('lxStage');if(!_lxLetters.length){wrap.setAttribute('data-empty','1');stage.innerHTML='';$('lxEmpty').innerHTML='还没有信。<br>点右上角「写信」给他写第一封，<br>或者等他给你写来。';return}wrap.setAttribute('data-empty','0');if(_lxDeck>=_lxLetters.length)_lxDeck=0;stage.dataset.state='stack';_lxState='stack';wrap.setAttribute('data-reading','0');stage.innerHTML=_lxLetters.map(function(l,i){var mine=l.sender==='user';var cls='lx-card '+(mine?'from-user':'from-assistant')+(l.locked?' locked':'')+((!mine&&!l.opened&&!l.locked)?' is-unread':'');var subj=l.title?escHtml(l.title):'（没有题头）';var lockTxt=l.locked?(_fmtUnlockDate(l.unlock_date)+'才能拆'):'';return '<button type="button" class="'+cls+'" data-index="'+i+'" aria-label="'+(mine?'我写的信':'Cis 寄来的信')+'：'+subj+'">'
+function _lxRender(){var wrap=$('lxWrap'),stage=$('lxStage');if(!_lxLetters.length){wrap.setAttribute('data-empty','1');stage.innerHTML='';$('lxEmpty').innerHTML='还没有信。<br>点右上角「写信」给他写第一封，<br>或者等他给你写来。';return}wrap.setAttribute('data-empty','0');if(_lxDeck>=_lxLetters.length)_lxDeck=0;stage.dataset.state='stack';_lxState='stack';_lxFrom='stack';wrap.setAttribute('data-reading','0');stage.style.setProperty('--n',_lxLetters.length);stage.innerHTML=_lxLetters.map(function(l,i){var mine=l.sender==='user';var cls='lx-card '+(mine?'from-user':'from-assistant')+(l.locked?' locked':'')+((!mine&&!l.opened&&!l.locked)?' is-unread':'');var subj=l.title?escHtml(l.title):'（没有题头）';var lockTxt=l.locked?(_fmtUnlockDate(l.unlock_date)+'才能拆'):'';return '<button type="button" class="'+cls+'" data-index="'+i+'" style="--i:'+i+';--r:'+(i%2?.45:-.45)+'deg" aria-label="'+(mine?'我写的信':'Cis 寄来的信')+'：'+subj+'">'
   +'<span class="lx-env"><span class="lx-env-back"></span><span class="lx-flap"></span><span class="lx-env-front"></span></span>'
   +'<span class="lx-paper '+_LETTER_FONTS[_letterFont]+'"><span class="lx-panel p1"><span class="lx-face front"></span><span class="lx-face back"></span></span><span class="lx-panel p2"><span class="lx-face front"></span><span class="lx-face back"></span></span><span class="lx-panel p3"><span class="lx-face front"></span><span class="lx-face back"></span></span>'
-  +'<span class="lx-fulltext"><span class="lx-ft-date"></span><span class="lx-ft-body"></span><span class="lx-ft-sign"></span></span></span>'
+  +'<span class="lx-sheets"></span></span>'
   +'<span class="lx-env-pocket"></span>'
   // 地址/邮票/封蜡/提示放在信封正面复制（pocket）之上，不放进 .lx-env —— 那层有 filter 自成层叠，里面的 z-index 盖不过 pocket
   +'<span class="lx-addr"><span class="lx-from">'+(mine?'我写给他的':'Cis 寄来')+'</span><span class="lx-subj">'+subj+'</span><span class="lx-date">'+_fmtLetterDate(l.created_at)+'</span></span>'
@@ -6660,10 +6660,36 @@ function _lxRender(){var wrap=$('lxWrap'),stage=$('lxStage');if(!_lxLetters.leng
   +'<span class="lx-unread">轻点拆开</span></button>'}).join('');_lxSetDepth()}
 function _lxSetDepth(){var n=_lxLetters.length;if(!n)return;var cards=$('lxStage').querySelectorAll('.lx-card');cards.forEach(function(el,i){el.dataset.depth=(i-_lxDeck+n)%n});$('lxCount').textContent=(_lxDeck+1)+' / '+n}
 function _lxShift(step){if(_lxBusy||_lxState!=='stack')return;var n=_lxLetters.length;if(!n)return;_lxDeck=(_lxDeck+step+n)%n;_lxSetDepth();if(navigator.vibrate)navigator.vibrate(7)}
-function _lxSetState(s){_lxState=s;var stage=$('lxStage');stage.dataset.state=s;$('lxWrap').setAttribute('data-reading',s==='reading'?'1':'0');stage.querySelectorAll('.lx-card').forEach(function(el,i){el.classList.toggle('is-sel',i===_lxSel)});$('lxHint').textContent=s==='stack'?'左右翻，点信封拆开':s==='focused'?'再点一次，拆开信封':s==='reading'?'点信纸，把它折回去':s==='closing'?'正在折好…':'点信封，收回所有信'}
-async function _lxFillPaper(l,card){try{var r=await api('/api/letters/'+l.id+'/open',{method:'POST'});if(!r.ok){var e=await r.json().catch(function(){return{}});toast(e.error||'拆不开');return false}var data=await r.json(),lt=data.letter,mine=lt.sender==='user';var ft=card.querySelector('.lx-fulltext');ft.querySelector('.lx-ft-date').textContent=_fmtLetterDate(lt.created_at)+(lt.title?'  ·  '+lt.title:'');ft.querySelector('.lx-ft-body').textContent=lt.content||'';ft.querySelector('.lx-ft-sign').textContent=mine?'—— 粥粥':'—— Cis';ft.scrollTop=0;var ftc='<span class="lx-ftc">'+ft.innerHTML+'</span>';card.querySelectorAll('.lx-panel .lx-face.front').forEach(function(f){f.innerHTML=ftc});card.querySelector('.lx-paper').className='lx-paper '+_LETTER_FONTS[_letterFont];if(!mine&&!lt.opened){/* 已在后端标记 opened */}card.dataset.opened='1';return true}catch(e){toast('拆信失败');return false}}
-async function openLetter(index){var l=_lxLetters[index],card=$('lxStage').querySelector('.lx-card[data-index="'+index+'"]');if(!l||!card)return;_lxBusy=true;var ok=await _lxFillPaper(l,card);if(!ok){_lxBusy=false;return}card.classList.remove('is-unread');if(l.sender!=='user')l.opened=true;_lxSetState('reading');if(navigator.vibrate)navigator.vibrate([10,25,10]);setTimeout(function(){_lxBusy=false},2700)}
-function _applyLetterFont(f){if(!_LETTER_FONTS[f])return;_letterFont=f;try{localStorage.setItem('letter_font',f)}catch(e){}$('lxStage').querySelectorAll('.lx-paper').forEach(function(p){p.className='lx-paper '+_LETTER_FONTS[f]});_syncFontSwitch()}
+function _lxSetState(s){_lxState=s;var stage=$('lxStage');stage.dataset.state=s;$('lxWrap').setAttribute('data-reading',s==='reading'?'1':'0');stage.querySelectorAll('.lx-card').forEach(function(el,i){el.classList.toggle('is-sel',i===_lxSel)});$('lxHint').textContent=s==='stack'?'左右翻，点信封拆开，双击铺开':s==='spread'?'点信封拆开，双击叠回去':s==='focused'?'再点一次，拆开信封':s==='reading'?(_lxPages.length>1?'点信纸翻到下一张，最后一张再点折回去':'点信纸，把它折回去'):s==='closing'?'正在折好…':'点信封，收回所有信'}
+// —— 几张纸：正文按一张纸装得下的量切页。拿一张看不见的 .lx-measure 纸在同一个信纸里量（字体、宽高、内边距全一样），
+//    二分找每页最多放几个字，再往回退到最近的换行/标点断开。签名只在最后一页，日期题头只在第一页 ——
+var _lxCur=null,_lxPages=[],_lxPg=0;
+function _lxFillSheet(inn,text,first,last){inn.textContent='';if(first){var d=document.createElement('span');d.className='lx-ft-date';d.textContent=_lxCur.head;inn.appendChild(d)}var b=document.createElement('span');b.className='lx-ft-body';b.textContent=text;inn.appendChild(b);if(last){var s=document.createElement('span');s.className='lx-ft-sign';s.textContent=_lxCur.sign;inn.appendChild(s)}}
+async function _lxPaginate(){var paper=_lxCur.card.querySelector('.lx-paper'),m=document.createElement('span');m.className='lx-sheet lx-measure';m.innerHTML='<span class="lx-sheet-in"></span>';paper.appendChild(m);var inn=m.firstChild,text=_lxCur.text;
+  // 手写字体是 Google Fonts 按字切的子集，没加载完就量会量错：先把这封信用到的字请求下来（最多等 1.5 秒）
+  try{var fam=getComputedStyle(inn).fontFamily.split(',')[0];await Promise.race([document.fonts.load('16px '+fam,text.slice(0,3000)||'信'),new Promise(function(r){setTimeout(r,1500)})])}catch(e){}
+  function fits(t,first,last){_lxFillSheet(inn,t,first,last);return inn.scrollHeight<=inn.clientHeight+1}
+  var pages=[],rest=text,first=true;
+  while(pages.length<80){if(fits(rest,first,true)){pages.push(rest);break}
+    var lo=1,hi=rest.length,best=1;while(lo<=hi){var mid=(lo+hi)>>1;if(fits(rest.slice(0,mid),first,false)){best=mid;lo=mid+1}else hi=mid-1}
+    if(best<rest.length){for(var j=best;j>best-40&&j>1;j--){if(/[\n。！？!?…，,；;、 ]/.test(rest[j-1])){best=j;break}}}
+    pages.push(rest.slice(0,best).replace(/\n+$/,''));rest=rest.slice(best).replace(/^\n+/,'');first=false}
+  m.remove();_lxPages=pages}
+// 叠好几张纸；gather＝先理齐（刚拆开时跟着三折一起展开，展开完再错开露出纸边）
+function _lxBuildSheets(gather){var box=_lxCur.card.querySelector('.lx-sheets'),n=_lxPages.length;box.innerHTML='';box.classList.toggle('gather',!!gather);_lxPages.forEach(function(t,i){var s=document.createElement('span');s.className='lx-sheet';s.style.setProperty('--tilt',(i%2?.7:-.6)+'deg');s.innerHTML='<span class="lx-sheet-in"></span>'+(n>1?'<span class="lx-pgno">'+(i+1)+' / '+n+'</span>':'');_lxFillSheet(s.firstChild,t,i===0,i===n-1);box.appendChild(s)});_lxPg=0;_lxSetPages()}
+function _lxSetPages(){var ss=_lxCur.card.querySelector('.lx-sheets').children,n=ss.length;for(var i=0;i<n;i++)ss[i].style.setProperty('--p',(i-_lxPg+n)%n);_lxSyncFolds()}
+// 三折上贴的是「现在最上面那一页」：折回去时折的就是正在看的那张
+function _lxSyncFolds(){var s=_lxCur.card.querySelector('.lx-sheets').children[_lxPg];if(!s)return;var html='<span class="lx-ftc">'+s.firstChild.innerHTML+'</span>';_lxCur.card.querySelectorAll('.lx-panel .lx-face.front').forEach(function(f){f.innerHTML=html})}
+// 翻页：往后＝顶上那张往左飞出再塞到最底；往前＝最底那张从左边飞回顶上。不绕圈
+function _lxFlip(dir){var ss=_lxCur.card.querySelector('.lx-sheets').children,n=ss.length,to=_lxPg+dir;if(n<2||to<0||to>=n||_lxBusy)return;_lxBusy=true;
+  if(dir>0){var top=ss[_lxPg];top.classList.add('fly');setTimeout(function(){_lxPg=to;_lxSetPages();top.classList.remove('fly')},290)}
+  else{var back=ss[to];back.classList.add('nofx','fly');void back.offsetWidth;_lxPg=to;_lxSetPages();back.classList.remove('nofx');void back.offsetWidth;back.classList.remove('fly')}
+  if(navigator.vibrate)navigator.vibrate(6);setTimeout(function(){_lxBusy=false},dir>0?520:440)}
+async function _lxFillPaper(l,card){try{var r=await api('/api/letters/'+l.id+'/open',{method:'POST'});if(!r.ok){var e=await r.json().catch(function(){return{}});toast(e.error||'拆不开');return false}var data=await r.json(),lt=data.letter,mine=lt.sender==='user';card.querySelector('.lx-paper').className='lx-paper '+_LETTER_FONTS[_letterFont];_lxCur={card:card,head:_fmtLetterDate(lt.created_at)+(lt.title?'  ·  '+lt.title:''),text:lt.content||'',sign:mine?'粥粥':'Cis'};await _lxPaginate();_lxBuildSheets(true);card.dataset.opened='1';return true}catch(e){toast('拆信失败');return false}}
+async function openLetter(index){var l=_lxLetters[index],card=$('lxStage').querySelector('.lx-card[data-index="'+index+'"]');if(!l||!card)return;_lxBusy=true;var ok=await _lxFillPaper(l,card);if(!ok){_lxBusy=false;return}card.classList.remove('is-unread');if(l.sender!=='user')l.opened=true;_lxSetState('reading');if(navigator.vibrate)navigator.vibrate([10,25,10]);setTimeout(function(){var box=card.querySelector('.lx-sheets');if(box&&_lxState==='reading')box.classList.remove('gather')},2950);setTimeout(function(){_lxBusy=false},2700)}
+function _applyLetterFont(f){if(!_LETTER_FONTS[f])return;_letterFont=f;try{localStorage.setItem('letter_font',f)}catch(e){}$('lxStage').querySelectorAll('.lx-paper').forEach(function(p){p.className='lx-paper '+_LETTER_FONTS[f]});_syncFontSwitch();
+  // 换了字体字宽就变了：正在读的那封重新切页，回到第一张
+  if(_lxState==='reading'&&_lxCur)_lxPaginate().then(function(){_lxBuildSheets(false)})}
 function _syncFontSwitch(){$('lxFontSw').querySelectorAll('button').forEach(function(b){b.classList.toggle('active',b.dataset.font===_letterFont)})}
 async function _deleteLetter(){if(_lxSel==null)return;var l=_lxLetters[_lxSel];if(!l)return;var ok=await askDialog({title:'删掉这封信？',message:'删了就找不回来了。',input:false,confirm:'删除'});if(!ok)return;try{await api('/api/letters/'+l.id,{method:'DELETE'});_lxSel=null;_lxState='stack';await loadLetters()}catch(e){toast('删除失败')}}
 // —— 写信：复古打字机。屏幕键帽点了往光标处打字（触屏不抢焦点，免得弹系统键盘）；点信纸本身走系统键盘/中文输入法。草稿存本机，寄出才清 ——
@@ -6699,16 +6725,24 @@ if($('lettersPanel')){
   $('lxPrev').addEventListener('click',function(){_lxShift(-1)});
   $('lxNext').addEventListener('click',function(){_lxShift(1)});
   var _lxStage=$('lxStage');
-  _lxStage.addEventListener('click',function(e){var card=e.target.closest('.lx-card');if(!card||_lxBusy)return;var index=Number(card.dataset.index);var l=_lxLetters[index];if(!l)return;
-    if(_lxState==='stack'){if(_lxSwiped||index!==_lxDeck){_lxSwiped=false;return}if(l.locked){toast((_fmtUnlockDate(l.unlock_date)||'还没到日子，')+'才能拆');if(navigator.vibrate)navigator.vibrate(20);return}_lxSel=index;_lxSetState('focused');if(navigator.vibrate)navigator.vibrate(12);return}
+  // 堆叠态单击要等 260ms 看是不是双击（双击＝铺开整页）；铺开态点信封直接选中，点空白收回
+  function _lxPick(index){var l=_lxLetters[index];if(!l)return;if(l.locked){toast((_fmtUnlockDate(l.unlock_date)||'还没到日子，')+'才能拆');if(navigator.vibrate)navigator.vibrate(20);return}_lxStage.scrollTop=0;_lxSel=index;_lxSetState('focused');if(navigator.vibrate)navigator.vibrate(12)}
+  function _lxSpread(){_lxBusy=true;_lxSel=null;_lxStage.scrollTop=0;_lxSetState('spread');if(navigator.vibrate)navigator.vibrate([8,30,8]);setTimeout(function(){_lxBusy=false},650)}
+  function _lxCollapse(){_lxSel=null;_lxFrom='stack';_lxStage.scrollTop=0;_lxSetState('stack');_lxSetDepth();if(navigator.vibrate)navigator.vibrate(9)}
+  _lxStage.addEventListener('click',function(e){var card=e.target.closest('.lx-card');if(_lxBusy)return;
+    // 铺开态也等 260ms 分单双击：双击（信封上、空白处都行）叠回去；单击信封拆、单击空白收回
+    if(_lxState==='spread'){if(_lxTapT){clearTimeout(_lxTapT);_lxTapT=null;_lxCollapse();return}_lxTapT=setTimeout(function(){_lxTapT=null;if(_lxState!=='spread')return;if(!card){_lxCollapse();return}var i=Number(card.dataset.index);if(!_lxLetters[i])return;_lxFrom='spread';_lxDeck=i;_lxSetDepth();_lxPick(i)},260);return}
+    if(!card)return;var index=Number(card.dataset.index);var l=_lxLetters[index];if(!l)return;
+    if(_lxState==='stack'){if(_lxSwiped){_lxSwiped=false;return}if(_lxTapT){clearTimeout(_lxTapT);_lxTapT=null;_lxSpread();return}_lxTapT=setTimeout(function(){_lxTapT=null;if(_lxState==='stack'&&index===_lxDeck){_lxFrom='stack';_lxPick(index)}},260);return}
     if(index!==_lxSel)return;
     if(_lxState==='focused'){openLetter(index);return}
-    if(_lxState==='reading'){_lxBusy=true;var _ft=card.querySelector('.lx-fulltext');if(_ft)_ft.scrollTop=0;_lxSetState('closing');setTimeout(function(){_lxSetState('returned');_lxBusy=false},2100);if(navigator.vibrate)navigator.vibrate(9);return}
-    if(_lxState==='returned'){_lxBusy=true;_lxSel=null;_lxSetState('stack');_lxSetDepth();setTimeout(function(){_lxBusy=false},720);if(navigator.vibrate)navigator.vibrate(12)}
+    // 读信：还有下一张就点一下翻过去；最后一张再点才折回去（先把几张理齐一沓）
+    if(_lxState==='reading'){if(_lxSwiped){_lxSwiped=false;return}if(_lxPg<_lxPages.length-1){_lxFlip(1);return}_lxBusy=true;var _box=card.querySelector('.lx-sheets'),_gw=_lxPages.length>1?300:0;if(_box)_box.classList.add('gather');setTimeout(function(){_lxSetState('closing');setTimeout(function(){_lxSetState('returned');_lxBusy=false},2100)},_gw);if(navigator.vibrate)navigator.vibrate(9);return}
+    if(_lxState==='returned'){_lxBusy=true;_lxSel=null;if(_lxFrom==='spread')_lxSetState('spread');else{_lxSetState('stack');_lxSetDepth()}setTimeout(function(){_lxBusy=false},720);if(navigator.vibrate)navigator.vibrate(12)}
   });
-  _lxStage.addEventListener('touchstart',function(e){if(_lxState==='stack')_lxStartX=e.touches[0].clientX},{passive:true});
-  _lxStage.addEventListener('touchend',function(e){if(_lxState!=='stack')return;var dx=e.changedTouches[0].clientX-_lxStartX;if(Math.abs(dx)>38){_lxSwiped=true;_lxShift(dx<0?1:-1);setTimeout(function(){_lxSwiped=false},250)}},{passive:true});
-  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&$('lettersPanel').classList.contains('show')&&_lxState!=='stack'&&!_lxBusy){_lxSel=null;_lxSetState('stack');_lxSetDepth()}});
+  _lxStage.addEventListener('touchstart',function(e){if(_lxState==='stack'||_lxState==='reading')_lxStartX=e.touches[0].clientX},{passive:true});
+  _lxStage.addEventListener('touchend',function(e){if(_lxState!=='stack'&&_lxState!=='reading')return;var dx=e.changedTouches[0].clientX-_lxStartX;if(Math.abs(dx)>38){_lxSwiped=true;if(_lxState==='stack')_lxShift(dx<0?1:-1);else _lxFlip(dx<0?1:-1);setTimeout(function(){_lxSwiped=false},250)}},{passive:true});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&$('lettersPanel').classList.contains('show')&&_lxState!=='stack'&&!_lxBusy)_lxCollapse()});
   _syncFontSwitch();
 }
 // 历史会话分页:只拉最近 PAGE_SIZE 条,顶部按钮再按需加载更早消息

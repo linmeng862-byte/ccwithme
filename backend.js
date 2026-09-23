@@ -7619,7 +7619,8 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: '信的题头，一句话，可留空' },
+        title: { type: 'string', description: '写在信封正面的一句话——她拆开之前唯一看得见的字，像「周日一起去喝咖啡吗」「那天你说的那句我一直记着」。' +
+          '别写成「给粥粥的信」这种标签；也尽量别留空，留空信封上就只剩「没有题头」' },
         content: { type: 'string', description: '信的正文' },
         unlock_date: { type: 'string', description: '解锁日期 YYYY-MM-DD，到这天她才能拆；留空=写完即可拆' }
       },

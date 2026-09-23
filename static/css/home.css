@@ -3137,8 +3137,8 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:0 28px;color:var(--text-faint);font:15px/1.7 var(--font-sans)}
 .lx-wrap[data-empty="1"] .lx-empty{display:flex}
 .lx-wrap[data-empty="1"] .lx-greeting,.lx-wrap[data-empty="1"] .lx-hint,.lx-wrap[data-empty="1"] .lx-deck{display:none}
-.lx-stage{position:absolute;inset:78px 0 92px;perspective:1400px;transform-style:preserve-3d;--env-h:min(36vw,138px);--paper-h:min(118vw,462px)}
-.lx-card{position:absolute;left:50%;top:44%;width:min(84vw,330px);height:min(36vw,138px);margin:calc(min(36vw,138px)/-2) 0 0 calc(min(84vw,330px)/-2);border:0;padding:0;background:transparent;cursor:pointer;transform-style:preserve-3d;transition:transform .72s var(--lx-spring),opacity .42s ease,filter .5s ease;will-change:transform,opacity}
+.lx-stage{position:absolute;inset:78px 0 92px;touch-action:manipulation;perspective:1400px;transform-style:preserve-3d;--env-h:min(36vw,138px);--paper-h:min(118vw,462px)}
+.lx-card{position:absolute;left:50%;top:44%;width:min(84vw,330px);height:min(36vw,138px);margin:calc(min(36vw,138px)/-2) 0 0 calc(min(84vw,330px)/-2);border:0;padding:0;background:transparent;cursor:pointer;transform-style:preserve-3d;transition:transform .72s var(--lx-spring),opacity .42s ease,filter .5s ease,top .62s var(--lx-ease),margin .62s var(--lx-ease),visibility .42s;will-change:transform,opacity}
 .lx-card:focus-visible{outline:2px solid var(--accent);outline-offset:8px;border-radius:3px}
 .lx-env{position:absolute;inset:0;filter:drop-shadow(0 22px 16px rgba(75,70,59,.22));transform-style:preserve-3d}
 .lx-env-back,.lx-env-front{position:absolute;inset:0;border-radius:2px;background:linear-gradient(170deg,#fff 0%,#f7f6f3 100%);border:1px solid #e8e6e1}
@@ -3150,7 +3150,7 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-card.from-assistant .lx-env-pocket{background:linear-gradient(172deg,#fbf1f3,#f3dbe1)}
 .lx-addr{position:absolute;z-index:8;left:18px;bottom:13px;max-width:60%;text-align:left;font-size:11px;line-height:1.35;letter-spacing:0}
 .lx-addr .lx-from{display:block;font-weight:650;color:#3d3024}
-.lx-addr .lx-subj{display:block;color:#6a6156;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lx-addr .lx-subj{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;color:#4f463c;font-size:12px;overflow:hidden;word-break:break-word}
 .lx-addr .lx-date{display:block;margin-top:2px;font-size:9px;color:#9b9184}
 .lx-stamp{position:absolute;z-index:9;right:15px;top:11px;width:48px;height:58px;transform:rotate(2deg);filter:drop-shadow(0 1px 2px rgba(0,0,0,.26));color:#8a8378}
 .lx-stamp svg{display:block;width:100%;height:100%}
@@ -3176,41 +3176,60 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-panel.p1:after{background:linear-gradient(0deg,rgba(60,44,28,.48),rgba(60,44,28,.12))}
 .lx-panel.p3:after{background:linear-gradient(180deg,rgba(60,44,28,.48),rgba(60,44,28,.12))}
 .lx-panel.p2:after{content:"";position:absolute;inset:0;pointer-events:none;transform:translateZ(1px);background:linear-gradient(180deg,rgba(60,44,28,.28),transparent 30%,transparent 70%,rgba(60,44,28,.28));transition:opacity .85s var(--lx-ease)}
-/* 展开后留两道折痕 */
-.lx-paper:after{content:"";position:absolute;z-index:10;inset:0;pointer-events:none;opacity:0;transition:opacity .4s;background:linear-gradient(180deg,transparent calc(33.333% - 3px),rgba(90,70,50,.10) calc(33.333% - 1px),rgba(255,255,255,.9) 33.333%,rgba(90,70,50,.06) calc(33.333% + 2px),transparent calc(33.333% + 5px),transparent calc(66.666% - 3px),rgba(90,70,50,.10) calc(66.666% - 1px),rgba(255,255,255,.9) 66.666%,rgba(90,70,50,.06) calc(66.666% + 2px),transparent calc(66.666% + 5px))}
+/* 展开后留两道折痕：画在每张 .lx-sheet 上，翻页时折痕跟着纸走 */
+.lx-sheet:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent calc(33.333% - 3px),rgba(90,70,50,.10) calc(33.333% - 1px),rgba(255,255,255,.9) 33.333%,rgba(90,70,50,.06) calc(33.333% + 2px),transparent calc(33.333% + 5px),transparent calc(66.666% - 3px),rgba(90,70,50,.10) calc(66.666% - 1px),rgba(255,255,255,.9) 66.666%,rgba(90,70,50,.06) calc(66.666% + 2px),transparent calc(66.666% + 5px))}
 .lx-panel.p1{top:0;z-index:3;transform-origin:50% 100%;transform:rotateX(-179deg)}
 .lx-panel.p2{top:33.333%;z-index:2}
 .lx-panel.p3{top:66.666%;z-index:1;transform-origin:50% 0;transform:rotateX(179deg)}
-.lx-face{position:absolute;inset:0;display:block;overflow:hidden;backface-visibility:hidden;background-color:#fffefb;background-image:linear-gradient(90deg,transparent 35px,rgba(231,99,99,.34) 35px,rgba(231,99,99,.34) 36px,transparent 36px),repeating-linear-gradient(0deg,transparent 0 11px,rgba(96,150,206,.14) 11px 12px),repeating-linear-gradient(0deg,transparent 0 59px,rgba(78,128,184,.16) 59px 60px);box-shadow:0 0 0 1px #ebe7df inset}
+/* 白纸：不画线（汉字方块字用不上法文格），只留一层很淡的纸纹噪点 + 顶上略亮的光，质感交给折痕和阴影 */
+.lx-face{position:absolute;inset:0;display:block;overflow:hidden;backface-visibility:hidden}
+.lx-face,.lx-sheet{background-color:#fdfcfa;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .42 0 0 0 0 .38 0 0 0 0 .32 .07 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),linear-gradient(180deg,#fff,#f9f8f5);box-shadow:0 0 0 1px #eceae5 inset}
 .lx-face.back{transform:rotateX(180deg);background-color:#fdfbf7}
-/* 完整正文层：铺满整张展开后的信纸，可滚动，长信不丢字（安全网） */
-.lx-fulltext{position:absolute;z-index:9;inset:0;opacity:0;pointer-events:none;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:26px 30px 30px 49px;text-align:left;color:#3a2f24;transition:opacity .3s ease}
-.lx-fulltext::-webkit-scrollbar{display:none}
-/* 正文第一屏拷一份分贴在三折的正面上：展开时字跟着纸翻；翻平了再换成能滚动的 .lx-fulltext，位置一模一样所以看不出接缝 */
-.lx-ftc{position:absolute;left:0;right:0;height:300%;overflow:hidden;padding:26px 30px 30px 49px;text-align:left;color:#3a2f24;pointer-events:none}
+/* 几张纸：正文按一张装得下的量切页（JS 量出来的，不滚动），一页一张 .lx-sheet 叠着，展开后才现身盖在三折上。
+   --p＝离顶上第几张（0 最上），往右下错开一点露出纸边；.gather＝全理齐（刚展开 / 折回去前）；
+   翻页＝顶上那张 .fly 往左飞出，再塞到最底 */
+.lx-sheets{position:absolute;z-index:9;inset:0;opacity:0;pointer-events:none;transition:opacity .3s ease}
+.lx-sheet{position:absolute;inset:0;overflow:hidden;box-shadow:0 0 0 1px #eceae5 inset,0 1px 4px rgba(60,44,28,.10);z-index:calc(40 - var(--p,0));transform:translate(calc(min(var(--p,0),3) * 3px),calc(min(var(--p,0),3) * 6px)) rotate(calc(min(var(--p,0),3) * var(--tilt,.7deg)));transition:transform .42s var(--lx-ease)}
+.lx-sheets.gather .lx-sheet{transform:none}
+.lx-sheet.fly{transform:translate(-112%,12px) rotate(-8deg);transition:transform .3s cubic-bezier(.5,0,.75,.3)}
+.lx-sheet.nofx{transition:none!important}
+.lx-sheet.lx-measure{visibility:hidden;z-index:-1;transform:none}
+.lx-sheet-in{position:absolute;inset:0;overflow:hidden;padding:28px 30px 30px;text-align:left;color:#3a2f24}
+.lx-pgno{position:absolute;left:0;right:0;bottom:11px;text-align:center;font:11px/1 var(--font-sans);letter-spacing:.08em;color:#b3aa9f}
+/* 当前那一页拷一份分贴在三折的正面上：展开 / 折回时字跟着纸翻；翻平了由 .lx-sheet 接手，位置一模一样所以看不出接缝 */
+.lx-ftc{position:absolute;left:0;right:0;height:300%;overflow:hidden;padding:28px 30px 30px;text-align:left;color:#3a2f24;pointer-events:none}
 .lx-panel.p2 .lx-ftc{top:-100%}.lx-panel.p3 .lx-ftc{top:-200%}
-/* 可滚动那份一现身，贴纸拷贝立刻隐掉，不然一滚就是两层字；折回去时拷贝立刻回来 */
+/* 纸一现身，贴纸拷贝就隐掉（翻页时纸边露出来不会看见底下还有一层字）；折回去时拷贝立刻回来 */
 /* 拷贝是拆信那一刻才塞进去的新元素，transition 没有起点会直接生效，所以用 animation 的延迟 */
 @keyframes lxHideLater{to{visibility:hidden}}
 .lx-stage[data-state="reading"] .is-sel .lx-ftc{animation:lxHideLater 0s 2.9s forwards}
-.lx-fulltext .lx-ft-date,.lx-ftc .lx-ft-date{display:block;font-size:12px;color:#8a827a;margin-bottom:14px}
-.lx-fulltext .lx-ft-body,.lx-ftc .lx-ft-body{font-size:16px;line-height:24px;white-space:pre-wrap;word-break:break-word}
-.lx-fulltext .lx-ft-sign,.lx-ftc .lx-ft-sign{display:block;margin-top:14px;font-size:19px}
-.lx-paper.font-mashan .lx-fulltext,.lx-paper.font-mashan .lx-ftc{font-family:'Ma Shan Zheng',KaiTi,STKaiti,serif}
-.lx-paper.font-longcang .lx-fulltext,.lx-paper.font-longcang .lx-ftc{font-family:'Long Cang',KaiTi,STKaiti,cursive}
-.lx-paper.font-zhimang .lx-fulltext,.lx-paper.font-zhimang .lx-ftc{font-family:'Zhi Mang Xing',KaiTi,STKaiti,cursive}
+.lx-sheet-in .lx-ft-date,.lx-ftc .lx-ft-date{display:block;font-size:12px;color:#8a827a;margin-bottom:14px}
+.lx-sheet-in .lx-ft-body,.lx-ftc .lx-ft-body{font-size:16px;line-height:24px;white-space:pre-wrap;word-break:break-word}
+.lx-sheet-in .lx-ft-sign,.lx-ftc .lx-ft-sign{display:block;width:max-content;margin:22px 4px 0 auto;font-size:26px;line-height:1.2;color:#2f2720;transform:rotate(-6deg);transform-origin:100% 50%}
+.lx-paper.font-mashan .lx-sheet-in,.lx-paper.font-mashan .lx-ftc{font-family:'Ma Shan Zheng',KaiTi,STKaiti,serif}
+.lx-paper.font-longcang .lx-sheet-in,.lx-paper.font-longcang .lx-ftc{font-family:'Long Cang',KaiTi,STKaiti,cursive}
+.lx-paper.font-zhimang .lx-sheet-in,.lx-paper.font-zhimang .lx-ftc{font-family:'Zhi Mang Xing',KaiTi,STKaiti,cursive}
 /* 堆叠态 */
-.lx-stage[data-state="stack"] .lx-card{opacity:0;pointer-events:none}
+/* 藏起来的信封除了 opacity:0 还要 visibility:hidden：iOS Safari 在划动翻信封的动画被打断时偶尔不重画，
+   透明度已经是 0 的信封还留在屏幕上（她拆信时信纸底下露出别的信封）。visibility 跟着 .42s 离散过渡，淡出放完才藏 */
+.lx-stage[data-state="stack"] .lx-card{opacity:0;visibility:hidden;pointer-events:none}
+.lx-stage[data-state="stack"] .lx-card[data-depth="0"],.lx-stage[data-state="stack"] .lx-card[data-depth="1"],.lx-stage[data-state="stack"] .lx-card[data-depth="2"]{visibility:visible}
 .lx-stage[data-state="stack"] .lx-card[data-depth="0"]{opacity:1;pointer-events:auto;transform:translate(0,8px) rotate(0) scale(1);z-index:6}
 .lx-stage[data-state="stack"] .lx-card[data-depth="1"]{opacity:1;transform:translate(0,-14px) rotate(-1deg) scale(.975);z-index:5}
 .lx-stage[data-state="stack"] .lx-card[data-depth="2"]{opacity:1;transform:translate(0,-29px) rotate(.8deg) scale(.95);z-index:4}
 .lx-stage[data-state="stack"] .lx-card[data-depth="0"]:hover{transform:translate(0,-4px) rotate(0) scale(1.02)}
 .lx-stage:not([data-state="stack"])~.lx-deck{opacity:0;pointer-events:none}
+/* 铺开：双击信封堆 → 一封封往下排满整页（--i 是时间序，0 最新在最上），纸面能滚；点空白处收回 */
+.lx-stage[data-state="spread"]{overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.lx-stage[data-state="spread"]::-webkit-scrollbar{display:none}
+.lx-stage[data-state="spread"]:after{content:"";position:absolute;left:0;width:1px;height:1px;top:calc(var(--n,1) * (var(--env-h) + 14px) + 24px)}
+.lx-stage[data-state="spread"] .lx-card{opacity:1;visibility:visible;pointer-events:auto;top:calc(10px + var(--i) * (var(--env-h) + 14px));margin-top:0;transform:rotate(var(--r,0deg));transition-delay:min(calc(var(--i) * 40ms),360ms);z-index:auto}
+.lx-stage[data-state="spread"] .lx-card:hover{transform:translateY(-3px) rotate(0)}
 /* 聚焦 / 阅读 / 收回 */
 .lx-stage[data-state="focused"] .lx-card.is-sel,.lx-stage[data-state="returned"] .lx-card.is-sel{transform:translate(0,0) rotate(0);z-index:10}
-.lx-stage[data-state="focused"] .lx-card:not(.is-sel),.lx-stage[data-state="returned"] .lx-card:not(.is-sel){opacity:0;filter:blur(3px);pointer-events:none}
+.lx-stage[data-state="focused"] .lx-card:not(.is-sel),.lx-stage[data-state="returned"] .lx-card:not(.is-sel){opacity:0;visibility:hidden;filter:blur(3px);pointer-events:none}
 .lx-stage[data-state="reading"] .lx-card.is-sel{transform:translateY(44px) scale(.95);z-index:11;cursor:pointer}
-.lx-stage[data-state="reading"] .lx-card:not(.is-sel){opacity:0;pointer-events:none}
+.lx-stage[data-state="reading"] .lx-card:not(.is-sel){opacity:0;visibility:hidden;pointer-events:none}
 .lx-stage[data-state="reading"] .is-sel .lx-flap{transform:rotateX(178deg);z-index:1}
 /* 抽信：信（折着的中间那折）先缩着坐在信封里，被 .lx-env-pocket（信封正面的复制）挡住下半，只从 V 口露一点；
    抽出到信封口上方，再落到阅读位。三段用关键帧；--env-h/--paper-h 在 .lx-stage 上 */
@@ -3229,16 +3248,15 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-stage[data-state="reading"] .is-sel .p2:after{opacity:0;transition-delay:1.9s}
 .lx-stage[data-state="reading"] .is-sel .p1:after{opacity:0;transition-delay:1.45s}
 .lx-stage[data-state="reading"] .is-sel .p3:after{opacity:0;transition-delay:1.8s}
-.lx-stage[data-state="reading"] .is-sel .lx-paper:after{opacity:1;transition-delay:2.65s}
-.lx-stage[data-state="reading"] .is-sel .lx-fulltext{opacity:1;pointer-events:auto;transition:opacity .12s 2.8s}
+.lx-stage[data-state="reading"] .is-sel .lx-sheets{opacity:1;pointer-events:auto;transition:opacity .12s 2.8s}
 .lx-stage[data-state="reading"] .is-sel .lx-env{transform:translateY(150px);opacity:.22;transition-delay:1.05s}
 /* 信封正面的复制：选中那一刻就垫上（跟正面一模一样看不出来），抽信时挡住信的下半 */
 .lx-stage[data-state="focused"] .is-sel .lx-env-pocket,.lx-stage[data-state="returned"] .is-sel .lx-env-pocket{opacity:1}
 .lx-stage[data-state="reading"] .is-sel .lx-env-pocket{transform:translateY(150px);opacity:.22;transition-delay:1.05s}
 .lx-stage[data-state="reading"] .is-sel .lx-addr,.lx-stage[data-state="reading"] .is-sel .lx-stamp,.lx-stage[data-state="reading"] .is-sel .lx-seal{opacity:0;transition:opacity .2s}
 .lx-stage[data-state="closing"] .lx-card.is-sel{transform:translateY(42px) scale(.96);z-index:11}
-.lx-stage[data-state="closing"] .lx-card:not(.is-sel){opacity:0;pointer-events:none}
-.lx-stage[data-state="closing"] .is-sel .lx-fulltext{opacity:0;transition:opacity .15s}
+.lx-stage[data-state="closing"] .lx-card:not(.is-sel){opacity:0;visibility:hidden;pointer-events:none}
+.lx-stage[data-state="closing"] .is-sel .lx-sheets{opacity:0;transition:opacity .15s}
 .lx-stage[data-state="closing"] .is-sel .lx-paper{opacity:1;animation:lxPush .95s cubic-bezier(.45,.05,.25,1) 1.05s both}
 .lx-stage[data-state="closing"] .is-sel .lx-flap{transform:rotateX(178deg);z-index:1}
 .lx-stage[data-state="closing"] .is-sel .p1{transform:rotateX(-179deg);transition-delay:.04s}
@@ -3259,7 +3277,7 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-fontsw{display:flex;gap:4px;background:var(--bg-sunken);border-radius:999px;padding:3px}
 .lx-fontsw button{white-space:nowrap;flex:none;border:0;background:none;border-radius:999px;padding:6px 11px;font:13px/1 var(--font-sans);color:var(--text-secondary);cursor:pointer}
 .lx-fontsw button.active{background:var(--bg-primary);color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,.12)}
-@media(prefers-reduced-motion:reduce){.lx-card,.lx-env,.lx-paper,.lx-panel,.lx-flap,.lx-fulltext{transition-duration:.01ms!important}}
+@media(prefers-reduced-motion:reduce){.lx-card,.lx-env,.lx-paper,.lx-panel,.lx-flap,.lx-sheets,.lx-sheet{transition-duration:.01ms!important}}
 
 /* ===== 写信：复古打字机（.tw-*，改编自原型 breakfast.html；不限字数，信纸内滚动；多了拆信日）===== */
 .letter-compose.tw{--twb:env(safe-area-inset-bottom,0px);--tw-ease:cubic-bezier(.2,.8,.2,1)}
