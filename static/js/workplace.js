@@ -155,15 +155,17 @@
     // 存 localStorage，每轮随消息传下去 —— /workplace 是每轮 spawn 一个新 CLI，
     // 所以这两个参数每轮都能换，不用重开什么进程。
     // 09-16 她定的三档：Opus 4.6 / 4.8 / 5（她不是 Max，「订阅直连(Max)」那种不要）。
+    // 09-23 加 Opus 5.5 并设为默认。顺手把存储键从 wp_model 换成 wp_model2 ——
+    //   否则她浏览器里存着的旧 wp_model=4.8 会盖掉新默认，光改代码她那边看不到变化。
     // 显示名和真正传下去的 id 分开存 —— id 直接进 CLI 的 --model。
-    var WP_MODELS = ['claude-opus-4-6', 'claude-opus-4-8', 'claude-opus-5'];
-    var WP_MODEL_LABEL = { 'claude-opus-4-6': 'Opus 4.6', 'claude-opus-4-8': 'Opus 4.8', 'claude-opus-5': 'Opus 5' };
+    var WP_MODELS = ['claude-opus-4-6', 'claude-opus-4-8', 'claude-opus-5', 'claude-opus-5-5'];
+    var WP_MODEL_LABEL = { 'claude-opus-4-6': 'Opus 4.6', 'claude-opus-4-8': 'Opus 4.8', 'claude-opus-5': 'Opus 5', 'claude-opus-5-5': 'Opus 5.5' };
     var WP_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
     function wpPref(k, def, ok) {
       var v; try { v = localStorage.getItem('wp_' + k); } catch (e) {}
       return (v && ok.indexOf(v) >= 0) ? v : def;
     }
-    var wpModel = wpPref('model', 'claude-opus-4-8', WP_MODELS);
+    var wpModel = wpPref('model2', 'claude-opus-5-5', WP_MODELS);
     var wpEffort = wpPref('effort', 'high', WP_EFFORTS);
     // 点一下换下一个，不弹菜单 —— 顶栏就这么点地方，三档four档转一圈比开个面板快。
     // 当前值存在 b._v 上，不从 textContent 反推（显示名和 id 不是一个东西）。
@@ -181,7 +183,7 @@
       return b;
     }
     var mdChip = pickChip(WP_MODELS, wpModel, WP_MODEL_LABEL, function (v) {
-      wpModel = v; try { localStorage.setItem('wp_model', v); } catch (e) {}
+      wpModel = v; try { localStorage.setItem('wp_model2', v); } catch (e) {}
       if (wsFoot) wsFoot.textContent = (WP_MODEL_LABEL[wpModel] || wpModel) + ' · ' + wpEffort;
     });
     mdChip.title = '模型。下一句起生效';
@@ -517,7 +519,7 @@
     // `/model` `/effort` 本来就认（09-16 她提醒的：「不是用 / 就可以吗」）。
     // 不用重开房间、也不用我在 spawn 参数里传。对话页那条仍旧用存下来的值。
     var wsModelSel = wsSelect(WP_MODELS, wpModel, WP_MODEL_LABEL, function (v) {
-      wpModel = v; try { localStorage.setItem('wp_model', v); } catch (e) {}
+      wpModel = v; try { localStorage.setItem('wp_model2', v); } catch (e) {}
       mdChip.textContent = WP_MODEL_LABEL[v] || v; mdChip._v = v;
       if (roomOn) roomSend('/model ' + v, ['Enter']);
       wsFootSync();

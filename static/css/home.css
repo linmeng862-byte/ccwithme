@@ -202,6 +202,16 @@ button{font:inherit;border:0;background:none;color:inherit;cursor:pointer}textar
 #input,textarea,input{-webkit-user-select:text;user-select:text}
 .load-more-history{align-self:center;margin:8px auto 20px;padding:8px 16px;background:var(--bg-surface);color:var(--text-secondary);border:1px solid var(--border);border-radius:var(--radius-full);font-family:var(--font-sans);font-size:13px;cursor:pointer}
 .load-more-history:active{background:var(--bg-sunken)}
+/* 09-23：铺了壁纸时（html.wall-on），这几处别再露奶油底色，跟输入框那套玻璃统一。
+   附件弹窗(.attach-sheet)、选完图/文件的预览条(.attachment-chip)、上翻"加载之前的 N 条"(.load-more-history)。
+   只在有壁纸时覆盖；没壁纸时底下是纯色，仍走原来的奶油底。 */
+html.wall-on .attach-sheet,
+html.wall-on .attachment-chip,
+html.wall-on .load-more-history{
+  background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+}
 .md p{margin-bottom:4px}.md p:last-child{margin-bottom:0}.md>*+*{margin-top:0}.md h1,.md h2,.md h3{font-family:var(--font-serif);line-height:1.35;margin-top:1.4em}.md ul,.md ol{padding-left:1.4em}.md a{color:var(--accent)}.md blockquote{border-left:2px solid var(--border-strong);padding-left:var(--space-4);color:var(--text-secondary)}.md code{font-family:var(--font-mono);font-size:.875em;background:var(--bg-sunken);border-radius:var(--space-1);padding:.15em .4em}.md pre{padding:var(--space-4);overflow:auto;background:var(--bg-sunken);border:1px solid var(--border);border-radius:var(--radius-md)}.md pre code{padding:0;background:none}
 .thinking-row{display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:8px;color:var(--text-secondary);font-size:var(--text-sm)}.thinking-row.hidden{display:none}.thinking-status-line{display:flex;align-items:center;gap:8px;min-width:0;flex:1}.thinking-clock-icon{width:14px;height:14px;flex:none}.thinking-status-line>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 /* === Trail logo:跟随 row 末尾,永远在最后内容下方一行 === */

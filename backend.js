@@ -9611,7 +9611,7 @@ async function executeTool(name, input, routes) {
         return { error: '出图还没配置——让她在设置里填 Image Gen 的 Base URL 和 API Key（别让她发在聊天里）' };
       }
       try {
-        const refImage = ('reference_image' in input) ? (input.reference_image || '') : '/gallery-photo/gal_muatbb4zpsxx.jpg';
+        const refImage = ('reference_image' in input) ? (input.reference_image || '') : '/gallery-photo/gal_mubad1ffe7h0.jpg';
         const g = await _imageGenerate(prompt, size, refImage);
         if (g.error) return { error: '画失败了: ' + g.error };
         const out = { ok: true, image_url: g.url, prompt, size };
@@ -12284,7 +12284,7 @@ function recentRecap(convId) {
 
 // 前端传什么都不能直接拼进 CLI 参数 —— 白名单，认不出就回默认。
 // 这份要跟 /api/models 和网关的 MODEL_WHITELIST 三处一致。
-const CLI_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-fable-5'];
+const CLI_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-5-5', 'claude-fable-5'];
 const CLI_EFFORTS = ['low', 'medium', 'high'];
 function _pickModel(m) {
   return CLI_MODELS.indexOf(String(m || '')) !== -1 ? String(m) : 'claude-sonnet-4-6';
@@ -15237,6 +15237,7 @@ app.get('/api/models', (req, res) => {
       // 直接标在选单上 —— 缓存不跨模型共享，切一次就是一次。
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', desc: '日常。最省，默认就它', thinking: 'adaptive', primary: true, cold: 0.26 },
       { id: 'claude-opus-4-6', label: 'Opus 4.6', desc: '要他想深一点的时候', thinking: 'adaptive', primary: false, cold: 0.43 },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', desc: '最新的 Opus', thinking: 'adaptive', primary: false, cold: 0.50 },
       { id: 'claude-fable-5', label: 'Fable 5', desc: '最聪明也最贵，思考常开', thinking: 'adaptive', primary: false, cold: 0.86, noExtended: true },
     ],
     // 09-11：服务端记着的那份（`_rememberCliChoice`）。给前端当「这台设备还没选过」时的显示值。
