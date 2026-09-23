@@ -3128,3 +3128,209 @@ html.wall-on #lettersPanel .letter-compose{
   backdrop-filter:var(--glass-blur);
   -webkit-backdrop-filter:var(--glass-blur);
 }
+
+/* ===== 信封堆叠 + 拆信三折（.lx-*，改编自原型；数据走 /api/letters，跟旧 .letter-envelope 那套并存不冲突）===== */
+:root{--lx-ease:cubic-bezier(.22,.78,.2,1);--lx-spring:cubic-bezier(.2,1.12,.35,1)}
+.lx-wrap{flex:1;min-height:0;position:relative;overflow:hidden;isolation:isolate}
+.lx-greeting{position:absolute;z-index:4;top:14px;left:24px;right:24px;font-size:15px;line-height:1.35;color:var(--text-secondary);transition:opacity .45s ease,transform .6s var(--lx-ease)}
+.lx-greeting strong{display:block;color:var(--text-primary);font-weight:600;font-size:16px}
+.lx-empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:0 28px;color:var(--text-faint);font:15px/1.7 var(--font-sans)}
+.lx-wrap[data-empty="1"] .lx-empty{display:flex}
+.lx-wrap[data-empty="1"] .lx-greeting,.lx-wrap[data-empty="1"] .lx-hint,.lx-wrap[data-empty="1"] .lx-deck{display:none}
+.lx-stage{position:absolute;inset:78px 0 92px;perspective:1400px;transform-style:preserve-3d;--env-h:min(36vw,138px);--paper-h:min(118vw,462px)}
+.lx-card{position:absolute;left:50%;top:44%;width:min(84vw,330px);height:min(36vw,138px);margin:calc(min(36vw,138px)/-2) 0 0 calc(min(84vw,330px)/-2);border:0;padding:0;background:transparent;cursor:pointer;transform-style:preserve-3d;transition:transform .72s var(--lx-spring),opacity .42s ease,filter .5s ease;will-change:transform,opacity}
+.lx-card:focus-visible{outline:2px solid var(--accent);outline-offset:8px;border-radius:3px}
+.lx-env{position:absolute;inset:0;filter:drop-shadow(0 22px 16px rgba(75,70,59,.22));transform-style:preserve-3d}
+.lx-env-back,.lx-env-front{position:absolute;inset:0;border-radius:2px;background:linear-gradient(170deg,#fff 0%,#f7f6f3 100%);border:1px solid #e8e6e1}
+.lx-flap{position:absolute;z-index:5;left:0;right:0;top:0;height:70%;transform-origin:50% 0;transform-style:preserve-3d;transition:transform .68s var(--lx-ease);background:linear-gradient(176deg,#fff,#f7f6f3);clip-path:polygon(0 0,100% 0,50% 100%);filter:drop-shadow(0 1px 0 #e7e4de)}
+.lx-env-front{z-index:4;clip-path:polygon(0 8%,50% 72%,100% 8%,100% 100%,0 100%);background:linear-gradient(172deg,#fbfaf8,#f3f1ed)}
+.lx-card.from-user .lx-env-front{background:linear-gradient(172deg,#fdf7ea,#f4ead2)}
+.lx-card.from-assistant .lx-env-front{background:linear-gradient(172deg,#fbf1f3,#f3dbe1)}
+.lx-card.from-user .lx-env-pocket{background:linear-gradient(172deg,#fdf7ea,#f4ead2)}
+.lx-card.from-assistant .lx-env-pocket{background:linear-gradient(172deg,#fbf1f3,#f3dbe1)}
+.lx-addr{position:absolute;z-index:8;left:18px;bottom:13px;max-width:60%;text-align:left;font-size:11px;line-height:1.35;letter-spacing:0}
+.lx-addr .lx-from{display:block;font-weight:650;color:#3d3024}
+.lx-addr .lx-subj{display:block;color:#6a6156;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lx-addr .lx-date{display:block;margin-top:2px;font-size:9px;color:#9b9184}
+.lx-stamp{position:absolute;z-index:9;right:15px;top:11px;width:48px;height:58px;transform:rotate(2deg);filter:drop-shadow(0 1px 2px rgba(0,0,0,.26));color:#8a8378}
+.lx-stamp svg{display:block;width:100%;height:100%}
+.lx-card.from-user .lx-stamp{color:#B8892F}
+.lx-card.from-assistant .lx-stamp{color:#B24E68}
+.lx-seal{position:absolute;z-index:10;left:50%;top:56%;transform:translate(-50%,-50%);width:34px;height:34px;display:grid;place-items:center;border-radius:50%;background:#9a3b46;color:#fff;box-shadow:0 3px 7px rgba(0,0,0,.3);opacity:0;transition:opacity .3s}
+.lx-seal svg{width:17px;height:17px;stroke:#fff;fill:none;stroke-width:2}
+.lx-card.locked{cursor:default}
+.lx-card.locked .lx-seal{opacity:1}
+.lx-locknote{position:absolute;z-index:9;left:18px;top:14px;font-size:11px;color:#8a7355;display:none;align-items:center;gap:5px}
+.lx-locknote svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2}
+.lx-card.locked .lx-locknote{display:flex}
+.lx-unread{position:absolute;z-index:9;left:18px;top:14px;font-size:11px;color:#C0607A;display:none;align-items:center;gap:5px}
+.lx-unread:before{content:"";width:6px;height:6px;border-radius:50%;background:#C0607A}
+.lx-card.is-unread:not(.locked) .lx-unread{display:flex}
+.lx-env-pocket{position:absolute;z-index:7;inset:0;opacity:0;pointer-events:none;clip-path:polygon(0 8%,50% 72%,100% 8%,100% 100%,0 100%);background:linear-gradient(172deg,#fbfaf8,#f3f1ed);border:1px solid #ece9e2;transition:transform .72s var(--lx-ease),opacity .45s ease}
+.lx-env{transition:transform .72s var(--lx-ease),opacity .45s ease}
+/* 三折信纸 */
+.lx-paper{position:absolute;z-index:3;left:50%;top:calc(var(--env-h) * -1);width:min(78vw,306px);height:var(--paper-h);margin-left:calc(min(78vw,306px)/-2);opacity:0;pointer-events:none;transform:translateY(calc(var(--paper-h) * .34)) scale(.94);filter:drop-shadow(0 18px 13px rgba(75,70,59,.28));transition:transform .72s var(--lx-ease),opacity .22s ease;transform-style:preserve-3d;perspective:650px}
+.lx-panel{position:absolute;left:0;width:100%;height:33.334%;transform-style:preserve-3d;will-change:transform;transition:transform .85s var(--lx-ease)}
+/* 折着的那两折压一层暗影，展开时褪掉——光打在折面上的感觉 */
+.lx-panel.p1:after,.lx-panel.p3:after{content:"";position:absolute;inset:0;pointer-events:none;transform:translateZ(1px);opacity:1;transition:opacity .85s var(--lx-ease)}
+.lx-panel.p1:after{background:linear-gradient(0deg,rgba(60,44,28,.48),rgba(60,44,28,.12))}
+.lx-panel.p3:after{background:linear-gradient(180deg,rgba(60,44,28,.48),rgba(60,44,28,.12))}
+.lx-panel.p2:after{content:"";position:absolute;inset:0;pointer-events:none;transform:translateZ(1px);background:linear-gradient(180deg,rgba(60,44,28,.28),transparent 30%,transparent 70%,rgba(60,44,28,.28));transition:opacity .85s var(--lx-ease)}
+/* 展开后留两道折痕 */
+.lx-paper:after{content:"";position:absolute;z-index:10;inset:0;pointer-events:none;opacity:0;transition:opacity .4s;background:linear-gradient(180deg,transparent calc(33.333% - 3px),rgba(90,70,50,.10) calc(33.333% - 1px),rgba(255,255,255,.9) 33.333%,rgba(90,70,50,.06) calc(33.333% + 2px),transparent calc(33.333% + 5px),transparent calc(66.666% - 3px),rgba(90,70,50,.10) calc(66.666% - 1px),rgba(255,255,255,.9) 66.666%,rgba(90,70,50,.06) calc(66.666% + 2px),transparent calc(66.666% + 5px))}
+.lx-panel.p1{top:0;z-index:3;transform-origin:50% 100%;transform:rotateX(-179deg)}
+.lx-panel.p2{top:33.333%;z-index:2}
+.lx-panel.p3{top:66.666%;z-index:1;transform-origin:50% 0;transform:rotateX(179deg)}
+.lx-face{position:absolute;inset:0;display:block;overflow:hidden;backface-visibility:hidden;background-color:#fffefb;background-image:linear-gradient(90deg,transparent 35px,rgba(231,99,99,.34) 35px,rgba(231,99,99,.34) 36px,transparent 36px),repeating-linear-gradient(0deg,transparent 0 11px,rgba(96,150,206,.14) 11px 12px),repeating-linear-gradient(0deg,transparent 0 59px,rgba(78,128,184,.16) 59px 60px);box-shadow:0 0 0 1px #ebe7df inset}
+.lx-face.back{transform:rotateX(180deg);background-color:#fdfbf7}
+/* 完整正文层：铺满整张展开后的信纸，可滚动，长信不丢字（安全网） */
+.lx-fulltext{position:absolute;z-index:9;inset:0;opacity:0;pointer-events:none;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:26px 30px 30px 49px;text-align:left;color:#3a2f24;transition:opacity .3s ease}
+.lx-fulltext::-webkit-scrollbar{display:none}
+/* 正文第一屏拷一份分贴在三折的正面上：展开时字跟着纸翻；翻平了再换成能滚动的 .lx-fulltext，位置一模一样所以看不出接缝 */
+.lx-ftc{position:absolute;left:0;right:0;height:300%;overflow:hidden;padding:26px 30px 30px 49px;text-align:left;color:#3a2f24;pointer-events:none}
+.lx-panel.p2 .lx-ftc{top:-100%}.lx-panel.p3 .lx-ftc{top:-200%}
+/* 可滚动那份一现身，贴纸拷贝立刻隐掉，不然一滚就是两层字；折回去时拷贝立刻回来 */
+/* 拷贝是拆信那一刻才塞进去的新元素，transition 没有起点会直接生效，所以用 animation 的延迟 */
+@keyframes lxHideLater{to{visibility:hidden}}
+.lx-stage[data-state="reading"] .is-sel .lx-ftc{animation:lxHideLater 0s 2.9s forwards}
+.lx-fulltext .lx-ft-date,.lx-ftc .lx-ft-date{display:block;font-size:12px;color:#8a827a;margin-bottom:14px}
+.lx-fulltext .lx-ft-body,.lx-ftc .lx-ft-body{font-size:16px;line-height:24px;white-space:pre-wrap;word-break:break-word}
+.lx-fulltext .lx-ft-sign,.lx-ftc .lx-ft-sign{display:block;margin-top:14px;font-size:19px}
+.lx-paper.font-mashan .lx-fulltext,.lx-paper.font-mashan .lx-ftc{font-family:'Ma Shan Zheng',KaiTi,STKaiti,serif}
+.lx-paper.font-longcang .lx-fulltext,.lx-paper.font-longcang .lx-ftc{font-family:'Long Cang',KaiTi,STKaiti,cursive}
+.lx-paper.font-zhimang .lx-fulltext,.lx-paper.font-zhimang .lx-ftc{font-family:'Zhi Mang Xing',KaiTi,STKaiti,cursive}
+/* 堆叠态 */
+.lx-stage[data-state="stack"] .lx-card{opacity:0;pointer-events:none}
+.lx-stage[data-state="stack"] .lx-card[data-depth="0"]{opacity:1;pointer-events:auto;transform:translate(0,8px) rotate(0) scale(1);z-index:6}
+.lx-stage[data-state="stack"] .lx-card[data-depth="1"]{opacity:1;transform:translate(0,-14px) rotate(-1deg) scale(.975);z-index:5}
+.lx-stage[data-state="stack"] .lx-card[data-depth="2"]{opacity:1;transform:translate(0,-29px) rotate(.8deg) scale(.95);z-index:4}
+.lx-stage[data-state="stack"] .lx-card[data-depth="0"]:hover{transform:translate(0,-4px) rotate(0) scale(1.02)}
+.lx-stage:not([data-state="stack"])~.lx-deck{opacity:0;pointer-events:none}
+/* 聚焦 / 阅读 / 收回 */
+.lx-stage[data-state="focused"] .lx-card.is-sel,.lx-stage[data-state="returned"] .lx-card.is-sel{transform:translate(0,0) rotate(0);z-index:10}
+.lx-stage[data-state="focused"] .lx-card:not(.is-sel),.lx-stage[data-state="returned"] .lx-card:not(.is-sel){opacity:0;filter:blur(3px);pointer-events:none}
+.lx-stage[data-state="reading"] .lx-card.is-sel{transform:translateY(44px) scale(.95);z-index:11;cursor:pointer}
+.lx-stage[data-state="reading"] .lx-card:not(.is-sel){opacity:0;pointer-events:none}
+.lx-stage[data-state="reading"] .is-sel .lx-flap{transform:rotateX(178deg);z-index:1}
+/* 抽信：信（折着的中间那折）先缩着坐在信封里，被 .lx-env-pocket（信封正面的复制）挡住下半，只从 V 口露一点；
+   抽出到信封口上方，再落到阅读位。三段用关键帧；--env-h/--paper-h 在 .lx-stage 上 */
+@keyframes lxPull{
+  0%{opacity:0;transform:translateY(calc(var(--env-h) * 1.5 - var(--paper-h) * .5 + 2px)) scale(.82)}
+  3%{opacity:1;transform:translateY(calc(var(--env-h) * 1.5 - var(--paper-h) * .5 + 2px)) scale(.82)}
+  48%{opacity:1;transform:translateY(calc(var(--env-h) - var(--paper-h) * .643 - 12px)) scale(.86)}
+  100%{opacity:1;transform:translateY(calc(var(--env-h) * -.8)) scale(1)}}
+@keyframes lxPush{
+  0%{opacity:1;transform:translateY(calc(var(--env-h) * -.8)) scale(1)}
+  45%{opacity:1;transform:translateY(calc(var(--env-h) - var(--paper-h) * .643 - 12px)) scale(.86)}
+  100%{opacity:1;transform:translateY(calc(var(--env-h) * 1.5 - var(--paper-h) * .5 + 2px)) scale(.82)}}
+.lx-stage[data-state="reading"] .is-sel .lx-paper{opacity:1;pointer-events:auto;transform:translateY(calc(var(--env-h) * -.8)) scale(1);animation:lxPull 1.05s cubic-bezier(.45,.05,.25,1) .5s both}
+.lx-stage[data-state="reading"] .is-sel .p1{transform:rotateX(0);transition:transform 1s cubic-bezier(.3,1.22,.5,1) 1.45s}
+.lx-stage[data-state="reading"] .is-sel .p3{transform:rotateX(0);transition:transform 1s cubic-bezier(.3,1.22,.5,1) 1.8s}
+.lx-stage[data-state="reading"] .is-sel .p2:after{opacity:0;transition-delay:1.9s}
+.lx-stage[data-state="reading"] .is-sel .p1:after{opacity:0;transition-delay:1.45s}
+.lx-stage[data-state="reading"] .is-sel .p3:after{opacity:0;transition-delay:1.8s}
+.lx-stage[data-state="reading"] .is-sel .lx-paper:after{opacity:1;transition-delay:2.65s}
+.lx-stage[data-state="reading"] .is-sel .lx-fulltext{opacity:1;pointer-events:auto;transition:opacity .12s 2.8s}
+.lx-stage[data-state="reading"] .is-sel .lx-env{transform:translateY(150px);opacity:.22;transition-delay:1.05s}
+/* 信封正面的复制：选中那一刻就垫上（跟正面一模一样看不出来），抽信时挡住信的下半 */
+.lx-stage[data-state="focused"] .is-sel .lx-env-pocket,.lx-stage[data-state="returned"] .is-sel .lx-env-pocket{opacity:1}
+.lx-stage[data-state="reading"] .is-sel .lx-env-pocket{transform:translateY(150px);opacity:.22;transition-delay:1.05s}
+.lx-stage[data-state="reading"] .is-sel .lx-addr,.lx-stage[data-state="reading"] .is-sel .lx-stamp,.lx-stage[data-state="reading"] .is-sel .lx-seal{opacity:0;transition:opacity .2s}
+.lx-stage[data-state="closing"] .lx-card.is-sel{transform:translateY(42px) scale(.96);z-index:11}
+.lx-stage[data-state="closing"] .lx-card:not(.is-sel){opacity:0;pointer-events:none}
+.lx-stage[data-state="closing"] .is-sel .lx-fulltext{opacity:0;transition:opacity .15s}
+.lx-stage[data-state="closing"] .is-sel .lx-paper{opacity:1;animation:lxPush .95s cubic-bezier(.45,.05,.25,1) 1.05s both}
+.lx-stage[data-state="closing"] .is-sel .lx-flap{transform:rotateX(178deg);z-index:1}
+.lx-stage[data-state="closing"] .is-sel .p1{transform:rotateX(-179deg);transition-delay:.04s}
+.lx-stage[data-state="closing"] .is-sel .p3{transform:rotateX(179deg);transition-delay:.28s}
+.lx-stage[data-state="closing"] .is-sel .lx-env{transition-delay:.64s}
+.lx-stage[data-state="closing"] .is-sel .lx-addr,.lx-stage[data-state="closing"] .is-sel .lx-stamp,.lx-stage[data-state="closing"] .is-sel .lx-seal{opacity:0}
+.lx-stage[data-state="closing"] .is-sel .lx-env-pocket{transform:translateY(0);opacity:1;transition-delay:.64s}
+/* 底部翻页 + 提示 + 阅读态工具条 */
+.lx-hint{position:absolute;z-index:6;left:0;right:0;bottom:36px;text-align:center;font-size:13px;color:var(--text-faint);transition:opacity .3s ease}
+.lx-stage:not([data-state="stack"])~.lx-hint{opacity:.85}
+.lx-deck{position:absolute;z-index:7;left:50%;bottom:60px;display:flex;align-items:center;gap:12px;transform:translateX(-50%);transition:opacity .25s}
+.lx-deck button{width:38px;height:38px;border:1px solid var(--border);border-radius:50%;background:var(--bg-surface);color:var(--text-primary);cursor:pointer;font-size:16px}
+.lx-deck span{min-width:46px;text-align:center;font-size:12px;color:var(--text-secondary)}
+.lx-tools{position:absolute;z-index:12;left:50%;bottom:22px;transform:translateX(-50%);display:none;align-items:center;gap:8px;width:max-content;white-space:nowrap}
+.lx-wrap[data-reading="1"] .lx-tools{display:flex}
+.lx-wrap[data-reading="1"] .lx-hint,.lx-wrap[data-reading="1"] .lx-deck,.lx-wrap[data-reading="1"] .lx-greeting{opacity:0;pointer-events:none}
+.lx-tools .lx-del{border:1px solid var(--border);background:var(--bg-surface);color:#c98;border-radius:999px;padding:8px 14px;font:13px/1 var(--font-sans);cursor:pointer}
+.lx-fontsw{display:flex;gap:4px;background:var(--bg-sunken);border-radius:999px;padding:3px}
+.lx-fontsw button{white-space:nowrap;flex:none;border:0;background:none;border-radius:999px;padding:6px 11px;font:13px/1 var(--font-sans);color:var(--text-secondary);cursor:pointer}
+.lx-fontsw button.active{background:var(--bg-primary);color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+@media(prefers-reduced-motion:reduce){.lx-card,.lx-env,.lx-paper,.lx-panel,.lx-flap,.lx-fulltext{transition-duration:.01ms!important}}
+
+/* ===== 写信：复古打字机（.tw-*，改编自原型 breakfast.html；不限字数，信纸内滚动；多了拆信日）===== */
+.letter-compose.tw{--twb:env(safe-area-inset-bottom,0px);--tw-ease:cubic-bezier(.2,.8,.2,1)}
+.tw .letter-bar{position:relative;z-index:30}
+.tw .letter-bar-send:disabled{opacity:.4;cursor:default}
+.tw-status{font:13px/1 var(--font-sans);color:var(--text-faint)}
+.tw-desk{flex:1;min-height:0;position:relative;overflow:hidden;background-image:linear-gradient(90deg,rgba(150,140,125,.06) 50%,transparent 50%),linear-gradient(rgba(150,140,125,.06) 50%,transparent 50%);background-size:44px 44px}
+.tw-desk:after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 35%,transparent 25%,rgba(85,77,64,.13) 100%)}
+.tw-paper-wrap{position:absolute;z-index:5;left:50%;top:12px;bottom:calc(188px + var(--twb));width:min(84vw,430px);transform:translateX(-50%);filter:drop-shadow(0 15px 15px rgba(83,75,64,.22));transition:bottom .45s var(--tw-ease);perspective:1100px}
+/* 寄出时的两折：平时藏着；折起时信纸本体按 clip-path 一段段让出位置，翻过去的是纸背 */
+.tw-flap{position:absolute;left:0;right:0;height:33.34%;opacity:0;pointer-events:none;background-color:#fbf8f1;background-image:repeating-linear-gradient(0deg,transparent 0 11px,rgba(87,142,198,.10) 11px 12px);border:1px solid #ded9d0;backface-visibility:visible}
+.tw-flap-b{bottom:0;transform-origin:50% 0}
+.tw-flap-t{top:0;transform-origin:50% 100%}
+.tw-paper{position:absolute;inset:0;display:flex;flex-direction:column;padding:30px 24px 50px 54px;color:#282522;background-color:#fffefa;background-image:linear-gradient(90deg,transparent 42px,rgba(219,91,91,.38) 42px,rgba(219,91,91,.38) 43px,transparent 43px),repeating-linear-gradient(0deg,transparent 0 11px,rgba(87,142,198,.18) 11px 12px),repeating-linear-gradient(90deg,transparent 0 11px,rgba(87,142,198,.12) 11px 12px),repeating-linear-gradient(0deg,transparent 0 59px,rgba(65,120,179,.18) 59px 60px),repeating-linear-gradient(90deg,transparent 0 59px,rgba(65,120,179,.14) 59px 60px);border:1px solid #ded9d0;overflow:hidden;transition:transform .7s var(--tw-ease)}
+.tw-paper:before{content:"";position:absolute;left:15px;right:15px;top:18px;border-top:2px dotted #77716a}
+.tw-meta{flex:none;display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.tw-meta label{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font:12px/1.2 var(--font-sans);color:#6e6962}
+.tw-meta input{flex:1;min-width:0;border:0;border-bottom:1px solid #b8b1a8;border-radius:0;background:transparent;outline:0;padding:4px 2px;font:14px/1.3 "Courier New",ui-monospace,var(--font-serif),monospace;color:#282522}
+.tw-meta input:focus{border-bottom-color:#333}
+.tw-meta input::placeholder{color:rgba(143,137,129,.55)}
+.tw-meta input[type=date]{-webkit-appearance:none;appearance:none;flex:0 1 auto;min-height:26px;min-width:120px;color-scheme:light}
+.tw-date-hint{font-size:11px;color:#9b948a}
+.tw-paper textarea{flex:1;min-height:0;width:100%;resize:none;border:0;outline:0;background:transparent;padding:0;overflow-y:auto;-webkit-overflow-scrolling:touch;font:17px/24px "Courier New",ui-monospace,var(--font-serif),monospace;letter-spacing:.02em;color:#282522;caret-color:#b74747}
+.tw-paper textarea::placeholder{color:rgba(143,137,129,.4)}
+.tw-ime,.tw-count{position:absolute;z-index:3;bottom:26px;font:11px/1 var(--font-sans);color:#817b73}
+.tw-ime{left:54px}.tw-count{right:24px}
+.tw-roller{position:absolute;z-index:11;left:50%;bottom:calc(158px + var(--twb));width:min(92vw,500px);height:46px;transform:translateX(-50%);border-radius:24px;background:repeating-linear-gradient(90deg,#393733 0 2px,#171615 2px 4px);box-shadow:0 7px 12px rgba(0,0,0,.4),0 1px #777 inset;transition:opacity .3s,transform .5s var(--tw-ease)}
+.tw-roller:before,.tw-roller:after{content:"";position:absolute;top:-5px;width:56px;height:56px;border-radius:50%;background:radial-gradient(circle,#777 0 8%,#262421 10% 42%,#777 44% 48%,#171615 50% 68%,#555 70% 73%,#191817 75%);box-shadow:0 4px 8px rgba(0,0,0,.4)}
+.tw-roller:before{left:-18px}.tw-roller:after{right:-18px}
+.tw-machine{position:absolute;z-index:12;left:50%;bottom:calc(-22px + var(--twb));width:min(96vw,550px);height:214px;transform:translateX(-50%);background:url('/assets/typewriter-base.svg') center/100% 100% no-repeat;filter:drop-shadow(0 -16px 22px rgba(39,35,29,.22)) drop-shadow(0 8px 7px rgba(0,0,0,.3));transition:opacity .3s,transform .6s var(--tw-ease)}
+.tw-keys{position:absolute;left:15%;right:15%;top:80px;display:flex;flex-direction:column;align-items:center;gap:4px;transform:perspective(400px) rotateX(8deg)}
+.tw-row{width:100%;display:flex;justify-content:center;gap:5px}.tw-row:nth-child(2){width:91%}.tw-row:nth-child(3){width:70%}
+.tw-key{flex:1;max-width:28px;aspect-ratio:1;border:1px solid #5e5a54;padding:0;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 42% 34%,#4d4943 0,#2b2926 48%,#121110 76%);color:#e4ddd2;font:8px/1 ui-monospace,monospace;text-shadow:0 1px #000;box-shadow:0 2px 2px rgba(0,0,0,.7),0 1px 0 rgba(255,255,255,.19) inset;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .08s,background .08s}
+.tw-key.hit,.tw-key:active{transform:translateY(3px);background:#756f67;color:#fff;box-shadow:0 1px 1px #000}
+.tw-space{position:absolute;left:31%;right:31%;top:174px;height:13px;padding:0;border:1px solid #5b5751;border-radius:8px;background:linear-gradient(#3a3732,#1d1c1a);color:#aaa298;font:7px/1 ui-monospace,monospace;letter-spacing:.2em;box-shadow:0 2px 3px #000;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.tw-space.hit,.tw-space:active{transform:translateY(3px)}
+.tw-bksp,.tw-ret{position:absolute;top:166px;width:30px;height:24px;padding:3px 6px;border:0;background:transparent;color:#d6cdc0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.tw-bksp{right:14%}.tw-ret{left:14%}
+.tw-bksp svg,.tw-ret svg{display:block;width:100%;height:100%}
+.tw-bksp.hit,.tw-bksp:active,.tw-ret.hit,.tw-ret:active{transform:translateY(2px);color:#fff}
+.tw-env{position:absolute;z-index:10;left:50%;bottom:calc(148px + var(--twb));width:min(70vw,280px);height:102px;opacity:0;pointer-events:none;transform:translate(-50%,38px) scale(.9);transition:opacity .24s ease,transform .55s var(--tw-ease);filter:drop-shadow(0 18px 12px rgba(62,56,46,.3))}
+.tw-env:before{content:"";position:absolute;inset:0;background:linear-gradient(165deg,#fff,#ece9e3);border:1px solid #d7d2c9}
+.tw-env:after{content:"";position:absolute;z-index:2;inset:0;background:linear-gradient(172deg,#fdf7ea,#f4ead2);clip-path:polygon(0 12%,50% 72%,100% 12%,100% 100%,0 100%);border-bottom:1px solid #d7d2c9}
+.tw-env-stamp{position:absolute;z-index:3;right:14px;top:10px;width:34px;height:41px;transform:rotate(2deg);color:#B8892F;filter:drop-shadow(0 1px 2px rgba(0,0,0,.26))}
+.tw-env-stamp svg{display:block;width:100%;height:100%}
+/* 触屏系统键盘弹起：打字机和滚筒收下去，信纸铺满 */
+.tw.kb .tw-paper-wrap{bottom:12px}
+.tw.kb .tw-machine{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(170px)}
+.tw.kb .tw-roller{opacity:0;transform:translateX(-50%) translateY(90px)}
+/* 寄出：信纸折三折 → 塞进信封，打字机退场 */
+@keyframes twFoldClip{0%{clip-path:inset(0 0 0 0)}1%,49%{clip-path:inset(0 0 33.34% 0)}50%,100%{clip-path:inset(33.33% 0 33.34% 0)}}
+@keyframes twFlapB{0%{opacity:1;transform:rotateX(0);filter:brightness(1)}25%{filter:brightness(.8)}46%,100%{opacity:1;transform:rotateX(178deg);filter:brightness(.93)}}
+@keyframes twFlapT{0%,49.9%{opacity:0;transform:rotateX(0)}50%{opacity:1;transform:rotateX(0);filter:brightness(1)}75%{filter:brightness(.8)}96%,100%{opacity:1;transform:rotateX(-178deg);filter:brightness(.96)}}
+@keyframes twInsert{0%{transform:translateX(-50%) translateY(0) scale(1);opacity:1}72%{opacity:1}100%{transform:translateX(-50%) translateY(46%) scale(.5);opacity:0}}
+.tw.sending .tw-paper{animation:twFoldClip 1s linear forwards}
+.tw.sending .tw-flap-b{animation:twFlapB 1s cubic-bezier(.5,0,.3,1) forwards}
+.tw.sending .tw-flap-t{animation:twFlapT 1s cubic-bezier(.5,0,.3,1) forwards}
+.tw.sending .tw-paper-wrap{animation:twInsert .75s 1.02s cubic-bezier(.4,0,.2,1) forwards}
+.tw.sending .tw-env{opacity:1;transform:translate(-50%,0) scale(1);transition-delay:.75s}
+.tw.sending .tw-machine{opacity:0;transform:translateX(-50%) translateY(170px)}
+.tw.sending .tw-roller{opacity:0;transform:translateX(-50%) translateY(70px)}
+.tw.sending .letter-bar-send{opacity:0;pointer-events:none}
+@media(max-width:520px){
+  .tw-paper-wrap{bottom:calc(174px + var(--twb));width:88vw}
+  .tw-paper{padding:28px 18px 48px 47px}
+  .tw-paper textarea{font-size:16px}
+  .tw-ime{left:47px}
+  .tw-roller{bottom:calc(144px + var(--twb))}
+  .tw-machine{height:198px;bottom:calc(-18px + var(--twb))}
+  .tw-keys{top:73px;gap:3px}.tw-row{gap:4px}.tw-key{max-width:25px}
+  .tw-space{top:160px}.tw-bksp,.tw-ret{top:152px}
+  .tw-env{bottom:calc(137px + var(--twb));width:250px;height:92px}
+}
+@media(prefers-reduced-motion:reduce){.tw *{transition-duration:.01ms!important;animation-duration:.01ms!important}}
