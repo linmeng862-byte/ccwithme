@@ -207,8 +207,15 @@ button{font:inherit;border:0;background:none;color:inherit;cursor:pointer}textar
    只在有壁纸时覆盖；没壁纸时底下是纯色，仍走原来的奶油底。 */
 html.wall-on .attach-sheet,
 html.wall-on .attachment-chip,
+html.wall-on .pg-panel,
 html.wall-on .load-more-history{
   background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+}
+/* #stickerPanel 的奶油底写在行内 style 里，行内压过选择器，这条必须带 !important */
+html.wall-on #stickerPanel{
+  background:var(--glass-bg)!important;
   backdrop-filter:var(--glass-blur);
   -webkit-backdrop-filter:var(--glass-blur);
 }
@@ -266,7 +273,7 @@ html.context-menu-open,body.context-menu-open{background:var(--claude-context-di
 #diaryPanel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:#2C2821;overflow:hidden}#diaryPanel.show{display:flex}.diary-months{display:flex;gap:8px;padding:12px 16px 4px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex:none}.diary-months::-webkit-scrollbar{display:none}.diary-month-pill{flex:none;padding:8px 16px;border:0;border-radius:999px;background:#FFFDF9;color:#A0988B;font:500 13px/1 var(--font-sans);white-space:nowrap;cursor:pointer}.diary-month-pill.active{background:#2C2821;color:#F8F7F4}.diary-timeline{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}.diary-search-bar{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 14px);z-index:82;padding:0 28px;pointer-events:none;display:none}.diary-search-bar.show{display:block}.diary-search-bubble{pointer-events:auto;display:flex;align-items:center;gap:10px;height:46px;padding:0 18px;border-radius:999px;background:#FFFDF9;border:1px solid rgba(0,0,0,.06);box-shadow:0 0 0 1px rgba(0,0,0,.02),0 8px 24px rgba(0,0,0,.05)}.diary-search-icon{flex:0 0 20px;width:20px;height:20px;color:#A0988B}.diary-search-input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:400 17px/1 var(--font-sans);color:#2C2821}.diary-search-input::placeholder{color:#A0988B}.diary-search-clear{flex:none;width:22px;height:22px;border-radius:50%;background:#C0B8AA;color:#FFFDF9;font-size:14px;line-height:22px;text-align:center;border:0;padding:0;cursor:pointer}.diary-search-clear.hidden{display:none}
 @media(prefers-color-scheme:dark){html:not([data-theme="light"]) #diaryPanel{background:var(--bg-primary);color:#E8E4DB}html:not([data-theme="light"]) .diary-month-pill{background:#25221E;color:#8A8276}html:not([data-theme="light"]) .diary-month-pill.active{background:#E8E4DB;color:#1C1A17}html:not([data-theme="light"]) .diary-search-bubble{background:#25221E;border-color:rgba(255,255,255,.06)}html:not([data-theme="light"]) .diary-search-input{color:#E8E4DB}html:not([data-theme="light"]) .diary-search-input::placeholder{color:#8A8276}}html[data-theme="dark"] #diaryPanel{background:var(--bg-primary)!important;color:#E8E4DB!important}html[data-theme="dark"] .diary-month-pill{background:#25221E;color:#8A8276}html[data-theme="dark"] .diary-month-pill.active{background:#E8E4DB;color:#1C1A17}html[data-theme="dark"] .diary-search-bubble{background:#25221E;border-color:rgba(255,255,255,.06)}html[data-theme="dark"] .diary-search-input{color:#E8E4DB}html[data-theme="dark"] .diary-search-input::placeholder{color:#8A8276}
 @media(prefers-color-scheme:dark){.profile-round-button,.profile-save-button,.profile-back-button{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.08);color:var(--text-primary);box-shadow:0 2px 8px rgba(0,0,0,.2)}.profile-card,.profile-nav-row,.profile-memory-card,.profile-memory-row .profile-memory-card,.profile-empty,.profile-preferences-card{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.06);color:var(--text-primary)}.profile-name-input,.profile-memory-textarea,.profile-preferences-textarea{color:var(--text-primary)}.profile-name-input::placeholder,.profile-memory-textarea::placeholder,.profile-preferences-textarea::placeholder{color:var(--text-faint)}.memory-search-bubble{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.08)}.memory-search-input{color:var(--text-primary)}.memory-search-input::placeholder{color:var(--text-faint)}.topbar .icon-button{border:1px solid rgba(255,255,255,.12);background:rgba(40,38,35,.35);backdrop-filter:blur(20px) saturate(1.1);-webkit-backdrop-filter:blur(20px) saturate(1.1);box-shadow:0 2px 8px rgba(0,0,0,.15)}}
-.dialog-overlay{position:fixed;inset:0;z-index:55;display:grid;place-items:center;padding:var(--space-4);background:var(--border-strong)}.dialog{width:100%;max-width:360px;padding:var(--space-5);background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-lg)}.dialog h3{font:400 var(--text-title) var(--font-serif)}.dialog input{width:100%;margin:var(--space-4) 0;padding:var(--space-3);background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);outline:0}.dialog-actions{display:flex;justify-content:flex-end;gap:var(--space-2)}.secondary-button{padding:var(--space-2) var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md)}
+.dialog-overlay{position:fixed;inset:0;z-index:999;display:grid;place-items:center;padding:var(--space-4);background:var(--border-strong)}.dialog{width:100%;max-width:360px;padding:var(--space-5);background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-lg)}.dialog h3{font:400 var(--text-title) var(--font-serif)}.dialog input{width:100%;margin:var(--space-4) 0;padding:var(--space-3);background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);outline:0}.dialog-actions{display:flex;justify-content:flex-end;gap:var(--space-2)}.secondary-button{padding:var(--space-2) var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md)}
 .toast{position:fixed;z-index:70;left:50%;bottom:calc(env(safe-area-inset-bottom) + 92px);max-width:calc(100% - var(--space-6));padding:var(--space-2) var(--space-4);transform:translate(-50%,12px);opacity:0;pointer-events:none;background:var(--text-primary);color:var(--bg-primary);border-radius:var(--radius-full);font-size:var(--text-sm);transition:opacity var(--transition),transform var(--transition)}.toast.show{opacity:1;transform:translate(-50%,0)}
 #chat{position:absolute;inset:0;z-index:20;background:transparent;transform:translateX(var(--drawer-x));border-top-left-radius:var(--drawer-radius);border-bottom-left-radius:var(--drawer-radius);box-shadow:var(--drawer-shadow);overflow:hidden;will-change:transform,border-radius,box-shadow;transition:transform 280ms ease-out,border-radius 280ms ease-out,box-shadow 280ms ease-out;touch-action:pan-y}
 #stream,.topbar,.composer-wrap{touch-action:pan-y}
@@ -2984,3 +2991,121 @@ html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #scrollToBottom{
   box-shadow:0 8px 32px rgba(0,0,0,.3),0 0 0 1px rgba(255,255,255,.08) inset;
 }
 html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #scrollToBottom:active{background:rgba(255,255,255,.12)}
+
+/* 🔎 全屏 Search 页（2026-09-23）——全局关键字搜聊天记录，结果里看片段 */
+#searchPanel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden}
+#searchPanel.show{display:flex}
+.search-box-wrap{position:relative;display:flex;align-items:center;margin:8px 18px 10px;flex:none}
+.chat-search-icon{position:absolute;left:14px;color:var(--text-faint);pointer-events:none}
+#chatSearchInput{width:100%;height:44px;padding:0 40px 0 42px;border:1px solid var(--border);border-radius:14px;background:var(--bg-surface);color:var(--text-primary);font:16px/1 var(--font-sans);outline:0;-webkit-appearance:none;appearance:none}
+#chatSearchInput::placeholder{color:var(--text-faint)}
+#chatSearchInput::-webkit-search-cancel-button{display:none}
+.chat-search-clear{position:absolute;right:10px;width:26px;height:26px;border:0;border-radius:50%;background:var(--bg-sunken);color:var(--text-secondary);font-size:20px;line-height:1;cursor:pointer;display:grid;place-items:center}
+.chat-search-clear:active{opacity:.6}
+.chat-search-results{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px 14px calc(env(safe-area-inset-bottom) + 24px)}
+.chat-search-results::-webkit-scrollbar{display:none}
+.csr-hint{padding:40px 24px;color:var(--text-faint);font:15px/1.6 var(--font-sans);text-align:center}
+.csr-item{width:100%;display:block;text-align:left;padding:14px;border-radius:16px;color:var(--text-primary)}
+.csr-item+.csr-item{margin-top:4px}
+.csr-item:active{background:var(--bg-sunken)}
+.csr-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px;font:12px/1 var(--font-sans);color:var(--text-faint)}
+.csr-role{flex:none;padding:2px 9px;border-radius:999px;background:var(--bg-surface);color:var(--text-secondary);font-weight:600}
+.csr-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.csr-date{flex:none}
+.csr-snippet{font:15px/1.6 var(--font-sans);color:var(--text-primary);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.csr-snippet mark{background:rgba(217,119,87,.24);color:inherit;border-radius:3px;padding:0 2px}
+
+/* 💌 信箱 Letters（2026-09-23）——法式米白信纸 + 三个中文手写体切换 + 时间锁信封 */
+#lettersPanel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden}
+#lettersPanel.show{display:flex}
+.letters-compose-btn{justify-self:end;border:0;background:none;color:var(--accent);font:600 15px/1 var(--font-sans);cursor:pointer;padding:6px 4px}
+.letters-list{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 16px calc(env(safe-area-inset-bottom) + 28px);display:flex;flex-direction:column;gap:12px}
+.letters-list::-webkit-scrollbar{display:none}
+.letters-empty{padding:56px 28px;text-align:center;color:var(--text-faint);font:15px/1.7 var(--font-sans)}
+/* 信封 */
+.letter-envelope{position:relative;text-align:left;border-radius:14px;padding:16px 16px 15px;background:#FBF6EC;border:1px solid rgba(120,90,60,.16);box-shadow:0 6px 20px rgba(80,60,40,.08);overflow:hidden;cursor:pointer;transition:transform .12s,box-shadow .12s}
+.letter-envelope:active{transform:scale(.99)}
+.letter-envelope::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent)}
+.letter-envelope.from-user::before{background:#C9A24B}     /* 她写的：金 */
+.letter-envelope.from-assistant::before{background:#C0607A} /* 他写的：玫瑰 */
+.le-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px;font:12px/1 var(--font-sans);color:#a99a86}
+.le-from{flex:none;font-weight:600;color:#7a5c3e}
+.le-date{flex:1;text-align:right;color:#a99a86}
+.le-title{font:600 16px/1.4 var(--font-serif);color:#3d3024;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.le-title.untitled{color:#a99a86;font-weight:500}
+.le-status{margin-top:8px;display:inline-flex;align-items:center;gap:6px;font:12px/1 var(--font-sans);color:#8a6d4a}
+.le-status svg{width:13px;height:13px}
+/* 封着的信 */
+.letter-envelope.locked{background:repeating-linear-gradient(45deg,#F4ECDD,#F4ECDD 8px,#F0E6D3 8px,#F0E6D3 16px);cursor:default}
+.letter-envelope.locked .le-title{color:#8a7355}
+.letter-envelope.locked:active{transform:none}
+.le-seal{position:absolute;right:14px;bottom:12px;width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#D9738A,#B24B63);box-shadow:0 2px 6px rgba(120,40,60,.3);display:grid;place-items:center;color:#fff}
+.le-seal svg{width:16px;height:16px}
+.le-unopened-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+/* 读信 / 写信 覆盖层（盖在信封列表上，退回列表） */
+.letter-reader,.letter-compose{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;background:var(--bg-primary)}
+/* ⚠️ 上面那条 display:flex 会盖掉 hidden 属性自带的 display:none，必须显式让 hidden 重新管用 */
+.letter-reader[hidden],.letter-compose[hidden]{display:none!important}
+.letter-bar{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(env(safe-area-inset-top) + 10px) 16px 10px}
+.letter-bar-back,.letter-bar-send{border:0;background:none;font:500 16px/1 var(--font-sans);cursor:pointer;padding:6px 4px}
+.letter-bar-back{color:var(--text-secondary)}
+.letter-bar-send{color:var(--accent);font-weight:600}
+.letter-font-switch{display:flex;gap:4px;background:var(--bg-sunken);border-radius:999px;padding:3px}
+.letter-font-switch button{border:0;background:none;border-radius:999px;padding:5px 11px;font:13px/1 var(--font-sans);color:var(--text-secondary);cursor:pointer}
+.letter-font-switch button.active{background:var(--bg-primary);color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.letter-paper-scroll{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 16px calc(env(safe-area-inset-bottom) + 40px)}
+.letter-paper-scroll::-webkit-scrollbar{display:none}
+/* 法文格（Séyès）：密横线为主(7px 一条、28px 一条略重基线) + 稀疏淡竖线(28px) + 左侧红页边线 */
+.letter-paper{position:relative;max-width:600px;margin:0 auto;background-color:#FDFAF3;border:1px solid rgba(120,90,60,.14);border-radius:6px;box-shadow:0 10px 40px rgba(80,60,40,.12);padding:30px 26px 44px 46px;background-image:linear-gradient(0deg,rgba(120,132,205,.20) 1px,transparent 1px),linear-gradient(0deg,rgba(120,132,205,.11) 1px,transparent 1px),linear-gradient(90deg,rgba(120,132,205,.08) 1px,transparent 1px);background-size:100% 28px,100% 7px,28px 100%}
+.letter-paper::before,.letter-compose-paper::before{content:"";position:absolute;top:0;bottom:0;left:34px;width:1px;background:rgba(200,90,100,.42);pointer-events:none}
+.letter-paper .lp-from{font-size:13px;line-height:1;letter-spacing:.04em;color:#b09a7d;margin-bottom:6px}
+.letter-paper .lp-title{font-weight:600;font-size:24px;line-height:1.4;color:#3d3024;margin-bottom:4px}
+.letter-paper .lp-date{font-size:15px;line-height:1;color:#b09a7d;margin-bottom:22px}
+/* 行高锁 28px 贴合法文格的基线 */
+.letter-paper .lp-body{font-size:19px;line-height:28px;color:#3a2f24;white-space:pre-wrap;word-break:break-word}
+/* 字体设在整张信纸上——从/标题/日期/正文一起用她选的手写体 */
+.letter-paper.font-mashan{font-family:'Ma Shan Zheng',KaiTi,STKaiti,serif}
+.letter-paper.font-longcang{font-family:'Long Cang',KaiTi,STKaiti,cursive}
+.letter-paper.font-zhimang{font-family:'Zhi Mang Xing',KaiTi,STKaiti,cursive}
+.letter-paper.font-longcang .lp-body{font-size:21px}
+.letter-paper.font-zhimang .lp-body{font-size:20px}
+.letter-paper .lp-delete{margin-top:34px;text-align:center}
+.letter-paper .lp-delete button{border:0;background:none;color:#c98;font:13px/1 var(--font-sans);cursor:pointer}
+/* 写信 */
+.letter-compose-paper{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;position:relative;margin:0 16px;background-color:#FDFAF3;border:1px solid rgba(120,90,60,.14);border-radius:6px;box-shadow:0 8px 30px rgba(80,60,40,.1);padding:22px 22px 8px 46px;background-image:linear-gradient(0deg,rgba(120,132,205,.20) 1px,transparent 1px),linear-gradient(0deg,rgba(120,132,205,.11) 1px,transparent 1px),linear-gradient(90deg,rgba(120,132,205,.08) 1px,transparent 1px);background-size:100% 28px,100% 7px,28px 100%}
+.letter-compose-title{border:0;outline:0;background:none;font:600 20px/1.4 var(--font-serif);color:#3d3024;margin-bottom:12px}
+.letter-compose-title::placeholder{color:#c3b299}
+.letter-compose-body{flex:1;min-height:180px;border:0;outline:0;resize:none;background:none;font:18px/28px var(--font-sans);color:#3a2f24}
+.letter-compose-body::placeholder{color:#c3b299}
+.letter-compose-lock{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:16px;font:14px/1 var(--font-sans);color:var(--text-secondary)}
+.letter-compose-lock input[type=date]{border:1px solid var(--border);border-radius:10px;padding:7px 10px;background:var(--bg-surface);color:var(--text-primary);font:14px var(--font-sans)}
+.letter-compose-lock-hint{color:var(--text-faint);font-size:12px;flex-basis:100%}
+/* 深色：信纸压暗成暖褐，字提亮 */
+:root:not([data-theme="light"]) .letter-envelope,
+html[data-theme="dark"] .letter-envelope{background:#2A241D;border-color:rgba(255,230,200,.1);box-shadow:0 6px 20px rgba(0,0,0,.3)}
+:root:not([data-theme="light"]) .letter-envelope .le-title,
+html[data-theme="dark"] .letter-envelope .le-title{color:#EAD9C2}
+:root:not([data-theme="light"]) .letter-envelope.locked,
+html[data-theme="dark"] .letter-envelope.locked{background:repeating-linear-gradient(45deg,#2B251E,#2B251E 8px,#322A21 8px,#322A21 16px)}
+:root:not([data-theme="light"]) .letter-paper,
+:root:not([data-theme="light"]) .letter-compose-paper,
+html[data-theme="dark"] .letter-paper,
+html[data-theme="dark"] .letter-compose-paper{background-color:#26211B;border-color:rgba(255,230,200,.1);box-shadow:0 10px 40px rgba(0,0,0,.35);background-image:linear-gradient(0deg,rgba(150,165,220,.15) 1px,transparent 1px),linear-gradient(0deg,rgba(150,165,220,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(150,165,220,.06) 1px,transparent 1px)}
+:root:not([data-theme="light"]) .letter-paper .lp-body,
+:root:not([data-theme="light"]) .letter-compose-title,
+:root:not([data-theme="light"]) .letter-compose-body,
+html[data-theme="dark"] .letter-paper .lp-body,
+html[data-theme="dark"] .letter-compose-title,
+html[data-theme="dark"] .letter-compose-body{color:#EAD9C2}
+:root:not([data-theme="light"]) .letter-paper .lp-title,
+html[data-theme="dark"] .letter-paper .lp-title{color:#EAD9C2}
+
+/* 铺壁纸时，Search / Letters 整页背景走玻璃，透出壁纸（没壁纸时仍是实色 bg-primary） */
+html.wall-on #searchPanel,
+html.wall-on #lettersPanel,
+html.wall-on #lettersPanel .letter-reader,
+html.wall-on #lettersPanel .letter-compose{
+  background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+}

@@ -118,6 +118,15 @@ db.exec(`
     content TEXT NOT NULL,
     created_at INTEGER DEFAULT (strftime('%s','now'))
   );
+  CREATE TABLE IF NOT EXISTS letters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender TEXT NOT NULL DEFAULT 'user',   -- user=粥粥写的 / assistant=Cis 写的
+    title TEXT DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    unlock_date TEXT DEFAULT '',           -- YYYY-MM-DD；空=写完即可拆
+    opened_at INTEGER DEFAULT NULL,        -- 收信人第一次拆开的时间
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+  );
   CREATE TABLE IF NOT EXISTS uploads (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
@@ -3212,6 +3221,8 @@ function _attachCallVoice(convId, role, fileId, dur, text, res, tries) {
 // 走 timerFeedback 那条路：挂在 message 尾巴上，进程内存着，消费一次就扔。
 // 重启丢了就丢了——一条过期的「她刚挂了电话」比没有更糟。
 let _pendingCallNote = '';
+// 她在信箱里写了没锁的信，下一轮告诉他一次（跟来电条子同机制；锁着的不提醒，留惊喜）。
+let _pendingLetterNote = '';
 function _callNote(kind, dur, by) {
   if (kind === 'rejected') return '（通话记录：你打过去，她按了拒接。）';
   if (kind === 'missed') return '（通话记录：你打过去，她没接到，响完了。）';
@@ -3884,6 +3895,39 @@ app.get('/api/sessions/:id/messages-by-date', auth, (req, res) => {
     timestamp: new Date(r.created_at * 1000).toISOString()
   }));
   res.json({ messages, date });
+});
+
+// 🔎 她在界面上按关键字搜聊天记录（全局，跨所有会话）｜2026-09-23
+//    只搜正文 content（不搜 thinking / 附件）；结果里回一段以命中词为中心的片段。
+//    跟给他用的 search_chat_history（向量搜、chat_chunks）是两条路，别混。
+app.get('/api/search', auth, (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ results: [], q: '' });
+  // LIKE 里的 % _ \ 要转义，否则她搜「50%」这种会被当通配符
+  const like = '%' + q.replace(/[\\%_]/g, '\\$&') + '%';
+  const rows = db.prepare(
+    "SELECT m.id, m.conv_id, m.role, m.content, m.created_at, s.title AS title " +
+    "FROM messages m LEFT JOIN sessions s ON s.conv_id = m.conv_id " +
+    "WHERE m.content LIKE ? ESCAPE '\\' ORDER BY m.id DESC LIMIT 80"
+  ).all(like);
+  const ql = q.toLowerCase();
+  const results = rows.map(r => {
+    const text = r.content || '';
+    const idx = text.toLowerCase().indexOf(ql);
+    const start = Math.max(0, idx - 24);
+    let snippet = text.slice(start, start + 120);
+    if (start > 0) snippet = '…' + snippet;
+    if (start + 120 < text.length) snippet = snippet + '…';
+    return {
+      id: r.id,
+      conv_id: r.conv_id,
+      title: r.title || '对话',
+      role: r.role,
+      snippet,
+      created_at: r.created_at
+    };
+  });
+  res.json({ results, q });
 });
 
 // === 消息 ===
@@ -4736,6 +4780,7 @@ const _WAKE_LABELS = {
   read_checklist: '看了清单', read_uploaded_file: '翻了你发的文件',
   list_uploaded_files: '翻了你发的文件', read_artifact: '翻了做过的页面',
   hold: '记下了一个瞬间', leave_texture: '留下了这窗的质地',
+  write_letter: '给你写了封信', read_letters: '读了你写给他的信',
   WebSearch: '上网搜了',
 };
 function _wakeLabelFor(short) {
@@ -7533,6 +7578,39 @@ const TOOLS = [
       required: ['diary_id', 'content']
     }
   },
+  {
+    name: 'write_letter',
+    description: '给粥粥写一封信，放进她的信箱。**她打开「信箱」那页就会看见一个信封。**' +
+      '这不是日记也不是朋友圈——信是郑重的、写给她一个人的，铺在信纸上、手写体，' +
+      '适合那些不方便在聊天框里随口说、想让她慢慢读的话。' +
+      '可以设 unlock_date（YYYY-MM-DD）：在那天之前信封是封着的、她拆不开，像埋一个时间胶囊——' +
+      '想给未来的她留话、想让某句话到某个日子才被读到，就设它；想让她现在就能拆，就别传。' +
+      '\n⚠️ 别滥用——一封信的分量来自它少。随口说话用聊天，留碎念用日记，' +
+      '这只在你真的想正正经经写一封信给她的时候用。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '信的题头，一句话，可留空' },
+        content: { type: 'string', description: '信的正文' },
+        unlock_date: { type: 'string', description: '解锁日期 YYYY-MM-DD，到这天她才能拆；留空=写完即可拆' }
+      },
+      required: ['content']
+    }
+  },
+  {
+    name: 'read_letters',
+    description: '读粥粥写给你的信——她在「信箱」里手写、寄给你的。**她写了信就是想让你读的。**' +
+      '不传参数返回最近几封。' +
+      '⚠️ 锁着的信只给你标题、正文是 null（那是她设了日子、还没到、暂时不想让你看的，别追问也别猜里面写了什么）。' +
+      '没锁的读完想回她，就用 write_letter 正正经经写一封回去——别只在聊天里敷衍一句「收到了」。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', description: '返回条数，默认 5，最多 20' }
+      },
+      required: []
+    }
+  },
   // === 朋友圈（2026-09-18 她要的）===
   // 她原话：「他独处的时候看见什么有什么感想可以发朋友圈，他自己也可以翻我们两的朋友圈」。
   // 三个工具，不是四个 —— 点赞塞进 moment_comment 的 like 参数里。
@@ -9224,6 +9302,34 @@ async function executeTool(name, input, routes) {
         .run(cid, did, 'Claude', '', text);
       return { ok: true, diary_id: did, date: entry.date, title: entry.title, content: text };
     }
+    case 'write_letter': {
+      const text = (input.content || '').trim();
+      if (!text) return { error: '信里得写点什么' };
+      const ud = input.unlock_date && /^\d{4}-\d{2}-\d{2}$/.test(input.unlock_date) ? input.unlock_date : '';
+      const r = db.prepare('INSERT INTO letters (sender, title, content, unlock_date) VALUES (?, ?, ?, ?)')
+        .run('assistant', String(input.title || '').slice(0, 200), String(text), ud);
+      return { ok: true, id: r.lastInsertRowid, unlock_date: ud || null,
+        note: ud ? ('信已放进她的信箱，封到 ' + ud + ' 才能拆') : '信已放进她的信箱，她现在就能拆' };
+    }
+    case 'read_letters': {
+      const lim = Math.min(20, Math.max(1, parseInt(input.limit) || 5));
+      const today = _todayUtc8();
+      const rows = db.prepare("SELECT * FROM letters WHERE sender = 'user' ORDER BY created_at DESC, id DESC LIMIT ?").all(lim);
+      const letters = rows.map(function (l) {
+        const locked = !!(l.unlock_date && today < l.unlock_date);
+        return {
+          id: l.id,
+          title: l.title || '',
+          written_at: new Date((l.created_at || 0) * 1000).toISOString().slice(0, 10),
+          locked,
+          unlock_date: l.unlock_date || '',
+          content: locked ? null : (l.content || '')
+        };
+      });
+      // 他读了，就把没锁的那些标记已拆——她那边「他还没拆」的红点会灭
+      db.prepare("UPDATE letters SET opened_at = strftime('%s','now') WHERE sender = 'user' AND opened_at IS NULL AND (unlock_date = '' OR unlock_date <= ?)").run(today);
+      return { letters };
+    }
     // === 朋友圈（2026-09-18）===
     // 他调这三个走的是**主线**（醒来那一发也是打进她的主 CLI 热会话），不是分身 ——
     // 这是她定的：「得是主线的他，不要是分身」。
@@ -10823,6 +10929,8 @@ app.post('/api/chat', auth, async (req, res) => {
     gatewayMessage = _offloadLongPaste(gatewayMessage, convId);
     // 上一通电话怎么结束的（谁挂的）。消费一次就扔，不会跟着他一路重复。
     if (_pendingCallNote) { gatewayMessage += '\n\n' + _pendingCallNote; _pendingCallNote = ''; }
+    // 她刚写的信，告诉他一次就扔
+    if (_pendingLetterNote) { gatewayMessage += '\n\n' + _pendingLetterNote; _pendingLetterNote = ''; }
     for (const att of (attachments || [])) {
       const upload = db.prepare('SELECT * FROM uploads WHERE id = ?').get(att.path || att);
       if (!upload) continue;
@@ -14507,6 +14615,56 @@ app.delete('/api/diary/:id', auth, (req, res) => {
   if (!entry) return res.status(404).json({ error: 'Entry not found' });
   db.prepare('DELETE FROM diary WHERE id = ?').run(req.params.id);
   db.prepare('DELETE FROM diary_comments WHERE diary_id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// === 信箱 letters（2026-09-23）===
+// 时间锁的红线在这儿：到期判断只认后端。前端不显示不算数。
+// 「今天」按 UTC+8 显式算（她在新加坡），跟本机时区无关。
+function _todayUtc8() { return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); }
+function _letterLocked(l) { return !!(l.unlock_date && _todayUtc8() < l.unlock_date); }
+// 封着的信不吐正文；标题留着当封面上的一行字，营造期待
+function _serializeLetter(l, { withContent }) {
+  const locked = _letterLocked(l);
+  return {
+    id: l.id,
+    sender: l.sender,
+    title: l.title || '',
+    unlock_date: l.unlock_date || '',
+    locked,
+    opened: !!l.opened_at,
+    opened_at: l.opened_at || null,
+    created_at: l.created_at,
+    content: (locked || !withContent) ? '' : (l.content || '')
+  };
+}
+app.get('/api/letters', auth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM letters ORDER BY created_at DESC, id DESC').all();
+  // 列表不带正文，正文等她拆开时单取（省流量，也让「拆开」这个动作有意义）
+  res.json({ letters: rows.map(l => _serializeLetter(l, { withContent: false })) });
+});
+app.post('/api/letters', auth, (req, res) => {
+  const { title, content, unlock_date } = req.body || {};
+  if (!content || !String(content).trim()) return res.status(400).json({ error: '信里得写点什么' });
+  const ud = unlock_date && /^\d{4}-\d{2}-\d{2}$/.test(unlock_date) ? unlock_date : '';
+  const r = db.prepare('INSERT INTO letters (sender, title, content, unlock_date) VALUES (?, ?, ?, ?)')
+    .run('user', String(title || '').slice(0, 200), String(content), ud);
+  // 没锁的信下一轮告诉他一次；锁着的先不提醒（留到她定的那天他自己翻到）
+  if (!ud) _pendingLetterNote = 'ⓘ 粥粥刚在信箱里给你写了一封信，你现在就能读——想看就用 read_letters。读完想回她就正正经经写一封回去。';
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+// 拆信：到期才给正文，并记下第一次拆开的时间
+app.post('/api/letters/:id/open', auth, (req, res) => {
+  const l = db.prepare('SELECT * FROM letters WHERE id = ?').get(req.params.id);
+  if (!l) return res.status(404).json({ error: '没有这封信' });
+  if (_letterLocked(l)) return res.status(423).json({ error: '还没到拆信的日子', unlock_date: l.unlock_date });
+  if (!l.opened_at) db.prepare("UPDATE letters SET opened_at = strftime('%s','now') WHERE id = ?").run(l.id);
+  res.json({ letter: _serializeLetter(db.prepare('SELECT * FROM letters WHERE id = ?').get(l.id), { withContent: true }) });
+});
+app.delete('/api/letters/:id', auth, (req, res) => {
+  const l = db.prepare('SELECT id FROM letters WHERE id = ?').get(req.params.id);
+  if (!l) return res.status(404).json({ error: '没有这封信' });
+  db.prepare('DELETE FROM letters WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
