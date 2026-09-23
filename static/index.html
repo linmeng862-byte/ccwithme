@@ -5376,6 +5376,15 @@ function _reRenderCards(el){
   try{ if(typeof _renderCallCards==='function')_renderCallCards(el); }catch(_){}
 }
 function _splitMessages(row){
+  /* 09-23：他发语音条时，done→finish 这一刻正文里还是 <voice>…</voice> —— 真正的
+     [VOICE:id|时长] 要等合成完、稍后由 voice_replace 事件补进来。此刻分条，下面那条
+     「有卡片标记就整条不切」的保护（5303）认的是 [VOICE:]，认不出 <voice>，于是语音
+     消息被当普通多行话切开：正文成独立气泡、<voice> 那段被拆碎渲成纯文字，voice_replace
+     回来时 msg.row 已经不是原来那条 —— 她就「只看得见文字、看不见语音条，退出重进才好」
+     （退出走历史路，那时库里已是 [VOICE:]）。合成没落地就先别切，等 voice_replace 补进
+     [VOICE:] 后由它渲染（单气泡本就不用切）。历史路的正文早是 [VOICE:]，不带 <voice>，
+     不受这条影响，照旧走 5303 那条保护。 */
+  if((row.dataset.raw||'').indexOf('<voice>')!==-1)return;
   /* 官端样式不分条 —— 官端一次回复就是一整段。09-05
      不能直接 return：`---` 会被 markdown 渲成一条 <hr>，那更难看。
      把分隔符换成空行、重渲一次再走人，卡片也要跟着重贴。
@@ -7677,6 +7686,14 @@ renderMessage=function(md,text,noStrip){
   // 流到一半、还没闭合的信笺先不显示，别让半截标签冒到气泡里
   text=text.replace(/<想[·:：]?\s*[^>]{0,8}>[\s\S]*$/,'').trim();
   _origRenderMessage2(md,text,noStrip);
+  // ⚠️ 09-23：信笺卡挂在气泡【外面】(下面 _bub.after)，而 renderMessage 流式时会被反复调用。
+  //   _origRenderMessage2 只重写 md 内部，冲不掉气泡外的信笺卡 —— 每 poll 一次就再 after 一张，
+  //   同一封信笺越堆越多（她截图里堆了 4 张），刷新整页重渲一次才恢复。
+  //   所以重建前先把这个气泡紧跟着的旧信笺卡清掉，再按最新正文重挂。
+  var _bubOld=md.closest('.bubble');
+  if(_bubOld){var _sib=_bubOld.nextElementSibling;
+    while(_sib&&_sib.classList&&_sib.classList.contains('inside-letter')){
+      var _nx=_sib.nextElementSibling;_sib.remove();_sib=_nx;}}
   _insideCards.forEach(function(ins){
     if(!ins.body)return;
     var card=document.createElement('div');card.className='inside-letter';
