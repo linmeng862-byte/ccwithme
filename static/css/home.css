@@ -2906,8 +2906,23 @@ html.wall-on:not(.wall-theme):not(.ui-plain) .incoming-call-card{
   box-shadow:0 24px 70px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.6);
 }
 
+/* ---- 文件卡 / artifact 卡（聊天气泡里的 .file-card / .artifact-card）----
+   内联 style 写着 background:var(--bg-surface)，wall-on 时改玻璃。
+   ⚠️ 内联 style 优先级高于类选择器，必须 !important 压过。 */
+html.wall-on:not(.wall-theme):not(.ui-plain) .file-card,
+html.wall-on:not(.wall-theme):not(.ui-plain) .artifact-card{
+  background:rgba(255,255,255,.38) !important;
+  border-color:rgba(255,255,255,.45) !important;
+  backdrop-filter:blur(24px) saturate(1.15);
+  -webkit-backdrop-filter:blur(24px) saturate(1.15);
+}
+
 /* 深色：上面五块统一换深玻璃。两套写法（@media 跟随系统 + data-theme 显式）照本文件惯例各写一遍。 */
 @media (prefers-color-scheme:dark){
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) .file-card,
+  html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) .artifact-card{
+    background:rgba(28,25,22,.52) !important;border-color:rgba(255,255,255,.12) !important;
+  }
   html.wall-on:not(.wall-theme):not([data-theme="light"]):not(.ui-plain) #moreMenu{
     --bg-primary:rgba(28,25,22,.6);border-color:rgba(255,255,255,.14);
     box-shadow:0 8px 28px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.1);
@@ -2932,6 +2947,10 @@ html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #artifactsSheet{
 html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) .incoming-call-card{
   background:rgba(28,25,22,.58);border-color:rgba(255,255,255,.14);
   box-shadow:0 24px 70px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.1);
+}
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) .file-card,
+html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) .artifact-card{
+  background:rgba(28,25,22,.52) !important;border-color:rgba(255,255,255,.12) !important;
 }
 
 /* ---- 日记「Thoughts」那一条（09-20 她说自定义背景下还是黄的）----

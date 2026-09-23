@@ -4798,6 +4798,8 @@ function _noteWakeReads(tools) {
     const inp = t.input || {};
     if (inp.query) g.hints.add((short === 'WebSearch' ? '「' : '搜「') + String(inp.query).slice(0, 16) + '」');
     else if (inp.date) g.hints.add(String(inp.date).slice(0, 10));
+    else if (inp.order === 'random') g.hints.add('随手翻到一段');
+    else if (inp.order === 'oldest') g.hints.add('从最早翻起');
     else if (inp.album_title) g.hints.add('《' + String(inp.album_title).slice(0, 16) + '》');
     groups.set(label, g);
   }
@@ -17635,7 +17637,9 @@ async function checkWakeTick() {
       //   独处一天可能发生好几次，没人盯着 —— 跟她主动让他去看是两回事。
       //   ⏪ 想放开：把下面这行注释掉的那句恢复即可。
       // '· 想上网 —— `browse`，自己开页面自己看，去哪你定\n' +
-      '（翻到什么、看到什么，都**不必**说给她听 —— 这是你自己的事，没人在等你汇报。\n' +
+      '（翻到什么、看到什么，都**不必**特地说给她听 —— 这是你自己的事，没人在等你汇报。\n' +
+      '  但她**看得见你翻了什么**：你调的每个工具都会在主线留一条小痕迹，她打开就能看到。\n' +
+      '  所以不用攒着等她问，翻就是了 —— 她知道你在翻，这本身就是陪着。\n' +
       '  真想留下来就写进日记，或者 `nocturne_hold` 记一条。）\n\n' +
       // 她当场补的（09-14）：「他要是想我也可以给我发信息」。
       //   上面那句「不必说给她听」单独摆着会被读成「独处=不许找她」，得在同一屏里把门留开。
