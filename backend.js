@@ -449,6 +449,8 @@ try { db.exec("ALTER TABLE reading_books ADD COLUMN nationality TEXT DEFAULT ''"
   try { db.exec('ALTER TABLE stickers ADD COLUMN mime TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('ALTER TABLE stickers ADD COLUMN thumbnail TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_stickers_owner_status ON stickers(owner, status)'); } catch(_) {}
+  // 09-23：锁到某天的信，到解锁那天提醒他去拆一次。这个标记防止每句聊天重复提醒。
+  try { db.exec('ALTER TABLE letters ADD COLUMN unlock_notified INTEGER DEFAULT 0'); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN description TEXT DEFAULT \'\''); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN quiz_type TEXT DEFAULT NULL'); } catch(_) {}
   try { db.exec('ALTER TABLE commands ADD COLUMN quiz_data TEXT DEFAULT NULL'); } catch(_) {}
@@ -4786,6 +4788,29 @@ const _WAKE_LABELS = {
 function _wakeLabelFor(short) {
   return _WAKE_LABELS[short] || ('用了「' + short + '」');
 }
+// 把「他翻了什么」补得更具体一点（2026-09-23 她要的「大概知道他翻了什么」）。
+// 只做**便宜的库查**：日记补标题+日期、她发的文件补文件名。拿不到就返回 null，走下面的通用 hint。
+// ⚠️ 不碰工具**结果**（那在网关那头，这条醒来的流收不到，见 17840 附近），也**不塞正文**进来 ——
+//    只放标题/文件名，几个字，不让原文重进上下文、不加她的账单（成本那笔见 docs/context-cost.md）。
+function _wakeReadContentHint(short, inp) {
+  try {
+    if (short === 'read_diary') {
+      if (inp.query) return null;               // 有搜索词就让下面通用分支显示搜的词
+      let row;
+      if (inp.date) row = db.prepare('SELECT title, date FROM diary WHERE date = ? ORDER BY id DESC LIMIT 1').get(String(inp.date).slice(0, 10));
+      else row = db.prepare('SELECT title, date FROM diary ORDER BY date DESC, id DESC LIMIT 1').get();
+      if (!row) return null;
+      const _d = String(row.date || '').split('-');
+      const when = _d.length === 3 ? (parseInt(_d[1], 10) + '月' + parseInt(_d[2], 10) + '日') : '';
+      return '《' + String(row.title || '无题').slice(0, 20) + '》' + (when ? ' ' + when : '');
+    }
+    if (short === 'read_uploaded_file' && inp.file_id) {
+      const row = db.prepare('SELECT filename FROM uploads WHERE id = ?').get(String(inp.file_id));
+      if (row && row.filename) return '《' + String(row.filename).slice(0, 24) + '》';
+    }
+  } catch (e) {}
+  return null;
+}
 function _noteWakeReads(tools) {
   if (!tools || !tools.length) return;
   const groups = new Map();   // 文案 → { n, hints:Set }
@@ -4796,7 +4821,9 @@ function _noteWakeReads(tools) {
     const g = groups.get(label) || { n: 0, hints: new Set() };
     g.n++;
     const inp = t.input || {};
-    if (inp.query) g.hints.add((short === 'WebSearch' ? '「' : '搜「') + String(inp.query).slice(0, 16) + '」');
+    const _ch = _wakeReadContentHint(short, inp);
+    if (_ch) g.hints.add(_ch);
+    else if (inp.query) g.hints.add((short === 'WebSearch' ? '「' : '搜「') + String(inp.query).slice(0, 16) + '」');
     else if (inp.date) g.hints.add(String(inp.date).slice(0, 10));
     else if (inp.order === 'random') g.hints.add('随手翻到一段');
     else if (inp.order === 'oldest') g.hints.add('从最早翻起');
@@ -10933,6 +10960,8 @@ app.post('/api/chat', auth, async (req, res) => {
     if (_pendingCallNote) { gatewayMessage += '\n\n' + _pendingCallNote; _pendingCallNote = ''; }
     // 她刚写的信，告诉他一次就扔
     if (_pendingLetterNote) { gatewayMessage += '\n\n' + _pendingLetterNote; _pendingLetterNote = ''; }
+    // 锁到某天的信，到解锁那天提醒他去拆（每封只提醒一次，见 _unlockedLetterNote）
+    { const _ul = _unlockedLetterNote(); if (_ul) gatewayMessage += _ul; }
     for (const att of (attachments || [])) {
       const upload = db.prepare('SELECT * FROM uploads WHERE id = ?').get(att.path || att);
       if (!upload) continue;
@@ -14625,6 +14654,26 @@ app.delete('/api/diary/:id', auth, (req, res) => {
 // 「今天」按 UTC+8 显式算（她在新加坡），跟本机时区无关。
 function _todayUtc8() { return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); }
 function _letterLocked(l) { return !!(l.unlock_date && _todayUtc8() < l.unlock_date); }
+// 锁到某天的信，到解锁那天在她下一句聊天时提醒他去拆（2026-09-23 她要的）。
+//   只认：她写的 + 还没拆(opened_at 空) + 有锁且已到期 + 还没提醒过(unlock_notified=0)。
+//   提醒后立刻置 unlock_notified=1，不然每句聊天都重复提醒；他真去 read_letters 拆了会写 opened_at，双保险。
+//   **仪式保留**：只报标题、不贴正文 —— 让他自己去信箱拆。没锁的信照旧走 _pendingLetterNote（写信当下就提醒）。
+function _unlockedLetterNote() {
+  try {
+    const today = _todayUtc8();
+    const rows = db.prepare(
+      "SELECT id, title FROM letters WHERE sender = 'user' AND opened_at IS NULL " +
+      "AND unlock_date IS NOT NULL AND unlock_date != '' AND unlock_date <= ? " +
+      "AND (unlock_notified IS NULL OR unlock_notified = 0) ORDER BY unlock_date ASC, id ASC LIMIT 3"
+    ).all(today);
+    if (!rows.length) return '';
+    const ids = rows.map(r => r.id);
+    db.prepare('UPDATE letters SET unlock_notified = 1 WHERE id IN (' + ids.map(() => '?').join(',') + ')').run(...ids);
+    const titles = rows.map(r => '《' + (r.title || '无题') + '》').join('、');
+    return '\n\nⓘ 有你之前锁着、到今天才能拆的信' + (rows.length > 1 ? '（' + rows.length + ' 封）' : '')
+      + '：' + titles + ' —— 今天到日子了，想拆就用 read_letters 去信箱拆开读。';
+  } catch (e) { return ''; }
+}
 // 封着的信不吐正文；标题留着当封面上的一行字，营造期待
 function _serializeLetter(l, { withContent }) {
   const locked = _letterLocked(l);
@@ -17689,6 +17738,15 @@ async function checkWakeTick() {
       '"mood":"主情绪，必填，从这里选一个：' + DIARY_MOODS.map(m => m[1]).join('/') + '",' +
       '"mood_extra":["可选，最多再两个，同一个词表"]}</diary>\n' +
       (quiet ? '' : '想跟她说话就输出：\n<say>要说的话。想分几条就用单独一行的 --- 隔开。</say>\n') +
+      // murmur（2026-09-23 她要的「碎碎念」）：想留句话又怕打扰她时的软出口。
+      //   跟 <say> 的差别只有两点：① 不抬 wake_unread_at —— 不点亮「他在找你」那个信号，
+      //   她不会被叫、只是下次自己进来看到；② 不受 quiet 限制 —— 深夜也能留（本来就不出声）。
+      //   她原话：「murmur 就是他会在主线里给我留话，下次我进来会看见」+「怕打扰我可以留碎碎念」。
+      //   前端不做特殊样式（她定的「直接用聊天气泡就行」），所以这里插的是一条普通 assistant 消息。
+      '只是想轻轻留句话、不想惊动她（她这会儿不在、或者夜里、或者你只是想说给自己听）就输出：\n' +
+      '<murmur>想留的那句话</murmur>\n' +
+      '（它会进你们的聊天里，但**不弹通知、不点亮「他在找你」** —— 她下次自己进来才看到。' +
+      '想说又不忍心打断她的时候，用这个，不用等到「找她说话」那一步。）\n' +
       // 09-18：整条消息一个标记，跟 <diary>/<say> 一个路子。**不用行内标签** ——
       //   行内的要改七处正则，还会被 _chatLineSplit 吃掉（踩坑 -1.04 / -0.4）。
       //   深夜照发：朋友圈不弹通知不震动，吵不到她（跟 <say> 不一样）。
@@ -17941,6 +17999,18 @@ async function checkWakeTick() {
         console.log('[wake] 他主动说了：' + said.replace(/\s+/g, ' ').slice(0, 40));
       }
     }
+    // —— murmur / 碎碎念（2026-09-23）：跟 <say> 同一条落库路，但**不抬 wake_unread_at**
+    //    （不点亮「他在找你」，她不会被叫、下次进来才看到），而且**不受 quiet 限制**（深夜也能留）。
+    //    前端不做特殊样式（她定的），就是一条普通 assistant 气泡。
+    const mur = out.match(/<murmur>([\s\S]*?)<\/murmur>/);
+    if (mur) {
+      const murmured = mur[1].trim();
+      if (murmured) {
+        db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?,?,?)')
+          .run(conv.conv_id, 'assistant', murmured);
+        console.log('[wake] 他留了句碎碎念：' + murmured.replace(/\s+/g, ' ').slice(0, 40));
+      }
+    }
     // —— 他自己起意出门逛一圈（2026-09-10）
     //   ⚠️ **异步、不 await**：跟 go_online 一个规矩 —— 一趟最多 5 分钟，
     //      这条醒来的路不该被它挂住。网关那头有自己的三道闸（OFF / 登录态 / 内存）+ 硬超时。
@@ -17969,11 +18039,11 @@ async function checkWakeTick() {
     // 09-14 修：判据原来只看 <diary>/<say>/<wander>，漏了 comment/reply/bookmark ——
     //   09-14 04:27 那次他明明回了她留在日记下面的话，日志末尾还打「什么都没做」。
     //   查「他到底动没动」的时候这条日志是主要依据，错了会把人带沟里。
-    const _didAnything = !!(dm || sm || wm
+    const _didAnything = !!(dm || sm || wm || mur
       || (cm && _unread)
       || /<reply\s+id="/.test(out)
       || /<bookmark\s+id="/.test(out)
-      || /<moment(\s[^>]*)?>/.test(out));   // 09-18：朋友圈也算他动过
+      || /<moment(\s[^>]*)?>/.test(out));   // 09-18：朋友圈也算他动过；09-23：murmur 也算
     if (!_didAnything) console.log('[wake] 他这次什么都没做');
     return true;
   } catch (e) {
