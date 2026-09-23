@@ -4127,7 +4127,10 @@ async function callNocturne(toolName, args = {}, _retried = false) {
       } catch(e) {}
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    // 09-24 她拍板放宽：breath 冷启动实测 10.4s，10s 上限会把整口气掐掉、静默变成「没记忆」。
+    //    只放宽 breath —— 它有 10 分钟缓存，慢只慢冷的那一次；别的工具照旧 10s。
+    const _limitMs = toolName === 'breath' ? 20000 : 10000;
+    const timeout = setTimeout(() => controller.abort(), _limitMs);
     const headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, _nocturneAuth(NOCTURNE_URL));
     if (_nocturneSessionId) headers['Mcp-Session-Id'] = _nocturneSessionId;
     let r = await fetch(NOCTURNE_URL + '/mcp', {
@@ -4154,7 +4157,7 @@ async function callNocturne(toolName, args = {}, _retried = false) {
   } catch(e) {
     // 09-24：原来这里一声不吭 return null —— 超时（10s 上限，breath 冷启动实测 10.4s）
     // 和断网都长得跟「没记忆」一样，醒来没灌进去也查不出为什么。
-    console.warn('[nocturne] ' + toolName + ' 失败：' + (e && e.name === 'AbortError' ? '超时 10s' : (e && e.message || e)));
+    console.warn('[nocturne] ' + toolName + ' 失败：' + (e && e.name === 'AbortError' ? '超时 ' + (toolName === 'breath' ? 20 : 10) + 's' : (e && e.message || e)));
     return null;
   }
 }
@@ -14252,7 +14255,7 @@ async function _mcpCall(tool, args, _retried = false) {
     const resp = await fetch(MEMORY_ENGINE, {
       method: 'POST', headers,
       body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name: tool, arguments: args || {} }, id: 1 }),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(tool === 'breath' ? 20000 : 15000)
     });
     // 09-24：Nocturne 重启 / 重新部署后旧会话号回 404。原来这里不清会话号，
     //    之后每一发都 404、被 catch 吞掉，Memory 面板一直空到我们这边重启为止。
@@ -14268,7 +14271,7 @@ async function _mcpCall(tool, args, _retried = false) {
     //    而且日志里一个字都不留。08-28 修，改走跟 callNocturne 同一个解析器。
     return _parseMcpPayload(await resp.text());
   } catch(e) {
-    console.warn('[memory] ' + tool + ' 失败：' + (e && e.name === 'TimeoutError' ? '超时 15s' : (e && e.message || e)));
+    console.warn('[memory] ' + tool + ' 失败：' + (e && e.name === 'TimeoutError' ? '超时 ' + (tool === 'breath' ? 20 : 15) + 's' : (e && e.message || e)));
     return null;
   }
 }
