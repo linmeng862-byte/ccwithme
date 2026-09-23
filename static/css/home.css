@@ -3130,7 +3130,9 @@ html.wall-on #lettersPanel .letter-compose{
 }
 
 /* ===== 信封堆叠 + 拆信三折（.lx-*，改编自原型；数据走 /api/letters，跟旧 .letter-envelope 那套并存不冲突）===== */
-:root{--lx-ease:cubic-bezier(.22,.78,.2,1);--lx-spring:cubic-bezier(.2,1.12,.35,1)}
+:root{--lx-ease:cubic-bezier(.22,.78,.2,1);--lx-spring:cubic-bezier(.2,1.12,.35,1);
+  /* 展开后的两道折痕：不画线，只在折线两侧各铺一片很宽很淡的影子（第一道上暗下亮，第二道反过来），像压过又摊平的纸 */
+  --lx-crease:linear-gradient(180deg,transparent 20%,rgba(70,56,40,.055) 33.2%,rgba(70,56,40,.035) 33.45%,transparent 43%,transparent 57%,rgba(70,56,40,.02) 66.5%,rgba(70,56,40,.05) 66.8%,transparent 76%)}
 .lx-wrap{flex:1;min-height:0;position:relative;overflow:hidden;isolation:isolate}
 .lx-greeting{position:absolute;z-index:4;top:14px;left:24px;right:24px;font-size:15px;line-height:1.35;color:var(--text-secondary);transition:opacity .45s ease,transform .6s var(--lx-ease)}
 .lx-greeting strong{display:block;color:var(--text-primary);font-weight:600;font-size:16px}
@@ -3171,16 +3173,24 @@ html.wall-on #lettersPanel .letter-compose{
 /* 三折信纸 */
 .lx-paper{position:absolute;z-index:3;left:50%;top:calc(var(--env-h) * -1);width:min(78vw,306px);height:var(--paper-h);margin-left:calc(min(78vw,306px)/-2);opacity:0;pointer-events:none;transform:translateY(calc(var(--paper-h) * .34)) scale(.94);filter:drop-shadow(0 18px 13px rgba(75,70,59,.28));transition:transform .72s var(--lx-ease),opacity .22s ease;transform-style:preserve-3d;perspective:650px}
 .lx-panel{position:absolute;left:0;width:100%;height:33.334%;transform-style:preserve-3d;will-change:transform;transition:transform .85s var(--lx-ease)}
-/* 折着的那两折压一层暗影，展开时褪掉——光打在折面上的感觉 */
-.lx-panel.p1:after,.lx-panel.p3:after{content:"";position:absolute;inset:0;pointer-events:none;transform:translateZ(1px);opacity:1;transition:opacity .85s var(--lx-ease)}
-.lx-panel.p1:after{background:linear-gradient(0deg,rgba(60,44,28,.48),rgba(60,44,28,.12))}
-.lx-panel.p3:after{background:linear-gradient(180deg,rgba(60,44,28,.48),rgba(60,44,28,.12))}
-.lx-panel.p2:after{content:"";position:absolute;inset:0;pointer-events:none;transform:translateZ(1px);background:linear-gradient(180deg,rgba(60,44,28,.28),transparent 30%,transparent 70%,rgba(60,44,28,.28));transition:opacity .85s var(--lx-ease)}
-/* 展开后留两道折痕：画在每张 .lx-sheet 上，翻页时折痕跟着纸走 */
-.lx-sheet:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent calc(33.333% - 3px),rgba(90,70,50,.10) calc(33.333% - 1px),rgba(255,255,255,.9) 33.333%,rgba(90,70,50,.06) calc(33.333% + 2px),transparent calc(33.333% + 5px),transparent calc(66.666% - 3px),rgba(90,70,50,.10) calc(66.666% - 1px),rgba(255,255,255,.9) 66.666%,rgba(90,70,50,.06) calc(66.666% + 2px),transparent calc(66.666% + 5px))}
+/* 暗影只压在翻动那两折的「字面」上：立起来、背着光时是灰的（字还看得见，被压扁），落平了褪掉。
+   折好时朝外的是 p1 的背面，只在折口那边留一点点影，不再整片发褐 */
+.lx-panel.p1 .lx-face:after,.lx-panel.p3 .lx-face.front:after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none}
+/* 字面的灰只在「翻的那一下」出现：平时（折着 / 摊平）一律 0。
+   只靠 backface-visibility 藏不住——.lx-paper 的 filter 把 3D 压平后，有的浏览器背过去的面照样画，刚抽出来的信就整张发灰 */
+.lx-panel .lx-face.front:after{opacity:0}
+@keyframes lxShadeOut{from{opacity:1}to{opacity:0}}
+@keyframes lxShadeHump{0%{opacity:0}45%{opacity:1}100%{opacity:0}}
+.lx-panel.p1 .lx-face.front:after{background:linear-gradient(0deg,rgba(50,40,30,.36),rgba(50,40,30,.22))}
+.lx-panel.p3 .lx-face.front:after{background:linear-gradient(180deg,rgba(50,40,30,.36),rgba(50,40,30,.22))}
+.lx-panel.p1 .lx-face.back:after{background:linear-gradient(180deg,rgba(70,56,40,.07),transparent 38%)}
+/* 展开后的折痕：画在每张 .lx-sheet 上，翻页时折痕跟着纸走；.lx-ftc 上也铺同一份，交接时看不出接缝 */
+.lx-sheet:after{content:"";position:absolute;inset:0;pointer-events:none;background:var(--lx-crease)}
+/* .lx-paper 有 filter，里面三折被压平、按 z-index 叠：p1 最外、p3 贴着字面垫在中间、p2 最底，
+   这样 p3 往上折时是盖在 p2 的字上（字对字），不会钻到 p2 后面去 */
 .lx-panel.p1{top:0;z-index:3;transform-origin:50% 100%;transform:rotateX(-179deg)}
-.lx-panel.p2{top:33.333%;z-index:2}
-.lx-panel.p3{top:66.666%;z-index:1;transform-origin:50% 0;transform:rotateX(179deg)}
+.lx-panel.p2{top:33.333%;z-index:1}
+.lx-panel.p3{top:66.666%;z-index:2;transform-origin:50% 0;transform:rotateX(179deg)}
 /* 白纸：不画线（汉字方块字用不上法文格），只留一层很淡的纸纹噪点 + 顶上略亮的光，质感交给折痕和阴影 */
 .lx-face{position:absolute;inset:0;display:block;overflow:hidden;backface-visibility:hidden}
 .lx-face,.lx-sheet{background-color:#fdfcfa;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .42 0 0 0 0 .38 0 0 0 0 .32 .07 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),linear-gradient(180deg,#fff,#f9f8f5);box-shadow:0 0 0 1px #eceae5 inset}
@@ -3199,6 +3209,7 @@ html.wall-on #lettersPanel .letter-compose{
 /* 当前那一页拷一份分贴在三折的正面上：展开 / 折回时字跟着纸翻；翻平了由 .lx-sheet 接手，位置一模一样所以看不出接缝 */
 .lx-ftc{position:absolute;left:0;right:0;height:300%;overflow:hidden;padding:28px 30px 30px;text-align:left;color:#3a2f24;pointer-events:none}
 .lx-panel.p2 .lx-ftc{top:-100%}.lx-panel.p3 .lx-ftc{top:-200%}
+.lx-ftc:after{content:"";position:absolute;inset:0;background:var(--lx-crease)}
 /* 纸一现身，贴纸拷贝就隐掉（翻页时纸边露出来不会看见底下还有一层字）；折回去时拷贝立刻回来 */
 /* 拷贝是拆信那一刻才塞进去的新元素，transition 没有起点会直接生效，所以用 animation 的延迟 */
 @keyframes lxHideLater{to{visibility:hidden}}
@@ -3245,9 +3256,8 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-stage[data-state="reading"] .is-sel .lx-paper{opacity:1;pointer-events:auto;transform:translateY(calc(var(--env-h) * -.8)) scale(1);animation:lxPull 1.05s cubic-bezier(.45,.05,.25,1) .5s both}
 .lx-stage[data-state="reading"] .is-sel .p1{transform:rotateX(0);transition:transform 1s cubic-bezier(.3,1.22,.5,1) 1.45s}
 .lx-stage[data-state="reading"] .is-sel .p3{transform:rotateX(0);transition:transform 1s cubic-bezier(.3,1.22,.5,1) 1.8s}
-.lx-stage[data-state="reading"] .is-sel .p2:after{opacity:0;transition-delay:1.9s}
-.lx-stage[data-state="reading"] .is-sel .p1:after{opacity:0;transition-delay:1.45s}
-.lx-stage[data-state="reading"] .is-sel .p3:after{opacity:0;transition-delay:1.8s}
+.lx-stage[data-state="reading"] .is-sel .p1 .lx-face.front:after{animation:lxShadeOut 1s ease-out 1.45s forwards}
+.lx-stage[data-state="reading"] .is-sel .p3 .lx-face.front:after{animation:lxShadeOut 1s ease-out 1.8s forwards}
 .lx-stage[data-state="reading"] .is-sel .lx-sheets{opacity:1;pointer-events:auto;transition:opacity .12s 2.8s}
 .lx-stage[data-state="reading"] .is-sel .lx-env{transform:translateY(150px);opacity:.22;transition-delay:1.05s}
 /* 信封正面的复制：选中那一刻就垫上（跟正面一模一样看不出来），抽信时挡住信的下半 */
@@ -3259,8 +3269,11 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-stage[data-state="closing"] .is-sel .lx-sheets{opacity:0;transition:opacity .15s}
 .lx-stage[data-state="closing"] .is-sel .lx-paper{opacity:1;animation:lxPush .95s cubic-bezier(.45,.05,.25,1) 1.05s both}
 .lx-stage[data-state="closing"] .is-sel .lx-flap{transform:rotateX(178deg);z-index:1}
-.lx-stage[data-state="closing"] .is-sel .p1{transform:rotateX(-179deg);transition-delay:.04s}
-.lx-stage[data-state="closing"] .is-sel .p3{transform:rotateX(179deg);transition-delay:.28s}
+/* 折回去：先把下面那折翻上来盖住字，再把上面那折压在最外头（跟拆开的顺序正好倒过来） */
+.lx-stage[data-state="closing"] .is-sel .p3{transform:rotateX(179deg);transition-delay:.04s}
+.lx-stage[data-state="closing"] .is-sel .p1{transform:rotateX(-179deg);transition-delay:.28s}
+.lx-stage[data-state="closing"] .is-sel .p3 .lx-face.front:after{animation:lxShadeHump .85s ease-in-out .04s forwards}
+.lx-stage[data-state="closing"] .is-sel .p1 .lx-face.front:after{animation:lxShadeHump .85s ease-in-out .28s forwards}
 .lx-stage[data-state="closing"] .is-sel .lx-env{transition-delay:.64s}
 .lx-stage[data-state="closing"] .is-sel .lx-addr,.lx-stage[data-state="closing"] .is-sel .lx-stamp,.lx-stage[data-state="closing"] .is-sel .lx-seal{opacity:0}
 .lx-stage[data-state="closing"] .is-sel .lx-env-pocket{transform:translateY(0);opacity:1;transition-delay:.64s}
