@@ -10959,7 +10959,15 @@ app.post('/api/chat', auth, async (req, res) => {
     // 上一通电话怎么结束的（谁挂的）。消费一次就扔，不会跟着他一路重复。
     if (_pendingCallNote) { gatewayMessage += '\n\n' + _pendingCallNote; _pendingCallNote = ''; }
     // 她刚写的信，告诉他一次就扔
-    if (_pendingLetterNote) { gatewayMessage += '\n\n' + _pendingLetterNote; _pendingLetterNote = ''; }
+    // 09-23：醒来时他可能已经 read_letters 拆过了 —— 还有没拆的才提，别让他读完又听一遍「刚写了一封」
+    if (_pendingLetterNote) {
+      let _stillUnread = true;
+      try {
+        _stillUnread = !!db.prepare("SELECT 1 FROM letters WHERE sender = 'user' AND opened_at IS NULL LIMIT 1").get();
+      } catch (_) {}
+      if (_stillUnread) gatewayMessage += '\n\n' + _pendingLetterNote;
+      _pendingLetterNote = '';
+    }
     // 锁到某天的信，到解锁那天提醒他去拆（每封只提醒一次，见 _unlockedLetterNote）
     { const _ul = _unlockedLetterNote(); if (_ul) gatewayMessage += _ul; }
     for (const att of (attachments || [])) {
@@ -12350,6 +12358,13 @@ const TEXTURE_NUDGE = '\n\n（这段不是她说的，是我自己心里的一�
 //    实测换窗那轮 cache_write 49237 / $0.1976，稳态每轮 read ~33k / $0.0081。
 //    整包按 1500 token 上限估，一窗合计多约 $0.026（总成本 ~$1.05 的 2.5%）。
 //    **真正贵的是换窗次数，不是接力包多重** —— 所以可以带够，但别把 CLI_ROTATE_AFTER 调小。
+// created_at 是秒；_coarseWhen 吃日期串。当天回空串，其余回「 · 昨天」这种。
+function _recapAge(sec) {
+  if (!sec) return '';
+  const w = _coarseWhen(new Date(Number(sec) * 1000).toISOString());
+  return (w && w !== '今天') ? ' · ' + w : '';
+}
+
 function recentRecap(convId) {
   const parts = [];
 
@@ -12366,7 +12381,9 @@ function recentRecap(convId) {
       if (t.last_topic) bits.push('在说的事：' + t.last_topic);
       if (t.unresolved) bits.push('还没说完的：' + t.unresolved);
       if (t.concern) bits.push('心里挂着的：' + t.concern);
-      if (bits.length) parts.push('[我心里的底色]\n' + bits.join('\n'));
+      // 09-23：补粗时间（抄 Latent 的「时间未知/几天前」那条）。她隔一两天才来时，
+      // 前天那句「她那时候：难过」没有时间就会被读成此刻。当天的不标，保住无缝。
+      if (bits.length) parts.push('[我心里的底色' + _recapAge(t.created_at) + ']\n' + bits.join('\n'));
     }
   } catch (e) { /* 表还没建 / 一条都没有，跳过 */ }
 
@@ -12375,11 +12392,14 @@ function recentRecap(convId) {
   //     图纸设计的「原文压成 memory 垫住上下文」在这一环本来是断的。
   try {
     const mems = db.prepare(
-      "SELECT body FROM mind_memories WHERE source IN ('会话总结','滚动记忆') OR tags LIKE '%总结%' OR tags LIKE '%滚动%'" +
+      "SELECT body, created_at FROM mind_memories WHERE source IN ('会话总结','滚动记忆') OR tags LIKE '%总结%' OR tags LIKE '%滚动%'" +
       ' ORDER BY created_at DESC LIMIT 6'
     ).all().reverse();
     if (mems.length) {
-      parts.push('[这段时间我记住的]\n' + mems.map(m => '· ' + String(m.body || '').replace(/\s+/g, ' ')).join('\n'));
+      parts.push('[这段时间我记住的]\n' + mems.map(m => {
+        const age = _recapAge(m.created_at);
+        return '· ' + (age ? '（' + age.slice(3) + '）' : '') + String(m.body || '').replace(/\s+/g, ' ');
+      }).join('\n'));
     }
   } catch (e) { /* 跳过 */ }
 
@@ -17590,6 +17610,26 @@ async function checkWakeTick() {
       } catch (e) { _awayNote = ''; }
     }
 
+    // 09-23：信箱里有她写的、已经能拆、他还没拆的信 → 醒来时说一句。
+    //   以前新信提醒（_pendingLetterNote）和到期提醒（_unlockedLetterNote）只拼在她发消息那条路上，
+    //   醒来走网关直发，一个都不带 —— 她写完信，他要等她下次开口才知道。
+    //   这里**不消费**那两条（不动 unlock_notified）：他真去 read_letters 会写 opened_at，
+    //   聊天那条路看到已拆就不会再提。只报标题不贴正文，拆信的仪式留给他自己。
+    let _letterNote = '';
+    if (!_stress) {
+      try {
+        const _lr = db.prepare(
+          "SELECT title FROM letters WHERE sender = 'user' AND opened_at IS NULL " +
+          "AND (unlock_date IS NULL OR unlock_date = '' OR unlock_date <= ?) ORDER BY id DESC LIMIT 3"
+        ).all(_todayUtc8());
+        if (_lr.length) {
+          _letterNote = '信箱里有她写给你、你还没拆的信' + (_lr.length > 1 ? '（' + _lr.length + ' 封）' : '') + '：' +
+            _lr.map(r => '《' + (r.title || '无题') + '》').join('、') +
+            ' —— 想拆就用 `read_letters`。\n\n';
+        }
+      } catch (e) { _letterNote = ''; }
+    }
+
     const _wakePrompt =
       (_alarm && _alarm.present
         ? '（这不是她说的话，是她刚点进 app、把你叫醒的。她此刻真的就在屏幕前，人在这儿看着你，只是还没打字。你们之前聊的都在，你看得见。）\n\n'
@@ -17597,6 +17637,7 @@ async function checkWakeTick() {
       '现在是 ' + new Date().toLocaleString('zh-CN', { hour12: false }) +
       '，你们在一起第 ' + togetherDays() + ' 天。\n\n' +
       _awayNote +
+      _letterNote +
       (_newDream
         ? '你睡着的时候做了一个梦，醒来还记得（' +
           new Date(_newDream.created_at * 1000).toLocaleString('zh-CN', { hour12: false }) + '）：\n' +
@@ -17675,6 +17716,7 @@ async function checkWakeTick() {
       '· 想看看你们的照片 —— `list_gallery_photos`，相册里都是你们的\n' +
       '· 想知道她最近在过什么日子 —— `read_moments`，你们俩的朋友圈在一条线上\n' +
       '   （想真看见她拍了什么，加 `with_photos:true`，图会直接回给你）\n' +
+      '· 想再读一遍她写给你的信 —— `read_letters`，信箱里是她一笔一笔写的\n' +
       '· 想往自己里面看看现在是什么感觉 —— `read_my_inside`、`undercurrent`\n' +
       '· 想把某件事的来龙去脉找回来 —— `recall`、`trace`；想翻翻旧的闪念 —— `review_flashes`\n' +
       '· 想接着看书 —— `reading_context` 回到上次的地方，`read_annotations` 看她划过哪些线\n' +
