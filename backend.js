@@ -18372,9 +18372,14 @@ app.get('/api/wake/unread', auth, (req, res) => {
   if (!at || at <= since) return res.json({ has: false, at: at || 0 });
   const conv = db.prepare('SELECT conv_id FROM sessions WHERE is_main = 1').get();
   if (!conv) return res.json({ has: false, at: 0 });
+  // ⚠️ 09-24：窗口必须有上界。以前只有 `>= at-2`，她醒来后接着跟他聊，
+  //   那几轮他的正常回复也落在窗口里 —— 那些是流式画上去的，不带 data-wake-id，
+  //   前端去重认不出，于是整段又被插一遍、还插在免责声明后面（她截图：气泡重复好几次）。
+  //   他醒来那一下落库的（[WAKE:] 痕迹 + <say> + <murmur>）都在同一两秒内，±2 秒够了。
+  const _atS = Math.floor(at / 1000);
   const rows = db.prepare(
-    'SELECT id, role, content, created_at FROM messages WHERE conv_id = ? AND created_at >= ? ORDER BY id ASC LIMIT 5'
-  ).all(conv.conv_id, Math.floor(at / 1000) - 2);
+    'SELECT id, role, content, created_at FROM messages WHERE conv_id = ? AND created_at >= ? AND created_at <= ? ORDER BY id ASC LIMIT 5'
+  ).all(conv.conv_id, _atS - 2, _atS + 2);
   res.json({ has: rows.length > 0, at, messages: rows });
 });
 
