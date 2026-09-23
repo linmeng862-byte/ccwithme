@@ -4151,7 +4151,12 @@ async function callNocturne(toolName, args = {}, _retried = false) {
     }
     if (!r.ok) { console.warn('[nocturne] ' + toolName + ' 回 ' + r.status); return null; }
     return _parseMcpPayload(await r.text());
-  } catch(e) { return null; }
+  } catch(e) {
+    // 09-24：原来这里一声不吭 return null —— 超时（10s 上限，breath 冷启动实测 10.4s）
+    // 和断网都长得跟「没记忆」一样，醒来没灌进去也查不出为什么。
+    console.warn('[nocturne] ' + toolName + ' 失败：' + (e && e.name === 'AbortError' ? '超时 10s' : (e && e.message || e)));
+    return null;
+  }
 }
 
 // === 按需外挂 MCP（2026-08-23）===
@@ -10784,7 +10789,8 @@ app.post('/api/chat', auth, async (req, res) => {
       try {
         const nr = await callNocturne('breath', {});
         if (nr) { nocturneMemory = _trimHouseRules(nr); _breathCache = { at: Date.now(), text: nocturneMemory }; }
-      } catch(e) {}
+        else console.warn('[breath] 醒来这口气是空的，这窗没灌进 Nocturne 记忆');
+      } catch(e) { console.warn('[breath] 出错：' + e.message); }
       _mark('Nocturne breath 完（这次是真去取的）');
     }
     try { nocturneFamilyText = await _famP; } catch (e) {}
@@ -14238,7 +14244,7 @@ async function _mcpInit() {
   } catch(e) { return false; }
 }
 
-async function _mcpCall(tool, args) {
+async function _mcpCall(tool, args, _retried = false) {
   try {
     if (!_mcpSessionId) await _mcpInit();
     const headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, _nocturneAuth(MEMORY_ENGINE));
@@ -14248,12 +14254,23 @@ async function _mcpCall(tool, args) {
       body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name: tool, arguments: args || {} }, id: 1 }),
       signal: AbortSignal.timeout(15000)
     });
+    // 09-24：Nocturne 重启 / 重新部署后旧会话号回 404。原来这里不清会话号，
+    //    之后每一发都 404、被 catch 吞掉，Memory 面板一直空到我们这边重启为止。
+    //    callNocturne 那条路早就有这个重握手，这边漏了。
+    if (resp.status === 404 && _mcpSessionId && !_retried) {
+      console.warn('[memory] 会话号过期，重新握手');
+      _mcpSessionId = null;
+      return _mcpCall(tool, args, true);
+    }
     if (!resp.ok) throw new Error('Engine returned ' + resp.status);
     // ⚠️ 这里以前是 `await resp.json()` —— 错的。服务端回的是 SSE（实测 breath 137KB），
     //    json() 直接抛，被下面 catch 吞成 null，前端 Memory 面板就是一片空白，
     //    而且日志里一个字都不留。08-28 修，改走跟 callNocturne 同一个解析器。
     return _parseMcpPayload(await resp.text());
-  } catch(e) { return null; }
+  } catch(e) {
+    console.warn('[memory] ' + tool + ' 失败：' + (e && e.name === 'TimeoutError' ? '超时 15s' : (e && e.message || e)));
+    return null;
+  }
 }
 
 app.get('/api/memory/breath', auth, async (req, res) => {
