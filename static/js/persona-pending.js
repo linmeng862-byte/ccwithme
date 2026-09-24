@@ -10,9 +10,10 @@
 
   function authHeaders(extra) {
     var h = extra || {};
+    // 跟主页面同一把钥匙：chat_token + Bearer（后端 auth() 只认这个）
     try {
-      var k = localStorage.getItem('auth_token') || '';
-      if (k) h['x-auth-token'] = k;
+      var k = localStorage.getItem('chat_token') || '';
+      if (k) h['Authorization'] = 'Bearer ' + k;
     } catch (e) {}
     return h;
   }
