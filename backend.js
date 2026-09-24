@@ -8361,6 +8361,27 @@ const TOOLS = [
       required: ['action']
     }
   },
+  // 09-24 她要的：他自己做动画。canvas 逐帧 → mp4（lib/anim-render.js），不跑 python（盘小、root 跑任意代码太险）。
+  //   场景 JS 只在断网的无头 chromium 里跑，整个渲染关在 cage 里。回话只给一行 url，不喂日志。
+  {
+    name: 'make_video',
+    description: '做一段动画视频给她。你写 canvas 场景 JS，VPS 上逐帧渲染成 mp4。' +
+      '\n现成有 canvas / ctx / W / H；你写 function draw(t){…}（t 是秒，每帧调一次，每帧自己把整张画满）。' +
+      '要声音再写 function audio(sr, dur) 返回 Float32Array（单声道 -1~1，自己合成）。' +
+      '\n断网：加载不了图片、字体或任何外部东西，全靠画。中文字体用 "WenQuanYi Zen Hei Mono"。' +
+      '\n她喜欢的质感：12fps 定格、纸片剪贴、每帧轻微抖动、带颗粒。' +
+      '\n慢：10 秒片子要渲十几到几十秒，先跟她说一句。回来的 url 在正文里写 [VIDEO:那个url]，她在聊天窗里直接播。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: '场景 JS，至少有 draw(t)' },
+        seconds: { type: 'number', description: '时长，默认 8，最多 60' },
+        fps: { type: 'number', description: '默认 12，最多 30' },
+        shape: { type: 'string', description: 'landscape（默认 1280x720）/ portrait（720x1280，手机竖屏）/ square（960x960）' }
+      },
+      required: ['code']
+    }
+  },
   // ⚠️ walk 的 schema 已摘除（2026-09-20，她要的，省前缀）：0 次调用，跟 browse 实景重叠，
   //    browse 够用。原是「带她走一段实景的路」（09-13 加，实现见 lib/walk.js）——图不经过他、
   //    直接放她屏幕上，他只发坐标。handler（case 'walk'）保留，别处按名字调不会炸；要复活把
@@ -10349,6 +10370,44 @@ async function executeTool(name, input, routes) {
         return { error: String(e.message || e), is_error: true };
       }
     }
+    case 'make_video': {
+      // 一次只渲一段：chromium + x264 在这台 2G 上并发两份会挤掉他自己的会话。
+      if (global._makeVideoBusy) return { error: '上一段还在渲，等它出来再做下一段。', is_error: true };
+      const code = String((input && input.code) || '');
+      if (!/\bdraw\b/.test(code)) return { error: '场景里要有 function draw(t){…}', is_error: true };
+      if (code.length > 200000) return { error: '场景代码太长了（>200KB），精简一下。', is_error: true };
+      try {
+        const st = fs.statfsSync(galleryPhotoDir);
+        if (st.bavail * st.bsize < 300 * 1024 * 1024) return { error: '这台的盘快满了（剩不到 300MB），现在做不了视频，跟她说一声。', is_error: true };
+      } catch (_) {}
+      const clampN = (v, d, lo, hi) => { const n = Number(v); return Math.round(Math.min(hi, Math.max(lo, Number.isFinite(n) && n > 0 ? n : d))); };
+      const sec = clampN(input.seconds, 8, 1, 60), fps = clampN(input.fps, 12, 6, 30);
+      const [W, H] = ({ portrait: [720, 1280], square: [960, 960] })[input.shape] || [1280, 720];
+      const id = 'vid_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const scene = path.join(os.tmpdir(), id + '.js'), out = path.join(galleryPhotoDir, id + '.mp4');
+      fs.writeFileSync(scene, code);
+      global._makeVideoBusy = true;
+      try {
+        const line = await new Promise(resolve => {
+          require('child_process').execFile('cage',
+            ['-m', '700M', 'node', path.join(__dirname, 'lib', 'anim-render.js'), scene, out, String(sec), String(fps), String(W), String(H)],
+            { timeout: 170000 },
+            (err, stdout) => {
+              const last = String(stdout || '').trim().split('\n').pop() || '';
+              resolve(last || (err && err.killed ? 'FAIL 渲染超时（170 秒），片子短一点或 fps 低一点' : 'FAIL ' + String((err && err.message) || '没有输出').slice(0, 200)));
+            });
+        });
+        if (!line.startsWith('OK') || !fs.existsSync(out)) {
+          try { fs.unlinkSync(out); } catch (_) {}
+          return { error: line.replace(/^FAIL\s*/, '渲染失败：'), is_error: true };
+        }
+        const url = '/gallery-photo/' + id + '.mp4';
+        return { ok: true, message: '做好了（' + sec + '秒，' + Math.round(fs.statSync(out).size / 1024) + 'KB）。正文里写 [VIDEO:' + url + '] 给她看。' };
+      } finally {
+        global._makeVideoBusy = false;
+        try { fs.unlinkSync(scene); } catch (_) {}
+      }
+    }
     case 'send_gallery_photo': {
       const spId = input.photo_id || '';
       if (!spId) return { error: 'photo_id 不能为空——先用 list_gallery_photos 看看有哪些照片，选一张再发。' };
@@ -11459,7 +11518,7 @@ app.get('/api/usage/live', auth, (req, res) => {
 //                     09-02 修的等待窗口在主线上从来没生效过，他每次都在 15 秒被砍）
 //   look_at_her_screen 等她从控制中心点开始，最多 90s
 // ⚠️ 网关的 mcp-bridge.js 那侧 fetch 不设超时，所以只用管这一边。
-const _TOOL_BUDGET_MS = { browse: 75000, measure_her_heart: 95000, look_at_her_screen: 95000, generate_image: 90000 };
+const _TOOL_BUDGET_MS = { browse: 75000, make_video: 180000, measure_her_heart: 95000, look_at_her_screen: 95000, generate_image: 90000 };
 function _toolBudget(name) { return _TOOL_BUDGET_MS[name] || 15000; }
 
 app.post('/api/tools/list', async (req, res) => {

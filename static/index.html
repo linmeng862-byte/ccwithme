@@ -4876,6 +4876,10 @@ function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripU
       '<a href="https://www.mapillary.com/app/?focus=photo&pKey='+encodeURIComponent(wid)+'" target="_blank" rel="noopener noreferrer">放大看 \u2197</a></div>'+
       '</div>'}
   if(walkHtml){src=src.replace(walkRe,'')}
+  // 09-24：他用 make_video 做的动画 → [VIDEO:url]，聊天窗里直接播。借 walkHtml 那条路插进去，「整条只有视频」时也脱壳。
+  var vidRe=/\[VIDEO:(\/gallery-photo\/[\w.-]+\.mp4)\]/g;var vidMatch;vidRe.lastIndex=0;
+  while((vidMatch=vidRe.exec(src))!==null){walkHtml=(walkHtml||'')+'<video src="'+assetUrl(vidMatch[1])+'" controls playsinline preload="metadata" style="width:min(360px,100%);max-height:480px;border-radius:20px;display:block;margin:6px 0;background:#000"></video>'}
+  src=src.replace(vidRe,'');
   var cmdRe=/\[CMD:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]/g;var cmdHtml='',cmdMatch;cmdRe.lastIndex=0;while((cmdMatch=cmdRe.exec(src))!==null){var cid=cmdMatch[1],ctype=cmdMatch[2],ctitle=cmdMatch[3];var cmdIcon=_cmdIconSvg(ctype);cmdHtml+='<div class="cmd-capsule" data-cmd-id="'+cid+'" data-cmd-type="'+ctype+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:6px 0;background:#FDF9F3;border:1px solid var(--border);border-radius:18px;font:500 13px/1 var(--font-sans);color:#4A3728;cursor:pointer" onclick="openCmdCapsule(\''+cid+'\')"><span>'+cmdIcon+'</span><span class="cmd-capsule-label">'+(ctype==='quiz'?'答题':escHtml(ctitle))+'</span><span style="font-size:11px;color:var(--text-time)">\u25B8</span></div>'}if(cmdHtml){src=src.replace(cmdRe,'')}if(walkHtml&&!src.trim()){md.innerHTML=(imgsHtml||'')+walkHtml;md.dataset.imagesOnly='1';return}if(window.marked){try{var markedResult=marked.parse(src,{breaks:true,gfm:true});md.innerHTML=(imgsHtml||'')+(walkHtml||'')+(cmdHtml||'')+markedResult.trimEnd();md.querySelectorAll('a[href]').forEach(function(a){var h=a.getAttribute('href');if(h&&/^https?:\/\//.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});
   // ── Journey Cards: 检测 <journey> 标签 ──
   if(/<journey>/.test(src)&&typeof _JC!=='undefined'&&_JC.parseJourneyTags){var jcParts=_JC.parseJourneyTags(src);if(jcParts.length>1||jcParts[0].type==='journey'){(function(){var html='';jcParts.forEach(function(p){if(p.type==='text'&&p.text.trim()){try{var m=marked.parse(p.text,{breaks:true,gfm:true});html+=m.trimEnd()}catch(e){html+='<p>'+_jcEscape(p.text)+'</p>'}}else if(p.type==='journey'){html+=_JC.renderCard({id:p.id,title:'...',stops:[]})}});md.innerHTML=html||md.innerHTML;
@@ -7508,7 +7512,7 @@ function _selectDate(dateStr){
     for(var i=0;i<msgs.length;i++){
       var m=msgs[i],isUser=m.role==='user';
       var t=new Date(m.timestamp),timeStr=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-      var text=String(m.text||'').replace(/\[IMAGE:[^\]]+\]/g,'').replace(/\[FILE:[^\]]+\]/g,'').trim();
+      var text=String(m.text||'').replace(/\[IMAGE:[^\]]+\]/g,'').replace(/\[VIDEO:[^\]]+\]/g,'').replace(/\[FILE:[^\]]+\]/g,'').trim();
       if(!text)text='[image]';
       if(text.length>200)text=text.slice(0,200)+'…';
       html+='<div class="ds-bubble-row '+(isUser?'ds-row-user':'ds-row-claude')+'">';
