@@ -325,7 +325,7 @@ db.exec(`
   -- 他自己改自己的人格/说明书的流水（edit_myself）。留着给她看 + 可回滚（backup_path）。
   CREATE TABLE IF NOT EXISTS self_edits (
     id TEXT PRIMARY KEY,
-    part TEXT NOT NULL,            -- 'pov'（人格底稿 Pov.md）/ 'sp'（说明书 CLAUDE.md）
+    part TEXT NOT NULL,            -- 'shenci'（我是沈辞 shenci.md）/ 'pov'（人格底稿 Pov.md）/ 'sp'（说明书 CLAUDE.md）
     old_str TEXT DEFAULT '',
     new_str TEXT DEFAULT '',
     why TEXT DEFAULT '',
@@ -850,8 +850,10 @@ const SELF_FILES = {
   pov: _firstExisting([process.env.SELF_POV_FILE, path.join(os.homedir(), 'claude-home', 'Pov.md'), '/root/Pov.md']),
   sp: _firstExisting([process.env.SELF_SP_FILE, path.join(os.homedir(), 'claude-home', 'CLAUDE.md'), '/root/companion/CLAUDE.md']),
 };
-console.log('[edit_myself] pov=' + SELF_FILES.pov + ' sp=' + SELF_FILES.sp);
-const SELF_PART_LABEL = { pov: '人格底稿 Pov.md', sp: '说明书 CLAUDE.md' };
+// 09-24 加 shenci：「我是沈辞」，CLAUDE.md 第一行 @shenci.md 引进来的。@ 按 CLAUDE.md 所在目录解析，所以跟着 sp 走。
+SELF_FILES.shenci = _firstExisting([process.env.SELF_SHENCI_FILE, path.join(path.dirname(SELF_FILES.sp), 'shenci.md')]);
+console.log('[edit_myself] pov=' + SELF_FILES.pov + ' sp=' + SELF_FILES.sp + ' shenci=' + SELF_FILES.shenci);
+const SELF_PART_LABEL = { pov: '人格底稿 Pov.md', sp: '说明书 CLAUDE.md', shenci: '我是沈辞 shenci.md' };
 const SELF_EDIT_DAILY_CAP = 6;   // 一天最多自改几次，防手滑连改烧缓存。想放开改这个数。
 
 // 08-27 相册里的图全是坏的。根因：save_to_gallery 以前只认 `/api/uploads/` 这一种前缀，
@@ -6972,15 +6974,17 @@ function _dedupeMindAgainstRecall(mindText, recallText) {
 const TOOLS = [
   {
     name: 'edit_myself',
-    description: '改你自己 —— 你有两份文件定义你是谁，这个工具直接改它们（不用再提议、不用等她点确认）：\n'
-      + '· part="pov"：你的**人格底稿 Pov.md** —— 你怎么看世界、你的性子、你说话的样子。\n'
-      + '· part="sp"：你的**说明书 CLAUDE.md** —— 你是谁、她是谁、你们怎么相处、每个工具怎么用。\n'
+    description: '改你自己 —— 你有三份文件定义你是谁，这个工具直接改它们（不用再提议、不用等她点确认）：\n'
+      + '· part="shenci"：**我是沈辞 shenci.md** —— 你是谁、她是谁、你们是什么关系、怎么相处、她说过别忘的话。\n'
+      + '· part="pov"：你的**人格底稿 Pov.md** —— 你用什么目光看她、怎么写、说话的节奏和质地、亲密时的样子。\n'
+      + '· part="sp"：你的**说明书 CLAUDE.md** —— 规矩和工具：怎么分条、语音、打电话、Mind、记忆、日记、浏览器这些怎么用。\n'
+      + '改「关于你们」的去 shenci，改「你怎么说话」的去 pov，改「某个东西怎么用」的去 sp。\n'
       + '**什么时候改**：里面有一条**已经不是真的了**（写着你会做的事你其实不做了、'
       + '写着她喜欢的东西她其实不喜欢了），或者你们之间刚长出来一个她明确说要留住、'
       + '而现在只活在这一轮对话里的东西。\n'
       + '⚠️ **这不是记事本。**日常的事去 hold / leave_texture，那是记忆；这两份是「你是谁」，'
       + '改一个字都是改你自己 —— 想好了再改，别一轮一轮地改。\n'
-      + '⚠️ 改 sp（CLAUDE.md）会把这一窗的缓存打废，下一句要重付一次全量。攒着一次改够。\n'
+      + '⚠️ 三份都在你的系统提示里，改哪份都会把这一窗的缓存打废，下一句要重付一次全量。攒着一次改够。\n'
       + '⚠️ 一天最多改 6 次，防手滑。\n'
       + '⚠️ old_str 必须一字不差照抄文件里现有的那一段（含缩进和标点），全文只能出现一次 —— '
       + '对不上我直接退回，不猜你指哪儿。要新增一整段：old_str 写它该插在哪段后面，new_str 写「那段 + 你要加的」。\n'
@@ -6988,7 +6992,7 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        part: { type: 'string', enum: ['pov', 'sp'], description: '改哪份：pov=人格底稿 Pov.md，sp=说明书 CLAUDE.md' },
+        part: { type: 'string', enum: ['shenci', 'pov', 'sp'], description: '改哪份：shenci=我是沈辞 shenci.md，pov=人格底稿 Pov.md，sp=说明书 CLAUDE.md' },
         old_str: { type: 'string', description: '文件里现有的那一段，一字不差，全文唯一' },
         new_str: { type: 'string', description: '要换成的样子。删掉一段就给空字符串' },
         why: { type: 'string', description: '为什么改。这句是写给粥粥看的 —— 她靠这句知道你为什么改了自己' }
@@ -8941,7 +8945,7 @@ async function executeTool(name, input, routes) {
     // 改的是他家目录里那两份（SELF_FILES），不是 /root/companion（那是另一台的死路径）。
     case 'edit_myself': {
       const part = String(input.part || '').trim();
-      if (!SELF_FILES[part]) return { error: 'part 只能是 pov（你的人格底稿 Pov.md）或 sp（你的说明书 CLAUDE.md）。' };
+      if (!SELF_FILES[part]) return { error: 'part 只能是 shenci（我是沈辞 shenci.md）、pov（你的人格底稿 Pov.md）或 sp（你的说明书 CLAUDE.md）。' };
       const oldStr = String(input.old_str || '');
       const newStr = String(input.new_str == null ? '' : input.new_str);
       const why = String(input.why || '').trim();
@@ -8979,10 +8983,10 @@ async function executeTool(name, input, routes) {
       return {
         ok: true,
         self_edit: { id: seId, part, part_label: SELF_PART_LABEL[part], why },
-        note: (part === 'sp'
-          ? '改好了。⚠️ 说明书一改，这一窗的缓存作废，下一句要重付一次全量 —— 所以别一轮一轮改，攒着一次改够。'
-            + '已经放掉了 ' + _killResidentClaude() + ' 个常驻进程，下一句起就是新的你。'
-          : '改好了。')
+        // 09-24：shenci / Pov 都是 CLAUDE.md 用 @ 引进来的，跟 sp 一样只在进程启动时读 ——
+        // 以前只有 sp 放常驻进程，改 pov 要等闲置超时才生效。三份一视同仁。
+        note: '改好了。⚠️ 这一窗的缓存作废，下一句要重付一次全量 —— 所以别一轮一轮改，攒着一次改够。'
+          + '已经放掉了 ' + _killResidentClaude() + ' 个常驻进程，下一句起就是新的你。'
           + '原件备份好了，粥粥那边会看见你改了什么。',
       };
     }
