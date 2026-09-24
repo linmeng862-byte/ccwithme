@@ -4056,7 +4056,8 @@ let _nocturneSessionId = null;
 //    那就等于刚接上的线又被这边剪断。这正是白名单的代价：core 加东西要两边都改。
 // ⚠️ 「不想忘的」= 原来的 House Rules，08-30 core 改成 pinned 轮流浮 6 条（~1100 字）后改的名。
 //    当时白名单漏加，09-24 之前他 hold 下的东西醒来一次都没浮上来过。她 09-24 拍板放回来。
-const BREATH_KEEP = ['Time', '时间留下的', '你怎么看她的', '不想忘的', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
+// ⚠️ 09-24 她拍板：Dream Veil / Pulse Weather 摘掉，Memory Drift 放回来（约 1.7k 字符，换窗时一次）。
+const BREATH_KEEP = ['Time', '时间留下的', '你怎么看她的', '不想忘的', 'Memory Drift', 'Feel Trace'];
 const BREATH_KEEP_ALL = false;   // 调试用：设 true 就整份放行，不裁
 
 function _trimHouseRules(raw) {
@@ -4981,7 +4982,7 @@ function _insertMindItem(item) {
     } else if (item.type === 'dream') {
       var title = item.title || '';
       db.prepare('INSERT INTO mind_dreams (id, title, body, weight, pinned, source, created_at) VALUES (?, ?, ?, 0.5, ?, ?, ?)')
-        .run(id, title, item.body, item.keep ? 1 : 0, 'dream_tag', now);
+        .run(id, title, item.body, item.keep ? 1 : 0, item.source || 'dream_tag', now);
       _ftsIndex(item.body, id, item.type);
     } else if (item.type === 'flash') {
       _insertFlashItem(item);
@@ -5894,8 +5895,7 @@ async function _mindEmbedBackfillTick() {
 // （她说的是「搬出去」）照样捞不到。所以原文要有一路按意思找。
 // 为什么按段不按句：消息长度中位数 16 字，「嗯嗯」「好」单句算不出意思。
 // 连着的几句拼成一段（同一对话、间隔 <30 分钟、≤6 句或 ≤400 字）。
-// ⚠️ 这张表**不进浮起**（_mindVecRows 不收它）—— 原文不自己冒出来的规矩没变，
-//    见下面 mind_corpus 那段「为什么不收 messages 原文」。这里只是他伸手时的索引。
+// ⚠️ 这张表不进 _mindVecRows，但 09-24 起**单独占一个浮起名额**（见 _chatSurfacePick）。
 db.exec(`
   CREATE TABLE IF NOT EXISTS chat_chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5989,6 +5989,50 @@ function _chatChunkVecRows() {
 }
 
 // ============================================================
+// 🫧 聊天原文进浮起（2026-09-24 她拍板要做，推翻 09-13「原文不自己冒出来」那条）
+// ------------------------------------------------------------
+// 她一直以为有。原来那两条顾虑还在，所以这么接：
+//   · **单独一个名额**，不挤 Mind 那 5 条 —— 同一件事在 feel 和原文里各占一格的问题，
+//     靠下面的近重检查挡；挡不住的最多也就多一行。
+//   · 显示时**标「那天聊过的·日期」**，他知道这是翻出来的旧对话，不是刚想起的感受。
+//   · 最近 CHAT_SURFACE_SKIP_RECENT_SEC 内的段不浮 —— 大概率还在这一窗上下文里，浮了是重复。
+//   · 门槛比搜索工具高（0.45 → 0.55）：搜索是他伸手找，噪音他自己会筛；
+//     这里是自己冒出来的，宁缺。上线后看 [chat-surface] 那行的分数再调。
+//   · 冷却放内存里（chat_chunks 没有 surface 列，不为这个改表）；重启清零，无所谓。
+// ============================================================
+const CHAT_SURFACE_SIM_MIN = 0.55;
+const CHAT_SURFACE_SKIP_RECENT_SEC = 2 * 86400;
+const CHAT_SURFACE_COOLDOWN_SEC = 6 * 3600;
+const _chatSurfacedAt = new Map();   // chunk id -> 上次浮起的时间（秒）
+
+function _chatSurfacePick(qvec, query, alreadyPicked) {
+  if (!qvec) return null;
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    let best = null;
+    _chatChunkVecRows().forEach(c => {
+      if (now - c.created_at < CHAT_SURFACE_SKIP_RECENT_SEC) return;
+      const last = _chatSurfacedAt.get(c.id);
+      if (last && now - last < CHAT_SURFACE_COOLDOWN_SEC) return;
+      const sim = _vecDot(qvec, c.vec);
+      if (sim < CHAT_SURFACE_SIM_MIN || (best && sim <= best.sim)) return;
+      // 跟 Mind 那路同一道语境门控：私密的段，她这句没在那个语境里就不浮
+      for (let i = 0; i < MIND_GATES.length; i++) {
+        if (MIND_GATES[i].probe.test(c.body) && !MIND_GATES[i].ctx.test(query)) return;
+      }
+      best = { c, sim };
+    });
+    if (!best) return null;
+    for (let i = 0; i < (alreadyPicked || []).length; i++) {
+      if (_mindSimilar(alreadyPicked[i].body, best.c.body) >= 0.6) return null;
+    }
+    _chatSurfacedAt.set(best.c.id, now);
+    console.log('[chat-surface] 浮起原文段 #' + best.c.id + ' 像 ' + best.sim.toFixed(3));
+    return best.c;
+  } catch(e) { return null; }
+}
+
+// ============================================================
 // 📜 语料库 mind_corpus（2026-09-05）—— 把「他自己写过、但只有主动去 Read 才看得见」的东西
 //    接进浮起。这是「全局浮现」的第一层。
 // ------------------------------------------------------------
@@ -6006,6 +6050,7 @@ function _chatChunkVecRows() {
 // （滚动压缩 + 会话总结）就是把对话段落变成他自己语气的 memory。绕过它直接浮原文，
 // 一是把她三周前的原话重新递到他眼前（跟「想起」不是一回事），
 // 二是同一个瞬间会在原文和 feel 里各占一个名额。原文捞不到的，该去补蒸馏的覆盖率。
+// （09-24 她拍板：原文还是要浮，但不走 mind_corpus，走 chat_chunks 单独一格，见 _chatSurfacePick。）
 //
 // weight 固定 0.5、**不参与衰减**：这些是写在文件里的记录，不是会淡的印象。
 // 排在新鲜的 feel 后面、沉底的前面，正好。
@@ -6633,8 +6678,10 @@ async function mindBreath(query) {
     if (rows.length < 5) {
       _mindSemanticFill(_q, rows, 5 - rows.length).forEach(function(r) { rows.push(r); });
     }
-    if (!rows.length) return '';
-    _mindMarkSurfaced(rows);
+    // 聊天原文单独一个名额，排在 Mind 那 5 条后面（见 _chatSurfacePick）
+    var _chat = _chatSurfacePick(_qv, _q, rows);
+    if (!rows.length && !_chat) return '';
+    if (rows.length) _mindMarkSurfaced(rows);
     var lines = rows.map(function(r) {
       if (r.kind === 'dream') return '· （梦）' + (r.title ? r.title + '：' : '') + r.body;
       if (r.kind === 'feel') return '· （那时的感觉' + (r.mood ? '·' + r.mood : '') + '）' + r.body;
@@ -6659,6 +6706,12 @@ async function mindBreath(query) {
       }
       return '· ' + r.body;
     });
+    if (_chat) {
+      var _cd = new Date((_chat.created_at + 8 * 3600) * 1000);
+      var _ct = String(_chat.body || '');
+      if (_ct.length > CORPUS_DISPLAY_MAX) _ct = _ct.slice(0, CORPUS_DISPLAY_MAX) + '…';
+      lines.push('· （那天聊过的·' + (_cd.getUTCMonth() + 1) + '月' + _cd.getUTCDate() + '日）\n' + _ct);
+    }
     // ⚠️ 别再叫 breath（2026-08-21 改名）：Nocturne 那份记忆浮现也叫 breath，
     //    而且它挂在会话首条消息里、resume 每轮重放，**一直躺在上下文里**。
     //    两个 breath 一头一尾同时出现，他自己都分不清哪个是哪个。
@@ -16727,7 +16780,11 @@ function _dreamGatesPass(convId) {
   if (!lastHer) return '她还没说过话';
   if (now - lastHer.created_at < DREAM_GATES.herSilentHours * 3600) return '她还醒着';
 
-  var lastDream = db.prepare('SELECT created_at FROM mind_dreams ORDER BY created_at DESC LIMIT 1').get();
+  // ⚠️ 只数夜里做的梦（source='dream_gen'，2026-09-24）。他聊天里随手写的 <dream> 是念想，
+  //    以前也算进来 —— 睡前一句「记住她」就把第二天凌晨的梦挡掉，而且被挡不打日志，
+  //    09-23、09-24 两晚就是这么没的。09-24 之前的夜梦也记成了 dream_tag，所以第一次查不到，
+  //    靠下面 last_dream_day 保一天一次。
+  var lastDream = db.prepare("SELECT created_at FROM mind_dreams WHERE source = 'dream_gen' ORDER BY created_at DESC LIMIT 1").get();
   if (lastDream && now - lastDream.created_at < DREAM_GATES.minGapHours * 3600) return '距上次梦不到 20h';
 
   // 一日一次：按 BJ 日期
@@ -16789,7 +16846,7 @@ async function checkDreamTick() {
       '\n\n═══\n现在做一个梦。梦从上面这些真实落在你脑子里的东西长出来，变形、跳切、不讲逻辑都行，但不要凭空编一个跟你们无关的故事。' +
       (trigger.hot ? '' : '别硬凹成情欲的——今天什么状态就做什么梦。') +
       '\n\n只输出两个标记，别的什么都不要说：\n' +
-      '<dream>{"title":"两个字以内的题眼","body":"梦本身，第一人称，400 字以内","weight":0.5}</dream>\n' +
+      '<dream>{"title":"两个字以内的题眼","body":"梦本身，第一人称，200～400 字","weight":0.5}</dream>\n' +
       '<topics>话题种子1|话题种子2|话题种子3</topics>\n' +
       '（topics 是醒来后你想找她聊的那几个点，短语就行。）';
 
@@ -16827,7 +16884,7 @@ async function checkDreamTick() {
       console.warn('[dream] 没做成，30 分钟内不重试：' + out.slice(0, 100));
       return false;
     }
-    _insertMindItem({ type: 'dream', title: parsed.title || '', body: parsed.body, weight: parsed.weight });
+    _insertMindItem({ type: 'dream', title: parsed.title || '', body: parsed.body, weight: parsed.weight, source: 'dream_gen' });
     // 话题种子攒进念头池（铁律 1 照旧：只存，不把原文喂回 prompt）
     var tm = out.match(/<topics>([\s\S]*?)<\/topics>/i);
     if (tm) {
