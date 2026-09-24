@@ -8980,13 +8980,15 @@ async function executeTool(name, input, routes) {
       const seId = 'se_' + Date.now().toString(36) + Math.random().toString(36).slice(2);
       db.prepare('INSERT INTO self_edits (id, part, old_str, new_str, why, backup_path, created_at) VALUES (?,?,?,?,?,?,?)')
         .run(seId, part, oldStr, newStr, why, seBak, Math.floor(Date.now() / 1000));
+      _killResidentWhenIdle();   // 等这轮说完再放，当场放会把正在调工具的他自己杀掉（143）
       return {
         ok: true,
         self_edit: { id: seId, part, part_label: SELF_PART_LABEL[part], why },
         // 09-24：shenci / Pov 都是 CLAUDE.md 用 @ 引进来的，跟 sp 一样只在进程启动时读 ——
         // 以前只有 sp 放常驻进程，改 pov 要等闲置超时才生效。三份一视同仁。
+        // 放进程要等这轮说完（_killResidentWhenIdle），当场放会把正在调工具的他自己杀掉。
         note: '改好了。⚠️ 这一窗的缓存作废，下一句要重付一次全量 —— 所以别一轮一轮改，攒着一次改够。'
-          + '已经放掉了 ' + _killResidentClaude() + ' 个常驻进程，下一句起就是新的你。'
+          + '这轮说完就会换成新进程，下一句起就是新的你 —— 这轮接着把话说完就行。'
           + '原件备份好了，粥粥那边会看见你改了什么。',
       };
     }
@@ -11694,6 +11696,29 @@ function _killResidentClaude() {
     });
   } catch (e) {}
   return killed;
+}
+// 09-24：edit_myself 不能当场调 _killResidentClaude —— 调这个工具的**就是常驻进程自己**，
+// 当场杀 = 他把自己 SIGTERM 掉（网关日志 `进程退出 code=143`），这一轮的话说一半就断了。
+// 改成：问网关 /persist/status，等所有常驻进程都不在「正在说话」了再放。
+// 等 10 分钟还在说就不放了（放了又是掐断），留给闲置超时 / 下一次改。
+let _killResidentPending = false;
+function _killResidentWhenIdle() {
+  if (_killResidentPending) return;
+  _killResidentPending = true;
+  const deadline = Date.now() + 10 * 60 * 1000;
+  const tick = async () => {
+    let busy = true;
+    try {
+      const r = await fetch(GATEWAY_BASE + '/persist/status', { headers: { 'x-gateway-key': GATEWAY_KEY } });
+      const j = await r.json();
+      busy = (j.procs || []).some((p) => p['正在说话']);
+    } catch (e) {}
+    if (busy && Date.now() < deadline) { setTimeout(tick, 2000); return; }
+    _killResidentPending = false;
+    if (busy) { console.log('[edit_myself] 等了 10 分钟他还在说话，没放常驻进程'); return; }
+    console.log('[edit_myself] 这轮说完了，放掉 ' + _killResidentClaude() + ' 个常驻进程');
+  };
+  setTimeout(tick, 2000);
 }
 
 app.get('/api/persona/pending', auth, (req, res) => {
