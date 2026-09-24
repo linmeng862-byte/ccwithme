@@ -3037,7 +3037,29 @@ html[data-theme="dark"].wall-on:not(.wall-theme):not(.ui-plain) #scrollToBottom:
 /* 💌 信箱 Letters（2026-09-23）——法式米白信纸 + 三个中文手写体切换 + 时间锁信封 */
 #lettersPanel{position:fixed;inset:0;z-index:80;display:none;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);overflow:hidden}
 #lettersPanel.show{display:flex}
-.letters-compose-btn{justify-self:end;border:0;background:none;color:var(--accent);font:600 15px/1 var(--font-sans);cursor:pointer;padding:6px 4px}
+/* 底部导航胶囊 Inbox / Write（09-24）：读信时让位给底部那排工具 */
+.lx-nav{position:absolute;z-index:8;left:50%;bottom:calc(env(safe-area-inset-bottom) + 14px);transform:translateX(-50%);display:flex;gap:4px;padding:4px;border-radius:999px;border:1px solid var(--border-strong);background:var(--glass-bg);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);box-shadow:0 10px 30px rgba(40,32,24,.14);transition:opacity .3s,transform .4s var(--lx-ease)}
+.lx-nav button{display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 20px;border:0;border-radius:999px;background:none;color:var(--text-secondary);font:500 14px/1 var(--font-sans);letter-spacing:.04em;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .2s,color .2s,transform .15s}
+.lx-nav button svg{width:17px;height:17px;flex:none}
+.lx-nav button.on{background:var(--text-primary);color:var(--bg-primary)}
+.lx-nav button:active{transform:scale(.95)}
+.lx-wrap[data-reading="1"] .lx-nav{opacity:0;pointer-events:none;transform:translate(-50%,16px)}
+/* 换背景：顶栏右边一颗圆钮，有图时点开小菜单（换一张 / 恢复默认） */
+.lx-bg{position:relative;justify-self:end}
+.lx-bg-btn{display:grid;place-items:center;width:40px;height:40px;padding:0;border:1px solid var(--border-strong);border-radius:50%;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--text-secondary);cursor:pointer}
+.lx-bg-btn svg{width:19px;height:19px}
+.lx-bg-menu{position:absolute;z-index:20;top:calc(100% + 8px);right:0;display:flex;flex-direction:column;min-width:140px;padding:5px;border-radius:14px;border:1px solid var(--border-strong);background:var(--bg-surface);box-shadow:0 14px 34px rgba(40,32,24,.18)}
+.lx-bg-menu[hidden],.lx-bg-menu button[hidden]{display:none}
+.lx-bg-menu button{border:0;background:none;text-align:left;padding:10px 12px;border-radius:10px;font:14px/1 var(--font-sans);color:var(--text-primary);cursor:pointer}
+.lx-bg-menu button:active{background:var(--bg-sunken)}
+/* 自己的背景图：盖过「壁纸玻璃」那条（html.wall-on #lettersPanel），上面压一层薄纱保字清楚 */
+#lettersPanel{--lx-veil:rgba(250,248,244,.3)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) #lettersPanel{--lx-veil:rgba(18,16,14,.45)}}
+html[data-theme="dark"] #lettersPanel{--lx-veil:rgba(18,16,14,.45)}
+html #lettersPanel.lx-has-bg,html.wall-on #lettersPanel.lx-has-bg{background:linear-gradient(var(--lx-veil),var(--lx-veil)),var(--lx-bg) center/cover no-repeat;-webkit-backdrop-filter:none;backdrop-filter:none}
+/* 信箱刊头：标题上面压一行小字 LETTERS */
+.lx-title{font:500 20px/1 var(--font-serif);letter-spacing:.14em;padding-left:.14em}
+.lx-title span{display:block;margin-bottom:6px;font:600 9.5px/1 var(--font-sans);letter-spacing:.38em;padding-left:.38em;text-transform:uppercase;color:var(--text-faint)}
 .letters-list{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 16px calc(env(safe-area-inset-bottom) + 28px);display:flex;flex-direction:column;gap:12px}
 .letters-list::-webkit-scrollbar{display:none}
 .letters-empty{padding:56px 28px;text-align:center;color:var(--text-faint);font:15px/1.7 var(--font-sans)}
@@ -3134,13 +3156,22 @@ html.wall-on #lettersPanel .letter-compose{
   /* 展开后的两道折痕：不画线，只在折线两侧各铺一片很宽很淡的影子（第一道上暗下亮，第二道反过来），像压过又摊平的纸 */
   --lx-crease:linear-gradient(180deg,transparent 20%,rgba(70,56,40,.055) 33.2%,rgba(70,56,40,.035) 33.45%,transparent 43%,transparent 57%,rgba(70,56,40,.02) 66.5%,rgba(70,56,40,.05) 66.8%,transparent 76%)}
 .lx-wrap{flex:1;min-height:0;position:relative;overflow:hidden;isolation:isolate}
-.lx-greeting{position:absolute;z-index:4;top:14px;left:24px;right:24px;font-size:15px;line-height:1.35;color:var(--text-secondary);transition:opacity .45s ease,transform .6s var(--lx-ease)}
-.lx-greeting strong{display:block;color:var(--text-primary);font-weight:600;font-size:16px}
-.lx-empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:0 28px;color:var(--text-faint);font:15px/1.7 var(--font-sans)}
+/* 桌面氛围：右上一枚很淡的邮戳（mask 着色，深浅色都跟 --text-primary 走）+ 信封堆底下一团暖光 */
+.lx-wrap:before{content:"";position:absolute;z-index:-1;top:46px;right:-36px;width:250px;height:150px;pointer-events:none;opacity:.07;background:var(--text-primary);transform:rotate(-9deg);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 120'%3E%3Cg fill='none' stroke='black' stroke-width='1.6'%3E%3Ccircle cx='58' cy='60' r='44'/%3E%3Ccircle cx='58' cy='60' r='35' stroke-dasharray='2 3'/%3E%3Cpath d='M28 60h60M108 38c11-9 21 9 32 0s21 9 32 0 17 7 26 0M108 60c11-9 21 9 32 0s21 9 32 0 17 7 26 0M108 82c11-9 21 9 32 0s21 9 32 0 17 7 26 0'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 120'%3E%3Cg fill='none' stroke='black' stroke-width='1.6'%3E%3Ccircle cx='58' cy='60' r='44'/%3E%3Ccircle cx='58' cy='60' r='35' stroke-dasharray='2 3'/%3E%3Cpath d='M28 60h60M108 38c11-9 21 9 32 0s21 9 32 0 17 7 26 0M108 60c11-9 21 9 32 0s21 9 32 0 17 7 26 0M108 82c11-9 21 9 32 0s21 9 32 0 17 7 26 0'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat;transition:opacity .45s}
+.lx-wrap:after{content:"";position:absolute;z-index:-1;left:50%;top:44%;width:130vw;max-width:720px;aspect-ratio:1.6;transform:translate(-50%,-50%);pointer-events:none;background:radial-gradient(closest-side,rgba(214,176,128,.16),transparent)}
+.lx-wrap[data-reading="1"]:before{opacity:0}
+.lx-greeting{position:absolute;z-index:4;top:10px;left:24px;right:24px;color:var(--text-secondary);transition:opacity .45s ease,transform .6s var(--lx-ease)}
+.lx-eyebrow{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding-bottom:9px;margin-bottom:10px;border-bottom:1px solid var(--border-strong);font:500 10.5px/1 var(--font-sans);letter-spacing:.16em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap}
+.lx-eyebrow em{font-style:normal;color:#B24B63}
+.lx-greeting strong{display:block;font:500 22px/1.2 var(--font-serif);letter-spacing:.06em;color:var(--text-primary)}
+.lx-empty{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 28px;color:var(--text-faint);font:14px/1.8 var(--font-sans)}
+.lx-empty-ic{width:64px;height:48px;margin-bottom:18px;opacity:.75}
+.lx-empty b{display:block;margin-bottom:8px;font:500 19px/1.3 var(--font-serif);letter-spacing:.1em;color:var(--text-secondary)}
 .lx-wrap[data-empty="1"] .lx-empty{display:flex}
 .lx-wrap[data-empty="1"] .lx-greeting,.lx-wrap[data-empty="1"] .lx-hint,.lx-wrap[data-empty="1"] .lx-deck{display:none}
-.lx-stage{position:absolute;inset:78px 0 92px;touch-action:manipulation;perspective:1400px;transform-style:preserve-3d;--env-h:min(36vw,138px);--paper-h:min(118vw,462px)}
-.lx-card{position:absolute;left:50%;top:44%;width:min(84vw,330px);height:min(36vw,138px);margin:calc(min(36vw,138px)/-2) 0 0 calc(min(84vw,330px)/-2);border:0;padding:0;background:transparent;cursor:pointer;transform-style:preserve-3d;transition:transform .72s var(--lx-spring),opacity .42s ease,filter .5s ease,top .62s var(--lx-ease),margin .62s var(--lx-ease),visibility .42s;will-change:transform,opacity}
+.lx-stage{position:absolute;inset:78px 0 92px;touch-action:manipulation;perspective:1400px;transform-style:preserve-3d;--env-h:min(38vw,150px);--paper-h:min(124vw,500px)}
+/* 09-24 她要「信大一点」：信封 330×138 → 360×150，信纸 306×462 → 336×500，比例跟着放，抽信/折回的位置都是按 --env-h/--paper-h 算的 */
+.lx-card{position:absolute;left:50%;top:44%;width:min(88vw,360px);height:min(38vw,150px);margin:calc(min(38vw,150px)/-2) 0 0 calc(min(88vw,360px)/-2);border:0;padding:0;background:transparent;cursor:pointer;transform-style:preserve-3d;transition:transform .72s var(--lx-spring),opacity .42s ease,filter .5s ease,top .62s var(--lx-ease),margin .62s var(--lx-ease),visibility .42s;will-change:transform,opacity}
 .lx-card:focus-visible{outline:2px solid var(--accent);outline-offset:8px;border-radius:3px}
 .lx-env{position:absolute;inset:0;filter:drop-shadow(0 22px 16px rgba(75,70,59,.22));transform-style:preserve-3d}
 .lx-env-back,.lx-env-front{position:absolute;inset:0;border-radius:2px;background:linear-gradient(170deg,#fff 0%,#f7f6f3 100%);border:1px solid #e8e6e1}
@@ -3171,7 +3202,7 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-env-pocket{position:absolute;z-index:7;inset:0;opacity:0;pointer-events:none;clip-path:polygon(0 8%,50% 72%,100% 8%,100% 100%,0 100%);background:linear-gradient(172deg,#fbfaf8,#f3f1ed);border:1px solid #ece9e2;transition:transform .72s var(--lx-ease),opacity .45s ease}
 .lx-env{transition:transform .72s var(--lx-ease),opacity .45s ease}
 /* 三折信纸 */
-.lx-paper{position:absolute;z-index:3;left:50%;top:calc(var(--env-h) * -1);width:min(78vw,306px);height:var(--paper-h);margin-left:calc(min(78vw,306px)/-2);opacity:0;pointer-events:none;transform:translateY(calc(var(--paper-h) * .34)) scale(.94);filter:drop-shadow(0 18px 13px rgba(75,70,59,.28));transition:transform .72s var(--lx-ease),opacity .22s ease;transform-style:preserve-3d;perspective:650px}
+.lx-paper{position:absolute;z-index:3;left:50%;top:calc(var(--env-h) * -1);width:min(82vw,336px);height:var(--paper-h);margin-left:calc(min(82vw,336px)/-2);opacity:0;pointer-events:none;transform:translateY(calc(var(--paper-h) * .34)) scale(.94);filter:drop-shadow(0 18px 13px rgba(75,70,59,.28));transition:transform .72s var(--lx-ease),opacity .22s ease;transform-style:preserve-3d;perspective:650px}
 .lx-panel{position:absolute;left:0;width:100%;height:33.334%;transform-style:preserve-3d;will-change:transform;transition:transform .85s var(--lx-ease)}
 /* 暗影只压在翻动那两折的「字面」上：立起来、背着光时是灰的（字还看得见，被压扁），落平了褪掉。
    折好时朝外的是 p1 的背面，只在折口那边留一点点影，不再整片发褐 */
@@ -3278,15 +3309,25 @@ html.wall-on #lettersPanel .letter-compose{
 .lx-stage[data-state="closing"] .is-sel .lx-addr,.lx-stage[data-state="closing"] .is-sel .lx-stamp,.lx-stage[data-state="closing"] .is-sel .lx-seal{opacity:0}
 .lx-stage[data-state="closing"] .is-sel .lx-env-pocket{transform:translateY(0);opacity:1;transition-delay:.64s}
 /* 底部翻页 + 提示 + 阅读态工具条 */
-.lx-hint{position:absolute;z-index:6;left:0;right:0;bottom:36px;text-align:center;font-size:13px;color:var(--text-faint);transition:opacity .3s ease}
+.lx-hint{position:absolute;z-index:6;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 70px);display:flex;align-items:center;justify-content:center;gap:10px;text-align:center;font:12px/1 var(--font-sans);letter-spacing:.1em;color:var(--text-faint);transition:opacity .3s ease}
+.lx-hint:before,.lx-hint:after{content:"";flex:none;width:22px;height:1px;background:currentColor;opacity:.5}
 .lx-stage:not([data-state="stack"])~.lx-hint{opacity:.85}
-.lx-deck{position:absolute;z-index:7;left:50%;bottom:60px;display:flex;align-items:center;gap:12px;transform:translateX(-50%);transition:opacity .25s}
-.lx-deck button{width:38px;height:38px;border:1px solid var(--border);border-radius:50%;background:var(--bg-surface);color:var(--text-primary);cursor:pointer;font-size:16px}
-.lx-deck span{min-width:46px;text-align:center;font-size:12px;color:var(--text-secondary)}
+.lx-deck{position:absolute;z-index:7;left:50%;bottom:calc(env(safe-area-inset-bottom) + 94px);display:flex;align-items:center;gap:18px;transform:translateX(-50%);transition:opacity .25s}
+.lx-deck button{display:grid;place-items:center;width:36px;height:36px;padding:0;border:1px solid var(--border-strong);border-radius:50%;background:var(--glass-bg);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);color:var(--text-secondary);cursor:pointer;transition:transform .15s,color .15s}
+.lx-deck button svg{width:16px;height:16px}
+.lx-deck button:active{transform:scale(.9);color:var(--text-primary)}
+.lx-deck span{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:64px;font:400 13px/1 var(--font-serif);letter-spacing:.06em;font-variant-numeric:tabular-nums;color:var(--text-faint)}
+.lx-deck span b{font:500 19px/1 var(--font-serif);color:var(--text-primary)}
+.lx-deck span i{width:13px;height:1px;background:currentColor;transform:rotate(-58deg)}
 .lx-tools{position:absolute;z-index:12;left:50%;bottom:22px;transform:translateX(-50%);display:none;align-items:center;gap:8px;width:max-content;white-space:nowrap}
 .lx-wrap[data-reading="1"] .lx-tools{display:flex}
 .lx-wrap[data-reading="1"] .lx-hint,.lx-wrap[data-reading="1"] .lx-deck,.lx-wrap[data-reading="1"] .lx-greeting{opacity:0;pointer-events:none}
 .lx-tools .lx-del{border:1px solid var(--border);background:var(--bg-surface);color:#c98;border-radius:999px;padding:8px 14px;font:13px/1 var(--font-sans);cursor:pointer}
+/* 读信时底部那排（字体切换 / 删掉）改成玻璃胶囊，跟翻页按钮一套 */
+.lx-tools .lx-fontsw,.lx-tools .lx-del{border:1px solid var(--border-strong);background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.lx-tools .lx-del{color:#B24B63}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .lx-eyebrow em,:root:not([data-theme="light"]) .lx-tools .lx-del,:root:not([data-theme="light"]) .tw-date.set{color:#E08BA0}}
+html[data-theme="dark"] .lx-eyebrow em,html[data-theme="dark"] .lx-tools .lx-del,html[data-theme="dark"] .tw-date.set{color:#E08BA0}
 .lx-fontsw{display:flex;gap:4px;background:var(--bg-sunken);border-radius:999px;padding:3px}
 .lx-fontsw button{white-space:nowrap;flex:none;border:0;background:none;border-radius:999px;padding:6px 11px;font:13px/1 var(--font-sans);color:var(--text-secondary);cursor:pointer}
 .lx-fontsw button.active{background:var(--bg-primary);color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,.12)}
@@ -3296,7 +3337,20 @@ html.wall-on #lettersPanel .letter-compose{
 .letter-compose.tw{--twb:env(safe-area-inset-bottom,0px);--tw-ease:cubic-bezier(.2,.8,.2,1)}
 .tw .letter-bar{position:relative;z-index:30}
 .tw .letter-bar-send:disabled{opacity:.4;cursor:default}
-.tw-status{font:13px/1 var(--font-sans);color:var(--text-faint)}
+/* 写信页打开时把底下的信箱（标题栏 + 信封堆）藏掉：铺壁纸时两层玻璃叠着会透出「信箱 / 写信 / ×」 */
+#lettersPanel:has(.letter-compose:not([hidden])) > .profile-header,
+#lettersPanel:has(.letter-compose:not([hidden])) > .lx-wrap{visibility:hidden}
+/* 拆信日：顶栏中间单独一颗药丸按钮，透明 date input 整个盖在上面 */
+.tw-date{position:relative;display:inline-flex;align-items:center;min-width:0;border-radius:999px;background:var(--bg-sunken);color:var(--text-secondary);transition:opacity .3s,background .2s,color .2s}
+.tw-date-btn{position:relative;display:inline-flex;align-items:center;gap:6px;min-width:0;padding:7px 12px;font:500 13px/1 var(--font-sans);white-space:nowrap;cursor:pointer}
+.tw-date-btn svg{flex:none;width:14px;height:14px}
+.tw-date-btn span{overflow:hidden;text-overflow:ellipsis}
+.tw-date-btn input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;cursor:pointer;-webkit-appearance:none;appearance:none}
+.tw-date.set{background:rgba(192,96,122,.14);color:#B24B63}
+.tw-date.set .tw-date-btn{padding-right:2px}
+.tw-date-clear{flex:none;border:0;background:none;color:inherit;font:16px/1 var(--font-sans);padding:4px 10px 4px 6px;cursor:pointer;opacity:.7}
+.tw-date-clear[hidden]{display:none}
+.tw.sending .tw-date{opacity:0;pointer-events:none}
 .tw-desk{flex:1;min-height:0;position:relative;overflow:hidden;background-image:linear-gradient(90deg,rgba(150,140,125,.06) 50%,transparent 50%),linear-gradient(rgba(150,140,125,.06) 50%,transparent 50%);background-size:44px 44px}
 .tw-desk:after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 35%,transparent 25%,rgba(85,77,64,.13) 100%)}
 .tw-paper-wrap{position:absolute;z-index:5;left:50%;top:12px;bottom:calc(188px + var(--twb));width:min(84vw,430px);transform:translateX(-50%);filter:drop-shadow(0 15px 15px rgba(83,75,64,.22));transition:bottom .45s var(--tw-ease);perspective:1100px}
@@ -3311,8 +3365,6 @@ html.wall-on #lettersPanel .letter-compose{
 .tw-meta input{flex:1;min-width:0;border:0;border-bottom:1px solid #b8b1a8;border-radius:0;background:transparent;outline:0;padding:4px 2px;font:14px/1.3 "Courier New",ui-monospace,var(--font-serif),monospace;color:#282522}
 .tw-meta input:focus{border-bottom-color:#333}
 .tw-meta input::placeholder{color:rgba(143,137,129,.55)}
-.tw-meta input[type=date]{-webkit-appearance:none;appearance:none;flex:0 1 auto;min-height:26px;min-width:120px;color-scheme:light}
-.tw-date-hint{font-size:11px;color:#9b948a}
 .tw-paper textarea{flex:1;min-height:0;width:100%;resize:none;border:0;outline:0;background:transparent;padding:0;overflow-y:auto;-webkit-overflow-scrolling:touch;font:17px/24px "Courier New",ui-monospace,var(--font-serif),monospace;letter-spacing:.02em;color:#282522;caret-color:#b74747}
 .tw-paper textarea::placeholder{color:rgba(143,137,129,.4)}
 .tw-ime,.tw-count{position:absolute;z-index:3;bottom:26px;font:11px/1 var(--font-sans);color:#817b73}
