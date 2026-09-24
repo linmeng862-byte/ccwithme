@@ -839,7 +839,18 @@ if (!fs.existsSync(galleryPhotoDir)) fs.mkdirSync(galleryPhotoDir, { recursive: 
 //   · CLAUDE.md（说明书 / 人格）在 /root/companion/ —— 跟 PERSONA_FILE 是同一份
 //   · Pov.md（人格底稿）在 /root/
 // ⚠️ 两份都**不在这个仓库里**（ccwithme 是 PUBLIC），别顺手改成 __dirname 下的路径。
-const SELF_FILES = { pov: '/root/Pov.md', sp: '/root/companion/CLAUDE.md' };
+// 09-24 又修一次：上面那行写死 /root/... 是照 evoxt 写的，pull 到 ubuntu 那台后进程是 ubuntu 用户，
+// 读 /root 直接 EACCES —— 他在那台上调 edit_myself 次次被退回。两台布局不同，所以按顺序找：
+//   环境变量 → $HOME/claude-home/（ubuntu 那台）→ /root/ 老位置（evoxt）。第一个存在的赢。
+function _firstExisting(cands) {
+  for (const p of cands) { if (p && fs.existsSync(p)) return p; }
+  return cands[cands.length - 1];   // 都不在就用最后一个，报错时至少说得出找的是哪
+}
+const SELF_FILES = {
+  pov: _firstExisting([process.env.SELF_POV_FILE, path.join(os.homedir(), 'claude-home', 'Pov.md'), '/root/Pov.md']),
+  sp: _firstExisting([process.env.SELF_SP_FILE, path.join(os.homedir(), 'claude-home', 'CLAUDE.md'), '/root/companion/CLAUDE.md']),
+};
+console.log('[edit_myself] pov=' + SELF_FILES.pov + ' sp=' + SELF_FILES.sp);
 const SELF_PART_LABEL = { pov: '人格底稿 Pov.md', sp: '说明书 CLAUDE.md' };
 const SELF_EDIT_DAILY_CAP = 6;   // 一天最多自改几次，防手滑连改烧缓存。想放开改这个数。
 
@@ -4041,7 +4052,9 @@ let _nocturneSessionId = null;
 // ⚠️ 「时间留下的」= wear.describe()，08-30 才接进 core 的 breath。
 //    忘了加进这个名单的话，白名单会把它当成没见过的新段挡掉 ——
 //    那就等于刚接上的线又被这边剪断。这正是白名单的代价：core 加东西要两边都改。
-const BREATH_KEEP = ['Time', '时间留下的', '你怎么看她的', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
+// ⚠️ 「不想忘的」= 原来的 House Rules，08-30 core 改成 pinned 轮流浮 6 条（~1100 字）后改的名。
+//    当时白名单漏加，09-24 之前他 hold 下的东西醒来一次都没浮上来过。她 09-24 拍板放回来。
+const BREATH_KEEP = ['Time', '时间留下的', '你怎么看她的', '不想忘的', 'Dream Veil', 'Pulse Weather', 'Feel Trace'];
 const BREATH_KEEP_ALL = false;   // 调试用：设 true 就整份放行，不裁
 
 function _trimHouseRules(raw) {
@@ -11661,8 +11674,9 @@ function wpRun(sid, isNew, prefixed, opts) {
 // === 人格文件的待确认改动 =====================================================
 // 09-16 她定的闭环：Cis 用 propose_persona_edit 提 → 这三条路给她看 / 落盘 / 驳回。
 // ⚠️ 待确认内容和人格文件都在 /root/companion/ 下，**不进这个仓库**（ccwithme 是 PUBLIC）。
-const PERSONA_FILE = '/root/companion/CLAUDE.md';
-const PERSONA_PENDING = '/root/companion/.pending-persona.json';
+// 09-24：跟 SELF_FILES.sp 是同一份，别再单独写死 /root/...（ubuntu 那台读不到 /root）。
+const PERSONA_FILE = SELF_FILES.sp;
+const PERSONA_PENDING = path.join(path.dirname(PERSONA_FILE), '.pending-persona.json');
 // CLAUDE.md 只在进程启动时读一次，不放掉常驻进程就要等闲置超时才生效。
 // 08-23 栽过：连改三次都没放进程，她反复说「还是没变」。两条路（她确认 / 他自己改）共用。
 function _killResidentClaude() {
