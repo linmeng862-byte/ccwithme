@@ -682,7 +682,7 @@ final class NativeChatModel: ObservableObject {
 // MARK: - 页面（09-25 她发了参考图：「宝宝想要这样子的」）
 //
 // 参考图的规矩：
-//   - 气泡是整颗胶囊（两头全圆、没尾巴），他奶白玻璃、她淡黄绿玻璃；时间写在气泡里右下角
+//   - 气泡是整颗胶囊（两头全圆、没尾巴），他奶白玻璃、她粉色玻璃（09-25 她：「我要粉色！」）；时间写在气泡里右下角
 //   - 头像只挂在一组的最后一条旁边（底对齐），组里其余几条空出头像那一格，排得齐
 //   - 底下没有整条输入栏，是一排浮着的玻璃：☰ 圆钮、📎 圆钮、Reply to Claude 胶囊、右边一个圆钮
 //   - 顶上几乎是空的：正中一颗小胶囊写他的名字（点开切模型），右边 [待办 | ⋯]
@@ -828,7 +828,7 @@ struct NativeChatView: View {
             if GlassChatTest.liquidAvailable {
                 Picker("气泡", selection: $style) {
                     ForEach(BubbleStyle.allCases) { s in
-                        Text(s == .liquid ? "液态 · 我这边淡黄" : (s == .tinted ? "液态 · 我这边蓝" : s.rawValue)).tag(s)
+                        Text(s == .liquid ? "液态 · 我这边粉" : (s == .tinted ? "液态 · 我这边蓝" : s.rawValue)).tag(s)
                     }
                 }
             }
@@ -1145,7 +1145,7 @@ struct NativeChatView: View {
 
 extension View {
     /// 同 GlassChatTest 的 bubbleSurface，只是外形可以是任意 Shape。
-    /// 参考图的配色：他奶白玻璃，她淡黄绿玻璃（liquid）；tinted = 她 iMessage 蓝。
+    /// 他奶白玻璃，她粉色玻璃（liquid，09-25 她从参考图的淡黄绿改成粉）；tinted = 她 iMessage 蓝。
     func imSurface<S: Shape>(_ style: BubbleStyle, mine: Bool, shape: S) -> AnyView {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *), style != .frosted {
@@ -1153,7 +1153,7 @@ extension View {
             if mine {
                 glass = glass.tint(style == .tinted
                                    ? Color(red: 0.0, green: 0.48, blue: 1.0).opacity(0.75)
-                                   : Color(red: 0.93, green: 0.95, blue: 0.55).opacity(0.55))
+                                   : Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.5))
             } else {
                 glass = glass.tint(Color.white.opacity(0.35))
             }
@@ -1161,7 +1161,7 @@ extension View {
         }
         #endif
         // 老系统 / 磨砂档：磨砂上叠同一层颜色，看着还是那两种色
-        let wash = mine ? Color(red: 0.93, green: 0.95, blue: 0.55).opacity(0.35) : Color.white.opacity(0.3)
+        let wash = mine ? Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.3) : Color.white.opacity(0.3)
         return AnyView(
             self.background(shape.fill(wash))
                 .background(.ultraThinMaterial, in: shape)
