@@ -1171,8 +1171,10 @@ html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
 .msg-user .bubble,.msg-claude .bubble,.msg-claude .md{font-size:16px}
 
 /* 语音条 / 通话记录条的底色跟着新气泡变量走，别再写死粉色 */
-.msg-user .voice-msg,.msg-user .call-msg{background:var(--bubble-her)}
-.msg-claude .voice-msg,.msg-claude .call-msg{background:var(--bubble-him)}
+.msg-user .voice-msg{background:var(--bubble-her)}
+.msg-claude .voice-msg{background:var(--bubble-him)}
+/* 通话条底色以前写在 JS 行内（var(--bg-surface)），把 has-wall 的玻璃压住了；09-25 挪到这儿，没壁纸时颜色不变 */
+.msg-user .call-msg,.msg-claude .call-msg{background:var(--bg-surface)}
 
 /* 卡片：只统一圆角和边界，别的设计一概不动。
    原来圆角是 14/16/18/20/28 五种，max-width 写死 440~480px ——

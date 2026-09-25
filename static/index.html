@@ -26,7 +26,7 @@
 <link rel="icon" href="/logo.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/css/home.css?v=20260924c">
+<link rel="stylesheet" href="/css/home.css?v=20260925a">
 <!-- 站酷快乐体：只用于自定义壁纸下的聊天气泡（见 home.css）。若她网络到不了 Google Fonts 会静默回退系统字体。 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2612,7 +2612,8 @@ function _renderCallCards(row){
     var wrap=document.createElement("span");wrap.className="call-msg";
     // 09-12：她说「胶囊太小了，在对话里很不和谐」—— 往说话气泡的尺寸靠，
     // 字号/内边距跟普通消息一个量级，不再像个角标。
-    wrap.style.cssText="display:inline-flex;align-items:center;gap:10px;padding:13px 20px;margin:4px 0;background:var(--bg-surface);border-radius:22px;font:400 15.5px/1.2 var(--font-sans);color:var(--text-primary)";
+    // 09-25：底色不写在行内 —— 行内压过 home.css 里 has-wall 那套玻璃，铺了壁纸还是一块实心奶黄。底色在 home.css 的 .call-msg。
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:10px;padding:13px 20px;margin:4px 0;border-radius:22px;font:400 15.5px/1.2 var(--font-sans);color:var(--text-primary)";
     wrap.innerHTML='<span style="display:inline-flex;color:'+iconColor+'">'+icon+'</span><span>'+label+'</span>';
     md.innerHTML=md.innerHTML.replace(m[0],wrap.outerHTML);
     _hit=true;
