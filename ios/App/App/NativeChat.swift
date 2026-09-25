@@ -422,6 +422,7 @@ final class NativeChatModel: ObservableObject {
             let convChanged = creds?.convId != c.convId
             creds = c
             errorText = ""
+            if convChanged { resetHistory() }
             if !busy || convChanged { await reloadHistory() }
             loading = false
         }
@@ -484,49 +485,101 @@ final class NativeChatModel: ObservableObject {
 
     // MARK: 历史
 
-    func reloadHistory() async {
-        guard let c = creds, !c.convId.isEmpty else { return }
+    // 已经读回来的原始行（按 id 从旧到新）。往上翻是往前面接，30 秒一次的重读只替换「最新 50 条」那一截，
+    // 翻出来的老记录不会被冲掉。
+    private var rows: [[String: Any]] = []
+    @Published var hasMore = false            // 再往上还有没有
+    @Published var loadingOlder = false
+
+    private static func rowId(_ r: [String: Any]) -> Int {
+        (r["id"] as? Int) ?? Int("\(r["id"] ?? "")") ?? 0
+    }
+
+    /// GET /api/sessions/:id/messages —— before 为 nil 就是最新一页
+    private func fetchPage(before: Int?) async -> (rows: [[String: Any]], hasMore: Bool)? {
+        guard let c = creds, !c.convId.isEmpty else { return nil }
         let conv = c.convId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? c.convId
-        guard let r = request("/api/sessions/\(conv)/messages?limit=50", c) else { return }
+        let q = before.map { "&before_id=\($0)" } ?? ""
+        guard let r = request("/api/sessions/\(conv)/messages?limit=50" + q, c) else { return nil }
         do {
             let (data, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode == 401 {
                 errorText = "登录过期了 —— 回网页那边刷新一下再来。"
-                return
+                return nil
             }
             guard let o = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let rows = o["messages"] as? [[String: Any]] else { return }
-            var out: [NMsg] = []
-            for row in rows {
-                let id = "\(row["id"] ?? UUID().uuidString)"
-                let mine = (row["role"] as? String) == "user"
-                var text = row["text"] as? String ?? ""
-                let t = (row["timestamp"] as? String).flatMap { Self.parseTime($0) }
-                // 她发的附件：图一张一行画出来（/api/uploads/会话/id，要登录头），别的文件先写个名字
-                var names: [String] = []
-                for (k, a) in ((row["attachments"] as? [[String: Any]]) ?? []).enumerated() {
-                    let aid = (a["path"] as? String) ?? (a["id"] as? String) ?? ""
-                    if (a["is_image"] as? Bool) == true && !aid.isEmpty {
-                        out.append(NMsg(id: "\(id)-a\(k)", mine: mine, text: "",
-                                        kind: .image(absURL("/api/uploads/\(c.convId)/\(aid)")), time: t))
-                    } else {
-                        names.append((a["name"] as? String) ?? "文件")
-                    }
-                }
-                if !names.isEmpty { text = names.map { "[文件] " + $0 }.joined(separator: "\n") + (text.isEmpty ? "" : "\n" + text) }
-                if !mine, let pc = processCard(id: id, thinking: (row["thinking"] as? String) ?? "",
-                                               traces: (row["traces"] as? [[String: Any]]) ?? [], time: t) {
-                    out.append(pc)
-                }
-                out.append(contentsOf: bubbles(id: id, mine: mine, raw: text, time: t))
-                if !mine, let tr = row["traces"] as? [[String: Any]], !tr.isEmpty {
-                    out.append(contentsOf: traceCards(id: id, traces: tr, raw: text, time: t))
-                }
-            }
-            msgs = out
+                  let page = o["messages"] as? [[String: Any]] else { return nil }
+            return (page, (o["has_more"] as? Bool) ?? false)
         } catch {
             errorText = "读不到聊天记录：" + error.localizedDescription
+            return nil
         }
+    }
+
+    /// 重读最新一页，接到已有的老记录后面
+    func reloadHistory() async {
+        guard let got = await fetchPage(before: nil) else { return }
+        let page = got.rows
+        let pageOldest = page.first.map { Self.rowId($0) } ?? Int.max
+        let haveNewest = rows.last.map { Self.rowId($0) } ?? 0
+        if rows.isEmpty || (pageOldest > haveNewest && got.hasMore) {
+            // 第一次读，或者两次之间来了 50 条以上、接不上了 —— 就从最新一页重新开始
+            rows = page
+            hasMore = got.hasMore
+        } else {
+            rows = rows.filter { Self.rowId($0) < pageOldest } + page
+        }
+        rebuild()
+    }
+
+    /// 往上翻一页。返回后调用方负责把视线留在原来那条上。
+    func loadOlder() async {
+        guard hasMore, !loadingOlder, let oldest = rows.first.map({ Self.rowId($0) }) else { return }
+        loadingOlder = true
+        defer { loadingOlder = false }
+        guard let got = await fetchPage(before: oldest) else { return }
+        rows = got.rows + rows
+        hasMore = got.hasMore
+        rebuild()
+    }
+
+    /// 换会话了：老记录全扔掉
+    func resetHistory() {
+        rows = []
+        hasMore = false
+        msgs = []
+    }
+
+    private func rebuild() {
+        guard let c = creds else { return }
+        var out: [NMsg] = []
+        for row in rows {
+            let id = "\(row["id"] ?? UUID().uuidString)"
+            let mine = (row["role"] as? String) == "user"
+            var text = row["text"] as? String ?? ""
+            let t = (row["timestamp"] as? String).flatMap { Self.parseTime($0) }
+            // 她发的附件：图一张一行画出来（/api/uploads/会话/id，要登录头），别的文件先写个名字
+            var names: [String] = []
+            for (k, a) in ((row["attachments"] as? [[String: Any]]) ?? []).enumerated() {
+                let aid = (a["path"] as? String) ?? (a["id"] as? String) ?? ""
+                if (a["is_image"] as? Bool) == true && !aid.isEmpty {
+                    out.append(NMsg(id: "\(id)-a\(k)", mine: mine, text: "",
+                                    kind: .image(absURL("/api/uploads/\(c.convId)/\(aid)")), time: t))
+                } else {
+                    names.append((a["name"] as? String) ?? "文件")
+                }
+            }
+            if !names.isEmpty { text = names.map { "[文件] " + $0 }.joined(separator: "\n") + (text.isEmpty ? "" : "\n" + text) }
+            if !mine, let pc = processCard(id: id, thinking: (row["thinking"] as? String) ?? "",
+                                           traces: (row["traces"] as? [[String: Any]]) ?? [], time: t) {
+                out.append(pc)
+            }
+            out.append(contentsOf: bubbles(id: id, mine: mine, raw: text, time: t))
+            if !mine, let tr = row["traces"] as? [[String: Any]], !tr.isEmpty {
+                out.append(contentsOf: traceCards(id: id, traces: tr, raw: text, time: t))
+            }
+        }
+        msgs = out
     }
 
     // MARK: 附件（发图）
@@ -1224,6 +1277,27 @@ struct NativeChatView: View {
                     if model.loading {
                         ProgressView().padding(.top, 40)
                     }
+                    if model.hasMore && !model.loading {
+                        // 点了才翻，不做「滑到顶自动翻」：LazyVStack 一出来顶上那格就「出现」了，会一口气翻到底
+                        Button(action: {
+                            let anchor = items.first?.id
+                            Task {
+                                await model.loadOlder()
+                                // 翻出来的接在上面，视线留在刚才最上面那条
+                                if let a = anchor { proxy.scrollTo(a, anchor: .top) }
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                if model.loadingOlder { ProgressView().scaleEffect(0.7) }
+                                else { Image(systemName: "arrow.up").font(.system(size: 11, weight: .semibold)) }
+                                Text("更早的消息").font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .bubbleSurface(effectiveStyle, mine: false, radius: 14)
+                        }
+                        .padding(.bottom, 6)
+                    }
                     ForEach(items) { p in
                         VStack(spacing: 0) {
                             if let d = p.dayHeader {
@@ -1251,7 +1325,8 @@ struct NativeChatView: View {
             // 用 simultaneousGesture 不抢气泡里的长按选字。
             .simultaneousGesture(TapGesture().onEnded { Self.hideKeyboard() })
             .modifier(ScrollDismissesKeyboard())
-            .onChange(of: model.msgs) { _ in
+            // 只在「最后一条变了」时贴底 —— 往上翻也会改 msgs，那时候不能把她拽回底部
+            .onChange(of: model.msgs.last?.id) { _ in
                 withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .onChange(of: model.liveText) { _ in
