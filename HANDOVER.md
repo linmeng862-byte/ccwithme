@@ -5,6 +5,67 @@
 > **最新的写在最上面。**
 
 
+## 🍎 2026-09-25 夜 · Xcode 27 / iOS 27 连踩两坑 + 原生玻璃气泡测试页（已 push 到 main）
+
+**纯 iOS 改动，后端 / 网页一个字没动**，不用重启。但**你那台下次编包必须拉这三个提交**，
+不然用 Xcode 27 编出来要么编不过、要么装上一打开就闪退。她那边已经在真机（iOS 27）上验过，全好。
+
+### 坑 1：部署目标 14 → Xcode 27 直接红叉编不过（`dbbb267`）
+
+报错原话：`The iOS deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 14.0, but the range of supported deployment target versions is 15.0 to 27.0.x.`
+⚠️ **这在 Xcode 27 是红叉不是黄三角**。我先照老经验说「警告，不用管」，害她白编一次 —— 别再说错。
+
+抬到 15，**三处要一起抬**，漏一处还是这条红叉：
+- `project.pbxproj` 里 App target 的 4 处
+- `Podfile`：`platform :ios, '15.0'`，**外加 post_install 自己强抬 Pods**。
+  Capacitor 的 `assertDeploymentTarget` 只往 14 抬，Capacitor 自己的 podspec 也写死 14。
+- `add_broadcast_extension.rb`（共享屏幕扩展原来也是 14；灵动岛 17、屏幕时间 16 本来就够）
+
+### 坑 2：iOS 27 + Xcode 27 SDK 强制 UIScene 生命周期，否则启动即崩（`0febfd2`）
+
+症状：编译成功，手机上一点图标**黑屏闪退**，12 次全一样。崩溃报告：
+`EXC_BREAKPOINT / SIGTRAP`，从启动到崩 **0.4 秒**，主线程。
+原因：苹果 WWDC25 就预告过，用新 SDK 编的 app 还用老的「AppDelegate 自己管 window」会被系统拦下。
+我们一直用 Xcode 26 编所以没撞上，她这次换了 27。
+
+修法：
+- 新加 `ios/App/App/SceneDelegate.swift`，窗口归它管。原来 AppDelegate 里的**窗口奶油底色**
+  （键盘黑边那个）、**URL 打开**、**桌面快捷操作**都搬过去了。
+- `Info.plist` 加 `UIApplicationSceneManifest`（storyboard = Main），删了 `UIMainStoryboardFile`。
+- `add_app_plugins.rb` 登记了 `SceneDelegate.swift`，`ios-prep.sh` 会自动加进 App target。
+- ⚠️ **场景模式下 `AppDelegate.window` 永远是 nil**，`applicationDidBecomeActive` / `open url` 这些
+  也不会再被调。以后要拿窗口、要处理生命周期，**去 SceneDelegate**。
+
+**真机上查崩溃（这次就靠它定位的）：** 不连 Xcode、从桌面点开才崩的，Xcode 控制台抓不到。
+手机上：设置 → Privacy & Security → Analytics & Improvements → View Analytics Logs，
+底下搜 `App-日期`，点最新那条，看 `exception` / `termination` 那几行。
+
+### 新东西：原生液态玻璃气泡测试页（`e96e008`）
+
+她朋友说「Xcode 27 直接能做到」那个气泡。结论：苹果真 Liquid Glass（SwiftUI `.glassEffect()`）
+**只对原生视图开放**，WKWebView 里的 HTML 气泡够不着，CSS 只能模仿。她决定当成大工程慢慢做：
+**只把聊天那一屏换原生**，其余继续网页。
+
+第 1 步是一个独立测试页 `ios/App/App/GlassChatTest.swift`：假消息 + 能打字，
+顶上切「液态 / 液态带色 / 磨砂」，右上换壁纸。不接后端、不动网页聊天。
+- **入口：长按桌面 app 图标 →「玻璃测试」**（动态快捷操作，装完要先正常开一次 app 才出现）。
+  故意没放网页 ⋯ 菜单，当时 `index.html` 有别人没提交的改动。
+- `glassEffect` 用 `#if compiler(>=6.2)` + `#available(iOS 26)` 包着，老 Xcode / 老系统自动退回磨砂，
+  页面顶上会写明当前是哪种。
+- 她看了说「完美」。**下一步等她看完三档、说喜欢哪个**，再决定进不进第 2 步
+  （接真数据：文字气泡 + 流式 + 发消息）。
+- ⚠️ 她 09 月定过「磨砂 > 液态」，所以一定先让她亲眼比，别直接往下铺。
+
+### 给编包的你
+
+- **VPS 上没有 swiftc**，Swift 全是盲写，每次都靠她编完截图反馈。报错先让她截 Xcode 的
+  Issue Navigator（红叉那条），崩溃让她去上面那个 Analytics Logs 找。
+- 从头编的顺序没变：先把 `ios/App` 还原成仓库版（git 的 checkout 那条）→ `git pull` → 设 server url
+  → `npx cap sync ios` → `bash scripts/ios-prep.sh` → Xcode。**先还原再 pull**，不然上次 ios-prep
+  留下的工程文件改动会跟 pull 冲突。
+- 她 Mac 上那份编完**别推**（ios-prep 会往工程文件里加扩展 target）。
+
+
 ## 🎨 2026-09-21 · 出图参考图接口修通 + 中断叫停（已 push 到 main）
 
 拉下来 `git pull` + **重启后端**（`pm2 restart chat-c`）就生效。**你那台还要补一件**见下。
