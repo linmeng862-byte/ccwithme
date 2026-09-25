@@ -182,8 +182,17 @@ enum NKind: Equatable {
     case artifact(title: String, lang: String)                // [ARTIFACT:标题|语言|文件名|id] / 工具结果里的 artifact
     case video(URL?)                                          // [VIDEO:/gallery-photo/vid_*.mp4]（不要 token）
     case call(kind: String, dur: String)                      // [CALL:ended|02:17(|her)]
-    case music(title: String, artist: String, cover: URL?)    // 工具结果里的 music
+    case music(title: String, artist: String, cover: URL?, audio: String)  // 工具结果里的 music（audio = 他直接给的音频地址，常为空）
     case gallery(title: String, caption: String, image: URL?) // 工具结果里的 gallery_save / gallery_share / gallery_album
+    case process(thinking: String, tools: [NTool])            // 他这一轮的思考 + 调过的工具，折叠着，点开看
+}
+
+struct NTool: Equatable {
+    let id: String
+    let name: String
+    let preview: String   // 入参压成一行，前 80 字
+    var done = false
+    var error = false
 }
 
 struct NMsg: Identifiable, Equatable {
@@ -233,6 +242,8 @@ struct NCreds {
 final class NativeChatModel: ObservableObject {
     @Published var msgs: [NMsg] = []
     @Published var liveText: String? = nil     // 他正在说的这一条（未分段的原文）；nil = 没在说
+    @Published var liveThinking = ""           // 这一轮他正在想的（thinking 事件一段段拼起来）
+    @Published var liveTools: [NTool] = []     // 这一轮调过的工具
     @Published var status: String = ""         // 「在想…」「在用 xx…」
     @Published var errorText: String = ""
     @Published var loading = true
@@ -503,6 +514,10 @@ final class NativeChatModel: ObservableObject {
                     }
                 }
                 if !names.isEmpty { text = names.map { "[文件] " + $0 }.joined(separator: "\n") + (text.isEmpty ? "" : "\n" + text) }
+                if !mine, let pc = processCard(id: id, thinking: (row["thinking"] as? String) ?? "",
+                                               traces: (row["traces"] as? [[String: Any]]) ?? [], time: t) {
+                    out.append(pc)
+                }
                 out.append(contentsOf: bubbles(id: id, mine: mine, raw: text, time: t))
                 if !mine, let tr = row["traces"] as? [[String: Any]], !tr.isEmpty {
                     out.append(contentsOf: traceCards(id: id, traces: tr, raw: text, time: t))
@@ -592,6 +607,8 @@ final class NativeChatModel: ObservableObject {
         if !t.isEmpty { msgs.append(contentsOf: bubbles(id: lid, mine: true, raw: t, time: Date())) }
         pending = []
         liveText = ""
+        liveThinking = ""
+        liveTools = []
         status = "在想…"
         dirty = true
 
@@ -666,9 +683,25 @@ final class NativeChatModel: ObservableObject {
                 status = ""
             }
         case "thinking":
+            if let t = o["text"] as? String { liveThinking += t }
             if (liveText ?? "").isEmpty { status = "在想…" }
         case "tool_start", "tool_use":
-            if let n = o["name"] as? String { status = "在用 \(n)…" }
+            if let n = o["name"] as? String {
+                status = "在用 \(n)…"
+                let tid = (o["id"] as? String) ?? UUID().uuidString
+                let pv = Self.inputPreview(o["input"])
+                // tool_start 先报名占一格，tool_use 随后带着入参来 —— 同一个 id 只补入参，不再加一格（跟网页 09-25 那条一样）
+                if let k = liveTools.firstIndex(where: { $0.id == tid }) {
+                    if !pv.isEmpty { liveTools[k] = NTool(id: tid, name: n, preview: pv, done: liveTools[k].done, error: liveTools[k].error) }
+                } else {
+                    liveTools.append(NTool(id: tid, name: n, preview: pv))
+                }
+            }
+        case "tool_result":
+            if let tid = o["tool_use_id"] as? String, let k = liveTools.firstIndex(where: { $0.id == tid }) {
+                liveTools[k].done = true
+                liveTools[k].error = (o["is_error"] as? Bool) ?? false
+            }
         case "error":
             errorText = o["message"] as? String ?? "出错了"
         case "done":
@@ -741,7 +774,7 @@ final class NativeChatModel: ObservableObject {
                                       transcript: ns.substring(with: m.range(at: 3)).trimmingCharacters(in: .whitespacesAndNewlines)),
                          time: time)]
         }
-        let segs = mine ? [raw] : raw.components(separatedBy: "\n---\n")
+        let segs = mine ? [raw] : raw.components(separatedBy: "\n---\n").flatMap { Self.chatLines($0) ?? [$0] }
         var out: [NMsg] = []
         for (i, seg) in segs.enumerated() {
             var j = 0
@@ -777,6 +810,34 @@ final class NativeChatModel: ObservableObject {
         return out
     }
 
+    static func inputPreview(_ v: Any?) -> String {
+        guard let v = v else { return "" }
+        var str = ""
+        if let s = v as? String { str = s }
+        else if JSONSerialization.isValidJSONObject(v), let d = try? JSONSerialization.data(withJSONObject: v),
+                let s = String(data: d, encoding: .utf8) { str = s }
+        if str == "{}" { return "" }
+        let one = str.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return one.count > 80 ? String(one.prefix(80)) + "…" : one
+    }
+
+    /// 这一轮的思考 + 工具，拼成一张折叠卡（history 里 thinking 在 messages.thinking，工具在 traces）
+    func processCard(id: String, thinking: String, traces: [[String: Any]], time: Date?) -> NMsg? {
+        var tools: [NTool] = []
+        for t in traces {
+            let type = t["type"] as? String
+            if type == "tool_use", let n = t["name"] as? String {
+                tools.append(NTool(id: (t["id"] as? String) ?? UUID().uuidString, name: n, preview: Self.inputPreview(t["input"])))
+            } else if type == "tool_result", let tid = t["tool_use_id"] as? String, let k = tools.firstIndex(where: { $0.id == tid }) {
+                tools[k].done = true
+                tools[k].error = (t["is_error"] as? Bool) ?? false
+            }
+        }
+        let th = thinking.trimmingCharacters(in: .whitespacesAndNewlines)
+        if th.isEmpty && tools.isEmpty { return nil }
+        return NMsg(id: id + "-p", mine: false, text: "", kind: .process(thinking: th, tools: tools), time: time)
+    }
+
     /// 他调工具留下的卡（音乐 / 存进相册 / 分享 / 相册 / 作品 / 文件）。
     /// 证据在 messages.traces 的 tool_result 里 —— 跟网页 _renderToolCardsFromTraces 同一套，那边加了新种类这边也要加。
     func traceCards(id: String, traces: [[String: Any]], raw: String, time: Date?) -> [NMsg] {
@@ -796,7 +857,7 @@ final class NativeChatModel: ObservableObject {
                     let q = u.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? u
                     return absURL("/api/music/cover?url=" + q)
                 }
-                add(.music(title: title, artist: (m["artist"] as? String) ?? "", cover: cover))
+                add(.music(title: title, artist: (m["artist"] as? String) ?? "", cover: cover, audio: (m["audio_url"] as? String) ?? ""))
             }
             if let g = o["gallery_save"] as? [String: Any] {
                 add(.gallery(title: "存进相册 · " + ((g["album_title"] as? String) ?? "Home"),
@@ -832,6 +893,22 @@ final class NativeChatModel: ObservableObject {
         return URL(string: c.base + "/api/files/" + f + "?t=" + t)
     }
 
+    /// 随口聊天就一行一个气泡（她 09-25：「他发长段话不能自动分开，像图里『老婆』就是一个气泡」）。
+    /// 比网页 _chatLineSplit 松：网页要 2~4 行、每行 ≤40 字；这边不限行数和长度 ——
+    /// 但有代码块 / 列表 / 标题 / 引用 / 表格 / HTML 的正经内容一律不拆，不然会碎。网页那条规则没动。
+    static func chatLines(_ s: String) -> [String]? {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.contains("```") || t.contains("<") { return nil }
+        if t.range(of: #"(?m)^ {4,}\S"#, options: .regularExpression) != nil { return nil }
+        let lines = t.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if lines.count < 2 { return nil }
+        for L in lines {
+            if L.range(of: #"^(#{1,6}\s|[-*+]\s|>\s|\||\d+[.)]\s)"#, options: .regularExpression) != nil { return nil }
+            if L.range(of: #"^[-*_]{3,}$"#, options: .regularExpression) != nil { return nil }
+        }
+        return lines
+    }
+
     /// 语音文件的地址。<audio> 那条路带不了头，后端 /api/files/:id 专门认 ?t=（authFile）
     func voiceURL(_ fileId: String) -> URL? {
         guard let c = creds else { return nil }
@@ -843,6 +920,32 @@ final class NativeChatModel: ObservableObject {
     func authToken(for url: URL?) -> String? {
         guard let c = creds, let u = url?.absoluteString, u.hasPrefix(c.base) else { return nil }
         return c.token
+    }
+
+    /// 音乐卡能放的地址 —— 跟网页那张卡同一条路：
+    ///   他直接给了 audio_url 就用它；没有就 /api/music/status 看网易云登没登 →
+    ///   /api/music/search?q=歌名 歌手 取第一首 → /api/music/playback?id= 拿真地址。
+    /// 返回 (地址, 出错时给她看的话)。
+    func musicURL(title: String, artist: String, audio: String) async -> (URL?, String?) {
+        if !audio.isEmpty { return (absURL(audio), nil) }
+        guard let c = creds else { return (nil, "还没连上") }
+        func getJSON(_ path: String) async -> [String: Any]? {
+            guard let r = request(path, c), let got = try? await URLSession.shared.data(for: r) else { return nil }
+            return try? JSONSerialization.jsonObject(with: got.0) as? [String: Any]
+        }
+        if let st = await getJSON("/api/music/status"), (st["loggedIn"] as? Bool) == false {
+            return (nil, "网易云还没登录 —— 回网页点一次这首歌，扫码登录一下就好")
+        }
+        let q = (title + " " + artist).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
+        guard let sr = await getJSON("/api/music/search?q=" + q),
+              let first = (sr["songs"] as? [[String: Any]])?.first, let sid = first["id"] as? String else {
+            return (nil, "没搜到这首")
+        }
+        guard let pb = await getJSON("/api/music/playback?id=" + sid),
+              let u = pb["url"] as? String, !u.isEmpty, let url = URL(string: u) else {
+            return (nil, "这首放不了（可能要会员）")
+        }
+        return (url, nil)
     }
 
     /// 语音转文字，跟网页 _transcribeVoice 同一个接口
@@ -1047,8 +1150,15 @@ struct NativeChatView: View {
     // MARK: 消息
 
     private var liveBubbles: [NMsg] {
-        guard let t = model.liveText, !t.isEmpty else { return [] }
-        return model.bubbles(id: "live", mine: false, raw: t, time: Date())
+        var out: [NMsg] = []
+        if model.busy && (!model.liveThinking.isEmpty || !model.liveTools.isEmpty) {
+            out.append(NMsg(id: "live-p", mine: false, text: "",
+                            kind: .process(thinking: model.liveThinking, tools: model.liveTools), time: Date()))
+        }
+        if let t = model.liveText, !t.isEmpty {
+            out.append(contentsOf: model.bubbles(id: "live", mine: false, raw: t, time: Date()))
+        }
+        return out
     }
 
     /// 连着说超过 20 分钟就不算一组了（头像会各挂各的）
@@ -1129,7 +1239,7 @@ struct NativeChatView: View {
                         .padding(.top, p.joinPrev ? 6 : (p.dayHeader != nil ? 0 : 12))
                         .id(p.id)
                     }
-                    if model.busy && liveBubbles.isEmpty {
+                    if model.busy && (model.liveText ?? "").isEmpty {
                         typingRow.padding(.top, 12)
                     }
                     Color.clear.frame(height: 1).id("bottom")
@@ -1194,21 +1304,10 @@ struct NativeChatView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             case .call(let kind, let dur):
                 callPill(m, kind: kind, dur: dur)
-            case .music(let title, let artist, let cover):
-                HStack(spacing: 12) {
-                    RemoteImage(url: cover, token: model.authToken(for: cover), placeholderSize: 48)
-                        .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                        Text(artist.isEmpty ? "他分享的歌" : artist).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1)
-                    }
-                    Image(systemName: "music.note").foregroundColor(.secondary)
-                }
-                .foregroundColor(.primary)
-                .padding(10)
-                .frame(maxWidth: 260, alignment: .leading)
-                .imSurface(effectiveStyle, mine: m.mine, shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            case .music(let title, let artist, let cover, let audio):
+                MusicCard(key: m.id, title: title, artist: artist, cover: cover, coverToken: model.authToken(for: cover),
+                          mine: m.mine, style: effectiveStyle,
+                          resolve: { await model.musicURL(title: title, artist: artist, audio: audio) })
             case .gallery(let title, let caption, let img):
                 Button(action: { NativeChat.handOff(callFn: "openGalleryPanel") }) {
                     HStack(spacing: 12) {
@@ -1232,6 +1331,8 @@ struct NativeChatView: View {
                     .frame(maxWidth: 260, alignment: .leading)
                     .imSurface(effectiveStyle, mine: m.mine, shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
+            case .process(let thinking, let tools):
+                ProcessCard(thinking: thinking, tools: tools, live: m.id == "live-p", style: effectiveStyle)
             case .text:
                 bubble(m)
             }
@@ -1590,6 +1691,165 @@ struct RemoteImage: View {
     }
 }
 
+// MARK: - 音乐卡
+
+/// 他分享的歌：封面 ｜ 歌名 / 歌手 / 进度条 + 时间 ｜ ▶。跟语音条共用一个播放器（同时只响一个）。
+struct MusicCard: View {
+    let key: String
+    let title: String
+    let artist: String
+    let cover: URL?
+    let coverToken: String?
+    let mine: Bool
+    let style: BubbleStyle
+    let resolve: () async -> (URL?, String?)
+
+    @ObservedObject private var player = VoicePlayer.shared
+    @State private var loading = false
+    @State private var note = ""
+
+    private var pid: String { "music-" + key }
+    private var playing: Bool { player.playingId == pid }
+
+    private static func fmt(_ s: Double) -> String {
+        guard s.isFinite, s > 0 else { return "0:00" }
+        let n = Int(s)
+        return "\(n / 60):" + String(format: "%02d", n % 60)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RemoteImage(url: cover, token: coverToken, placeholderSize: 52)
+                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                Text(note.isEmpty ? (artist.isEmpty ? "他分享的歌" : artist) : note)
+                    .font(.system(size: 12)).foregroundColor(note.isEmpty ? .secondary : .red).lineLimit(2)
+                if playing {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.15))
+                            Capsule().fill(Color.primary.opacity(0.6))
+                                .frame(width: geo.size.width * CGFloat(player.progress))
+                        }
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0).onEnded { v in
+                            player.seek(to: Double(v.location.x / max(1, geo.size.width)))
+                        })
+                    }
+                    .frame(height: 4)
+                    Text(Self.fmt(player.current) + " / " + Self.fmt(player.total))
+                        .font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Button(action: tap) {
+                Group {
+                    if loading { ProgressView() }
+                    else { Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 16)) }
+                }
+                .frame(width: 36, height: 36)
+            }
+        }
+        .foregroundColor(.primary)
+        .padding(10)
+        .frame(width: 270, alignment: .leading)
+        .imSurface(style, mine: mine, shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func tap() {
+        if playing { player.stop(); return }
+        loading = true
+        note = ""
+        Task {
+            let (u, err) = await resolve()
+            loading = false
+            if let u = u { player.toggle(id: pid, url: u) } else { note = err ?? "放不了" }
+        }
+    }
+}
+
+// MARK: - 思考 + 工具（折叠卡）
+
+/// 跟网页那两条折叠行一个意思：「💭 第一句…」点开是完整思考，「🔧 用了 N 个工具」点开是每一步。
+/// 正在说的那一轮（live）默认展开工具，让她看得见他在干什么。
+struct ProcessCard: View {
+    let thinking: String
+    let tools: [NTool]
+    let live: Bool
+    let style: BubbleStyle
+    @State private var showThinking = false
+    @State private var showTools = false
+
+    /// 跟网页 thoughtPreview 一样：第一句，超 30 字截断
+    private var preview: String {
+        let one = thinking.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        let first = one.range(of: #"^[^。！？.!?]+[。！？.!?]?"#, options: .regularExpression).map { String(one[$0]) } ?? one
+        return first.count > 30 ? String(first.prefix(30)) + "…" : first
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !thinking.isEmpty {
+                pill(icon: "clock", text: live && tools.isEmpty ? "在想… " + preview : preview, open: showThinking) {
+                    withAnimation(.easeOut(duration: 0.2)) { showThinking.toggle() }
+                }
+                if showThinking {
+                    Text(thinking)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .padding(12)
+                        .frame(maxWidth: 300, alignment: .leading)
+                        .imSurface(style, mine: false, shape: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+            if !tools.isEmpty {
+                pill(icon: "wrench.and.screwdriver", text: "用了 \(tools.count) 个工具", open: showTools || live) {
+                    withAnimation(.easeOut(duration: 0.2)) { showTools.toggle() }
+                }
+                if showTools || live {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(tools.enumerated()), id: \.offset) { _, t in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: t.error ? "xmark.circle" : (t.done ? "checkmark.circle" : "circle.dotted"))
+                                    .font(.system(size: 12))
+                                    .foregroundColor(t.error ? .red : .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(t.name).font(.system(size: 12, weight: .semibold))
+                                    if !t.preview.isEmpty {
+                                        Text(t.preview).font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(.secondary).lineLimit(2)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: 300, alignment: .leading)
+                    .imSurface(style, mine: false, shape: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+        }
+        .foregroundColor(.primary)
+    }
+
+    private func pill(icon: String, text: String, open: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(text).font(.system(size: 12)).lineLimit(1)
+                Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .imSurface(style, mine: false, shape: Capsule())
+        }
+    }
+}
+
 /// 他 make_video 做的视频，聊天里直接播（系统播放器，自带全屏 / 进度条）
 struct InlineVideo: View {
     let url: URL?
@@ -1647,6 +1907,8 @@ final class VoicePlayer: ObservableObject {
     static let shared = VoicePlayer()
     @Published var playingId: String? = nil
     @Published var progress: Double = 0
+    @Published var current: Double = 0     // 秒
+    @Published var total: Double = 0
 
     private var player: AVPlayer? = nil
     private var timeObs: Any? = nil
@@ -1666,6 +1928,8 @@ final class VoicePlayer: ObservableObject {
             Task { @MainActor in
                 guard let self = self, let d = self.player?.currentItem?.duration.seconds, d.isFinite, d > 0 else { return }
                 self.progress = min(1, t.seconds / d)
+                self.current = t.seconds
+                self.total = d
             }
         }
         endObs = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
@@ -1683,6 +1947,14 @@ final class VoicePlayer: ObservableObject {
         player = nil
         playingId = nil
         progress = 0
+        current = 0
+        total = 0
+    }
+
+    /// 拖进度条 / 点进度条跳到那儿
+    func seek(to frac: Double) {
+        guard let p = player, total > 0 else { return }
+        p.seek(to: CMTime(seconds: total * max(0, min(1, frac)), preferredTimescale: 600))
     }
 }
 
