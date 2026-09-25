@@ -25,8 +25,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let activity = connectionOptions.userActivities.first {
             _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, continue: activity, restorationHandler: { _ in })
         }
-        if let item = connectionOptions.shortcutItem, item.type == GlassChatTest.shortcutType {
-            GlassChatTest.present(from: window)   // 根视图没上屏会自己等一会儿再试
+        if let item = connectionOptions.shortcutItem {
+            openShortcut(item)   // 根视图没上屏会自己等一会儿再试
         }
     }
 
@@ -46,9 +46,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
-        guard shortcutItem.type == GlassChatTest.shortcutType else { completionHandler(false); return }
-        GlassChatTest.present(from: window)
-        completionHandler(true)
+        completionHandler(openShortcut(shortcutItem))
+    }
+
+    @discardableResult
+    private func openShortcut(_ item: UIApplicationShortcutItem) -> Bool {
+        switch item.type {
+        case NativeChat.shortcutType: NativeChat.present(from: window)
+        case GlassChatTest.shortcutType: GlassChatTest.present(from: window)
+        default: return false
+        }
+        return true
     }
 
     // 键盘顶起来时 webview 被 resize，下面露的是**窗口**、默认黑色 → 刷成跟网页同一个奶油白（#FDF9F3，

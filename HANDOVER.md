@@ -5,6 +5,22 @@
 > **最新的写在最上面。**
 
 
+## 💬 2026-09-25 深夜 · 原生聊天第 2 步：真数据 + 液态玻璃（NativeChat.swift，未编译过）
+
+**纯 iOS，后端/网页没动，不用重启。** 她看完三档，拍板要液态，并说清了目标：
+**「只需要聊天的自定义主题背景下是原生气泡」** —— 所以原生页的背景直接借网页那张，不另设。
+
+- 入口：长按图标 →「原生聊天」（「玻璃测试」留着对比）。SceneDelegate 里 `openShortcut()` 分发。
+- 读主线最近 50 条、发消息、SSE 流式出字、■ 叫停（走 `/api/chat/stop`）。他那条按 `\n---\n` 分气泡。
+  语音/图片/卡片等先显示成 `[语音]` `[图片]` 占位（第 3 步搬）。往上翻历史还没做。
+- **token / 会话 / model / effort / extended / 背景全从 WKWebView 借**（evaluateJavaScript 读 `state` + localStorage）。
+  ⚠️ 别在原生这边另存 model/effort 或补默认值：跟网页传得不一样 → 网关放掉常驻进程 → 整窗冷写（见 `_stickyChoice`）。
+- 背景规则抄 `_applyChatWall`（自定义图 > 主题图 pup，`chat_wall_off` / `ui-plain` 不铺，主题图叠柔纱）。
+  **网页加新主题图，NativeChat.swift 里 THEME 表要跟着加。**
+- 关页面会调网页 `openSession` 重读，原生页聊的几句网页那边立刻看得到。
+- 细节和坑在 `data/wp-notes/20260925-native-chat.md`（`bytes.lines` 吞空行等）。
+
+
 ## 🍎 2026-09-25 夜 · Xcode 27 / iOS 27 连踩两坑 + 原生玻璃气泡测试页（已 push 到 main）
 
 **纯 iOS 改动，后端 / 网页一个字没动**，不用重启。但**你那台下次编包必须拉这三个提交**，

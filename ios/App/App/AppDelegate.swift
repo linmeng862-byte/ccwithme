@@ -10,9 +10,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // 长按桌面图标 →「玻璃测试」，进原生液态玻璃气泡测试页（GlassChatTest.swift）。
+        // 长按桌面图标 →「原生聊天」（NativeChat.swift，真数据 + 液态玻璃）/「玻璃测试」（GlassChatTest.swift，假消息对比三档）。
         // 动态注册的，所以装完要先正常打开一次 app，长按才看得到这一项。点了之后走 SceneDelegate。
         application.shortcutItems = [
+            UIApplicationShortcutItem(type: NativeChat.shortcutType,
+                                      localizedTitle: "原生聊天",
+                                      localizedSubtitle: "液态玻璃 · 测试中",
+                                      icon: UIApplicationShortcutIcon(systemImageName: "bubble.left.fill"),
+                                      userInfo: nil),
             UIApplicationShortcutItem(type: GlassChatTest.shortcutType,
                                       localizedTitle: "玻璃测试",
                                       localizedSubtitle: "原生液态玻璃气泡",

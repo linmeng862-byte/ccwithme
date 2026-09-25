@@ -28,6 +28,7 @@ PLUGIN_SOURCES = %w[
   ScreenSharePlugin.swift
   ScreenSharePlugin.m
   GlassChatTest.swift
+  NativeChat.swift
   SceneDelegate.swift
 ]
 
