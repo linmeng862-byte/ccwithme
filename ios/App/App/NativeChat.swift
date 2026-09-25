@@ -648,17 +648,19 @@ final class NativeChatModel: ObservableObject {
     // MARK: 发送 + 流式
 
     /// thinking：她的思考草稿（my_thinking），share：这条给不给他看
-    func send(_ text: String, thinking: String = "", share: Bool = false) {
+    /// attach = false：不带输入框里等着的图（发语音条时用，跟网页 _sendVoiceMessage 传 [] 一样）
+    func send(_ text: String, thinking: String = "", share: Bool = false, attach: Bool = true) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty || !pending.isEmpty, !busy, let c = creds else { return }
+        let using = attach ? pending : []
+        guard !t.isEmpty || !using.isEmpty, !busy, let c = creds else { return }
         errorText = ""
-        let atts = pending.map { $0.id }
+        let atts = using.map { $0.id }
         let lid = "local-" + UUID().uuidString
-        for (k, a) in pending.enumerated() {
+        for (k, a) in using.enumerated() {
             msgs.append(NMsg(id: "\(lid)-a\(k)", mine: true, text: "", kind: .localImage(a.thumb), time: Date()))
         }
         if !t.isEmpty { msgs.append(contentsOf: bubbles(id: lid, mine: true, raw: t, time: Date())) }
-        pending = []
+        if attach { pending = [] }
         liveText = ""
         liveThinking = ""
         liveTools = []
@@ -685,6 +687,42 @@ final class NativeChatModel: ObservableObject {
 
         streamTask = Task { [weak self] in
             await self?.runStream(r)
+        }
+    }
+
+    /// 发语音条 —— 跟网页 _sendVoiceMessage 同一条路：传 /api/files/upload（字段 file）拿 id，
+    /// 再发一条 [VOICE:id|m:ss]。后端交给他之前会换成识别出的文字（expandVoiceTags），他那边跟网页发的一样。
+    func sendVoice(file: URL, seconds: Double) {
+        guard let c = creds else { return }
+        guard seconds >= 1, let data = try? Data(contentsOf: file), data.count >= 1200 else {
+            errorText = "太短了，没录上"
+            return
+        }
+        if busy { errorText = "他还在说，等他说完再发"; return }
+        uploading = true
+        Task {
+            defer { uploading = false }
+            guard let url = URL(string: c.base + "/api/files/upload") else { return }
+            let boundary = "native-" + UUID().uuidString
+            let name = "voice-\(Int(Date().timeIntervalSince1970 * 1000)).m4a"
+            var body = Data()
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\r\nContent-Type: audio/mp4\r\n\r\n".utf8))
+            body.append(data)
+            body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+            var r = URLRequest(url: url)
+            r.httpMethod = "POST"
+            r.setValue("Bearer " + c.token, forHTTPHeaderField: "Authorization")
+            r.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            do {
+                let (d, _) = try await URLSession.shared.upload(for: r, from: body)
+                let o = try JSONSerialization.jsonObject(with: d) as? [String: Any]
+                guard let fid = o?["id"] as? String else { errorText = (o?["error"] as? String) ?? "语音没传上去"; return }
+                let n = Int(seconds.rounded())
+                send("[VOICE:\(fid)|\(n / 60):" + String(format: "%02d", n % 60) + "]", attach: false)
+            } catch {
+                errorText = "语音没传上去：" + error.localizedDescription
+            }
+            try? FileManager.default.removeItem(at: file)   // 临时录音文件（app 自己的 tmp），传完就不留
         }
     }
 
@@ -1060,6 +1098,9 @@ struct NativeChatView: View {
     @State private var showStickers = false
     @State private var pickingPhoto = false
     @State private var viewing: ViewingImage? = nil
+    @StateObject private var recorder = VoiceRecorder()
+    @State private var pressing = false        // 手指按在麦克风上
+    @State private var cancelRec = false       // 上滑到取消区了
 
     private static let avatarSize: CGFloat = 36
 
@@ -1533,6 +1574,7 @@ struct NativeChatView: View {
             }
 
             if showThink { thinkPanel }
+            if recorder.recording { recordingPill }
 
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: { NativeChat.handOff(clickId: "openDrawer") }) { circleButton("line.3.horizontal") }
@@ -1544,6 +1586,7 @@ struct NativeChatView: View {
                     Button(action: { withAnimation(.easeOut(duration: 0.2)) { showThink.toggle() } }) {
                         Label(showThink ? "收起思考草稿" : "思考草稿", systemImage: "lightbulb")
                     }
+                    Button(action: { NativeChat.handOff(clickId: "callButton") }) { Label("打电话", systemImage: "phone") }
                 } label: { circleButton("paperclip") }
                 .bubbleSurface(effectiveStyle, mine: false, radius: 22)
 
@@ -1580,9 +1623,63 @@ struct NativeChatView: View {
                     .background(Circle().fill(Color(red: 0.85, green: 0.47, blue: 0.34)))
             }
         } else {
-            Button(action: { NativeChat.handOff(clickId: "callButton") }) { circleButton("phone") }
-                .bubbleSurface(effectiveStyle, mine: false, radius: 22)
+            micButton
         }
+    }
+
+    /// 🎙️ 按住说话，松手发，往上滑取消（跟微信一样）。打电话挪进 📎 菜单了。
+    private var micButton: some View {
+        Image(systemName: recorder.recording ? "waveform" : "mic")
+            .font(.system(size: 17, weight: .medium))
+            .foregroundColor(recorder.recording ? .white : .primary)
+            .frame(width: 44, height: 44)
+            .background(Circle().fill(recorder.recording
+                ? (cancelRec ? Color.red : Color(red: 0.85, green: 0.47, blue: 0.34))
+                : Color.clear))
+            .bubbleSurface(effectiveStyle, mine: false, radius: 22)
+            .scaleEffect(recorder.recording ? 1.15 : 1)
+            .animation(.easeOut(duration: 0.15), value: recorder.recording)
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    if !pressing {
+                        pressing = true
+                        Self.hideKeyboard()
+                        if let why = recorder.start() { model.errorText = why }
+                        else { model.errorText = "" }
+                    }
+                    cancelRec = v.translation.height < -60
+                }
+                .onEnded { _ in
+                    pressing = false
+                    defer { cancelRec = false }
+                    guard recorder.recording else { return }
+                    if cancelRec {
+                        recorder.cancel()
+                    } else if let got = recorder.stop() {
+                        model.sendVoice(file: got.0, seconds: got.1)
+                    }
+                })
+    }
+
+    /// 录音时浮在输入栏上面那条：红点跟着声音跳、时长、提示
+    private var recordingPill: some View {
+        HStack(spacing: 10) {
+            Circle().fill(Color.red)
+                .frame(width: 10, height: 10)
+                .scaleEffect(1 + CGFloat(recorder.level) * 0.8)
+                .animation(.easeOut(duration: 0.1), value: recorder.level)
+            Text(Self.durText(recorder.seconds)).font(.system(size: 15, weight: .medium, design: .monospaced))
+            Text(cancelRec ? "松手取消" : "松手发送 · 上滑取消")
+                .font(.system(size: 13))
+                .foregroundColor(cancelRec ? .red : .secondary)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .bubbleSurface(effectiveStyle, mine: false, radius: 20)
+    }
+
+    private static func durText(_ s: Double) -> String {
+        let n = Int(s)
+        return "\(n / 60):" + String(format: "%02d", n % 60)
     }
 
     @ViewBuilder private var inputField: some View {
@@ -2030,6 +2127,88 @@ final class VoicePlayer: ObservableObject {
     func seek(to frac: Double) {
         guard let p = player, total > 0 else { return }
         p.seek(to: CMTime(seconds: total * max(0, min(1, frac)), preferredTimescale: 600))
+    }
+}
+
+/// 按住录音。AAC 单声道 m4a（网页在 iOS 上录出来的也是 m4a）。
+@MainActor
+final class VoiceRecorder: ObservableObject {
+    @Published var recording = false
+    @Published var seconds: Double = 0
+    @Published var level: Double = 0      // 0~1，小红点跟着声音跳
+
+    private var rec: AVAudioRecorder? = nil
+    private var tick: Task<Void, Never>? = nil
+    private var fileURL: URL? = nil
+
+    /// 开始录。返回 nil = 开始了；返回一句话 = 没开始、原因给她看
+    func start() -> String? {
+        let session = AVAudioSession.sharedInstance()
+        switch session.recordPermission {
+        case .granted: break
+        case .undetermined:
+            session.requestRecordPermission { _ in }
+            return "允许用麦克风之后，再按住说话"
+        default:
+            return "麦克风被关了：设置 → éclat → 麦克风"
+        }
+        VoicePlayer.shared.stop()
+        do {
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try session.setActive(true)
+            let u = FileManager.default.temporaryDirectory
+                .appendingPathComponent("voice-\(Int(Date().timeIntervalSince1970 * 1000)).m4a")
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            ]
+            let r = try AVAudioRecorder(url: u, settings: settings)
+            r.isMeteringEnabled = true
+            guard r.record() else { return "录不了，再试一次" }
+            rec = r
+            fileURL = u
+            seconds = 0
+            recording = true
+            tick = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    guard let self = self, let r = self.rec else { return }
+                    r.updateMeters()
+                    self.seconds = r.currentTime
+                    self.level = Double(max(0, min(1, (r.averagePower(forChannel: 0) + 50) / 50)))
+                }
+            }
+            return nil
+        } catch {
+            return "录不了：" + error.localizedDescription
+        }
+    }
+
+    /// 松手：停下，交出文件和时长
+    func stop() -> (URL, Double)? {
+        guard let r = rec, let u = fileURL else { return nil }
+        let secs = r.currentTime
+        r.stop()
+        finish()
+        return (u, secs)
+    }
+
+    /// 上滑取消：停下，文件删掉
+    func cancel() {
+        rec?.stop()
+        rec?.deleteRecording()
+        finish()
+    }
+
+    private func finish() {
+        tick?.cancel()
+        tick = nil
+        rec = nil
+        recording = false
+        level = 0
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
     }
 }
 
