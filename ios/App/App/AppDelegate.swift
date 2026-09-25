@@ -15,7 +15,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         application.shortcutItems = [
             UIApplicationShortcutItem(type: NativeChat.shortcutType,
                                       localizedTitle: "原生聊天",
-                                      localizedSubtitle: "液态玻璃 · 测试中",
+                                      localizedSubtitle: "液态玻璃",
                                       icon: UIApplicationShortcutIcon(systemImageName: "bubble.left.fill"),
                                       userInfo: nil),
             UIApplicationShortcutItem(type: GlassChatTest.shortcutType,

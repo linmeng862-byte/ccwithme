@@ -27,6 +27,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         if let item = connectionOptions.shortcutItem {
             openShortcut(item)   // 根视图没上屏会自己等一会儿再试
+        } else {
+            NativeChat.autoEnterIfWanted(from: window)   // 她开了「有背景时一打开就用原生」才会进
         }
     }
 
@@ -52,7 +54,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     @discardableResult
     private func openShortcut(_ item: UIApplicationShortcutItem) -> Bool {
         switch item.type {
-        case NativeChat.shortcutType: NativeChat.present(from: window)
+        case NativeChat.shortcutType: NativeChat.enter(from: window)
         case GlassChatTest.shortcutType: GlassChatTest.present(from: window)
         default: return false
         }
