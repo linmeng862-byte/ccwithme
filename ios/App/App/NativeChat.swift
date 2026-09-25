@@ -153,6 +153,7 @@ struct NMsg: Identifiable, Equatable {
     let mine: Bool
     let text: String
     var sticker: URL? = nil
+    var time: Date? = nil
 }
 
 struct NModelOpt: Identifiable, Equatable {
@@ -205,10 +206,14 @@ final class NativeChatModel: ObservableObject {
     @Published var pending: [NAttach] = []
     @Published var uploading = false
     @Published var stickers: [NSticker] = []
+    @Published var avatarMe: UIImage? = nil    // 网页首页传的头像（home_avatar / claude_avatar，都是 dataURL）
+    @Published var avatarHim: UIImage? = nil
+    @Published var himName = "Claude"          // 网页首页改的名字（claude_name）
 
     private weak var webView: WKWebView?
     private var streamTask: Task<Void, Never>? = nil
     private var wallKey = ""
+    private var avatarKeys = ["", ""]
     private var dirty = false                  // 原生这边发过东西，网页还没重读
 
     init(webView: WKWebView?) {
@@ -259,7 +264,9 @@ final class NativeChatModel: ObservableObject {
         project: (st && st.projectId) || '', book: (st && st.readingBookId) || '',
         wall: wall, veil: veil,
         origin: /^https?:$/.test(location.protocol) ? location.origin : base,
-        models: models, more: more
+        models: models, more: more,
+        me: localStorage.getItem('home_avatar') || '', him: localStorage.getItem('claude_avatar') || '',
+        name: localStorage.getItem('claude_name') || 'Claude'
       });
     })()
     """
@@ -277,6 +284,14 @@ final class NativeChatModel: ObservableObject {
         let base = o["base"] as? String ?? "https://zhou-and-claude.online"
         await loadWallpaper(o["wall"] as? String ?? "", origin: o["origin"] as? String ?? base,
                             veil: o["veil"] as? Bool ?? false)
+        himName = (o["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Claude"
+        let me = o["me"] as? String ?? "", him = o["him"] as? String ?? ""
+        let keys = [Self.dataKey(me), Self.dataKey(him)]
+        if keys != avatarKeys {          // 同一张就不重解（每次从网页面板回来都会 refresh）
+            avatarKeys = keys
+            avatarMe = Self.imageFromDataURL(me)
+            avatarHim = Self.imageFromDataURL(him)
+        }
         models = (o["models"] as? [[String: Any]] ?? []).compactMap { (d: [String: Any]) -> NModelOpt? in
             guard let id = d["id"] as? String else { return nil }
             return NModelOpt(id: id, label: d["label"] as? String ?? id,
@@ -295,18 +310,26 @@ final class NativeChatModel: ObservableObject {
                       readingBookId: o["book"] as? String ?? "")
     }
 
+    private static func dataKey(_ s: String) -> String {
+        s.count > 200 ? String(s.count) + String(s.suffix(64)) : s
+    }
+
+    static func imageFromDataURL(_ s: String) -> UIImage? {
+        guard s.hasPrefix("data:"), let comma = s.firstIndex(of: ","),
+              let d = Data(base64Encoded: String(s[s.index(after: comma)...])) else { return nil }
+        return UIImage(data: d)
+    }
+
     /// 自定义图是 dataURL（moments.js 的 _moStoreImage 压成 jpeg 存的），主题图是站内路径。
     /// 同一张就不重解（每次从网页面板回来都会 refresh）。
     private func loadWallpaper(_ wall: String, origin: String, veil: Bool) async {
         wallVeil = veil
-        let key = wall.count > 200 ? String(wall.count) + String(wall.suffix(64)) : wall
+        let key = Self.dataKey(wall)
         if key == wallKey { return }
         wallKey = key
         guard !wall.isEmpty else { wallpaper = nil; return }
         if wall.hasPrefix("data:") {
-            guard let comma = wall.firstIndex(of: ","),
-                  let d = Data(base64Encoded: String(wall[wall.index(after: comma)...])) else { return }
-            wallpaper = UIImage(data: d)
+            wallpaper = Self.imageFromDataURL(wall)
             return
         }
         let full = wall.hasPrefix("http") ? wall : origin + wall
@@ -415,7 +438,8 @@ final class NativeChatModel: ObservableObject {
                 var text = row["text"] as? String ?? ""
                 let nAtt = (row["attachments"] as? [Any])?.count ?? 0
                 if nAtt > 0 { text = String(repeating: "[附件] ", count: nAtt) + (text.isEmpty ? "" : "\n" + text) }
-                out.append(contentsOf: bubbles(id: id, mine: mine, raw: text))
+                let t = (row["timestamp"] as? String).flatMap { Self.parseTime($0) }
+                out.append(contentsOf: bubbles(id: id, mine: mine, raw: text, time: t))
             }
             msgs = out
         } catch {
@@ -486,7 +510,7 @@ final class NativeChatModel: ObservableObject {
         errorText = ""
         let atts = pending.map { $0.id }
         let shown = (atts.isEmpty ? "" : String(repeating: "[附件] ", count: atts.count) + (t.isEmpty ? "" : "\n")) + t
-        msgs.append(contentsOf: bubbles(id: "local-" + UUID().uuidString, mine: true, raw: shown))
+        msgs.append(contentsOf: bubbles(id: "local-" + UUID().uuidString, mine: true, raw: shown, time: Date()))
         pending = []
         liveText = ""
         status = "在想…"
@@ -598,18 +622,28 @@ final class NativeChatModel: ObservableObject {
     // MARK: 文本 → 气泡
 
     /// 他那条按 `\n---\n` 分成几个气泡（跟网页的分条规则一样），她那条不分。一整条只有表情的画成图。
-    func bubbles(id: String, mine: Bool, raw: String) -> [NMsg] {
+    private static let isoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    static func parseTime(_ s: String) -> Date? {
+        isoFrac.date(from: s) ?? ISO8601DateFormatter().date(from: s)
+    }
+
+    func bubbles(id: String, mine: Bool, raw: String, time: Date? = nil) -> [NMsg] {
         let whole = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if whole.range(of: #"^\[Sticker\]\s*\S+$"#, options: .regularExpression) != nil {
             let u = whole.replacingOccurrences(of: #"^\[Sticker\]\s*"#, with: "", options: .regularExpression)
-            return [NMsg(id: id + "-0", mine: mine, text: "", sticker: absURL(u))]
+            return [NMsg(id: id + "-0", mine: mine, text: "", sticker: absURL(u), time: time)]
         }
         let parts = mine ? [raw] : raw.components(separatedBy: "\n---\n")
         var out: [NMsg] = []
         for (i, p) in parts.enumerated() {
             let t = Self.clean(p)
             if t.isEmpty { continue }
-            out.append(NMsg(id: "\(id)-\(i)", mine: mine, text: t))
+            out.append(NMsg(id: "\(id)-\(i)", mine: mine, text: t, time: time))
         }
         return out
     }
@@ -645,7 +679,11 @@ final class NativeChatModel: ObservableObject {
     }
 }
 
-// MARK: - 页面
+// MARK: - 页面（09-25 她要「做成 iMessage 那种」）
+//
+// iMessage 的规矩：气泡不带头像（他的头像和名字在顶上正中间）；同一个人连着说的挨得很近，
+// 一组的最后一条带小尾巴；隔得久了中间出一行灰色时间；输入框是一颗胶囊、发送键在里面，
+// 左边一个 ＋ 收着照片 / 表情 / 思考草稿 / 打电话；他在打字就显示三个跳动的点。
 
 struct NativeChatView: View {
     @ObservedObject var model: NativeChatModel
@@ -658,6 +696,8 @@ struct NativeChatView: View {
     @State private var thinkShare = false
     @State private var showStickers = false
     @State private var pickingPhoto = false
+
+    private static let imBlue = Color(red: 0.0, green: 0.48, blue: 1.0)
 
     private var effectiveStyle: BubbleStyle { GlassChatTest.liquidAvailable ? style : .frosted }
     private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.pending.isEmpty }
@@ -700,67 +740,73 @@ struct NativeChatView: View {
         }
     }
 
-    // MARK: 顶栏 —— 跟网页一样的排布：☰ ｜ 模型 ｜ 用量 作品集 [待办 ⋯]
-
-    private func glassIcon(_ symbol: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 36, height: 36)
-        }
-        .bubbleSurface(effectiveStyle, mine: false, radius: 18)
-    }
+    // MARK: 顶栏 —— 左 ☰，正中他的头像 + 名字（点名字切模型），右边 [待办 | ⋯]
 
     private var topBar: some View {
-        HStack(spacing: 8) {
-            glassIcon("line.3.horizontal") { NativeChat.handOff(clickId: "openDrawer") }
+        ZStack(alignment: .top) {
+            HStack(spacing: 8) {
+                Button(action: { NativeChat.handOff(clickId: "openDrawer") }) {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                }
+                .bubbleSurface(effectiveStyle, mine: false, radius: 18)
 
-            Spacer(minLength: 4)
+                Spacer()
+
+                HStack(spacing: 0) {
+                    Button(action: { NativeChat.handOff(clickId: "todoTopBtn") }) {
+                        Image(systemName: "checklist").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
+                    }
+                    Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 16)
+                    Menu {
+                        Button(action: { NativeChat.handOff(clickId: "usageTopBtn") }) { Label("用量", systemImage: "chart.bar") }
+                        Button(action: { NativeChat.handOff(clickId: "artifactsTopBtn") }) { Label("作品集", systemImage: "doc.text") }
+                        Divider()
+                        ForEach(model.moreItems) { it in
+                            Button(it.label) { NativeChat.handOff(clickId: it.id) }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
+                    }
+                }
+                .bubbleSurface(effectiveStyle, mine: false, radius: 18)
+            }
 
             Menu { modelMenu } label: {
-                VStack(spacing: 1) {
-                    HStack(spacing: 3) {
-                        Text(model.modelLabel).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                VStack(spacing: 3) {
+                    avatar(size: 46)
+                    HStack(spacing: 2) {
+                        Text(model.himName).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundColor(.secondary)
                     }
-                    if !model.effortLabel.isEmpty {
-                        Text(model.effortLabel).font(.system(size: 11)).foregroundColor(.secondary)
-                    }
-                }
-                .padding(.horizontal, 12).padding(.vertical, 5)
-            }
-            .bubbleSurface(effectiveStyle, mine: false, radius: 18)
-
-            Spacer(minLength: 4)
-
-            glassIcon("chart.bar") { NativeChat.handOff(clickId: "usageTopBtn") }
-            glassIcon("doc.text") { NativeChat.handOff(clickId: "artifactsTopBtn") }
-
-            // 待办 + ⋯ 是一颗胶囊（网页的 capsule-group）
-            HStack(spacing: 0) {
-                Button(action: { NativeChat.handOff(clickId: "todoTopBtn") }) {
-                    Image(systemName: "checklist").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
-                }
-                Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 16)
-                Menu {
-                    ForEach(model.moreItems) { it in
-                        Button(it.label) { NativeChat.handOff(clickId: it.id) }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .bubbleSurface(effectiveStyle, mine: false, radius: 10)
                 }
             }
-            .bubbleSurface(effectiveStyle, mine: false, radius: 18)
         }
         .foregroundColor(.primary)
         .padding(.horizontal, 12)
-        .padding(.top, 4)
-        .padding(.bottom, 4)
+        .padding(.top, 2)
+        .padding(.bottom, 6)
     }
 
-    /// 顶上模型按钮和输入框里的模型胶囊共用这一份
+    /// 他的头像：网页首页传过的就用那张，没有就是橘色圆底上一个星芒（网页默认的 Claude 标）
+    @ViewBuilder private func avatar(size: CGFloat) -> some View {
+        if let img = model.avatarHim {
+            Image(uiImage: img).resizable().scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+        } else {
+            Image(systemName: "asterisk").font(.system(size: size * 0.38, weight: .bold)).foregroundColor(.white)
+                .frame(width: size, height: size)
+                .background(Circle().fill(Color(red: 0.85, green: 0.47, blue: 0.34)))
+        }
+    }
+
+    /// 点顶上名字弹出来的：模型、effort、原生页自己的设置
     @ViewBuilder private var modelMenu: some View {
-        Section {
+        Section(header: Text(model.modelLabel + (model.effortLabel.isEmpty ? "" : " · " + model.effortLabel))) {
             ForEach(model.models) { m in
                 Button(action: { model.setModel(m.id) }) {
                     if m.id == model.creds?.model { Label(m.label, systemImage: "checkmark") } else { Text(m.label) }
@@ -779,7 +825,7 @@ struct NativeChatView: View {
         Section(header: Text("原生聊天")) {
             if GlassChatTest.liquidAvailable {
                 Picker("气泡", selection: $style) {
-                    ForEach(BubbleStyle.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(BubbleStyle.allCases) { Text($0 == .tinted ? "液态 · 我这边蓝" : $0.rawValue).tag($0) }
                 }
             }
             Toggle("有背景时一打开就用原生", isOn: $autoNative)
@@ -791,29 +837,78 @@ struct NativeChatView: View {
 
     private var liveBubbles: [NMsg] {
         guard let t = model.liveText, !t.isEmpty else { return [] }
-        return model.bubbles(id: "live", mine: false, raw: t)
+        return model.bubbles(id: "live", mine: false, raw: t, time: Date())
+    }
+
+    /// 隔 20 分钟以上算「新一段」：中间出时间，前后也不算同一组
+    private static func timeBreak(_ a: Date?, _ b: Date?) -> Bool {
+        guard let a = a, let b = b else { return false }
+        return b.timeIntervalSince(a) > 20 * 60
+    }
+
+    private static func timeLabel(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { f.dateFormat = "今天 HH:mm" }
+        else if cal.isDateInYesterday(d) { f.dateFormat = "昨天 HH:mm" }
+        else { f.dateFormat = "M月d日 HH:mm" }
+        return f.string(from: d)
+    }
+
+    /// 一条消息在列表里怎么摆：要不要先出时间、跟上一条挨不挨着、带不带尾巴
+    private struct Placed: Identifiable {
+        let msg: NMsg
+        let showTime: Bool
+        let joinPrev: Bool
+        let tail: Bool
+        var id: String { msg.id }
+    }
+
+    private func placed(_ all: [NMsg]) -> [Placed] {
+        var out: [Placed] = []
+        for i in all.indices {
+            let m = all[i]
+            let prev: NMsg? = i > 0 ? all[i - 1] : nil
+            let next: NMsg? = i + 1 < all.count ? all[i + 1] : nil
+            let showTime = m.time != nil && (prev == nil || Self.timeBreak(prev?.time, m.time))
+            let joinPrev = prev != nil && prev?.mine == m.mine && !showTime
+            let tail = next == nil || next?.mine != m.mine || Self.timeBreak(m.time, next?.time)
+            out.append(Placed(msg: m, showTime: showTime, joinPrev: joinPrev, tail: tail))
+        }
+        return out
     }
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
+        let items = placed(model.msgs + liveBubbles)
+        return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 0) {
                     if model.loading {
                         ProgressView().padding(.top, 40)
                     }
-                    ForEach(model.msgs) { m in row(m).id(m.id) }
-                    ForEach(liveBubbles) { m in row(m).id(m.id) }
-                    if model.busy && liveBubbles.isEmpty {
-                        HStack {
-                            Text("…").font(.system(size: 16)).padding(.horizontal, 16).padding(.vertical, 9)
-                                .bubbleSurface(effectiveStyle, mine: false)
-                            Spacer()
+                    ForEach(items) { p in
+                        VStack(spacing: 0) {
+                            if p.showTime, let t = p.msg.time {
+                                Text(Self.timeLabel(t))
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .bubbleSurface(effectiveStyle, mine: false, radius: 9)
+                                    .padding(.top, 14).padding(.bottom, 8)
+                            }
+                            row(p.msg, tail: p.tail)
                         }
+                        .padding(.top, p.joinPrev ? 2 : (p.showTime ? 0 : 12))
+                        .id(p.id)
+                    }
+                    if model.busy && liveBubbles.isEmpty {
+                        typingRow.padding(.top, 12)
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
             .onChange(of: model.msgs) { _ in
                 withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -825,11 +920,11 @@ struct NativeChatView: View {
         }
     }
 
-    @ViewBuilder private func row(_ m: NMsg) -> some View {
+    @ViewBuilder private func row(_ m: NMsg, tail: Bool) -> some View {
         HStack(spacing: 0) {
-            if m.mine { Spacer(minLength: 56) }
+            if m.mine { Spacer(minLength: 60) }
             if let u = m.sticker {
-                // 表情不套玻璃，跟网页的 sticker-only 一样裸着
+                // 表情不套气泡，跟 iMessage 的贴纸一样裸着
                 AsyncImage(url: u) { img in
                     img.resizable().scaledToFit()
                 } placeholder: {
@@ -838,15 +933,28 @@ struct NativeChatView: View {
                 .frame(width: 120, height: 120)
             } else {
                 Text(Self.render(m.text))
-                    .font(.system(size: 16))
-                    .foregroundColor(.primary)
+                    .font(.system(size: 16.5))
+                    .foregroundColor(m.mine && effectiveStyle == .tinted ? .white : .primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .bubbleSurface(effectiveStyle, mine: m.mine)
+                    .padding(.leading, m.mine ? 13 : 15)
+                    .padding(.trailing, m.mine ? 15 : 13)
+                    .padding(.vertical, 8)
+                    .imSurface(effectiveStyle, mine: m.mine, shape: IMBubble(mine: m.mine, tail: tail))
             }
-            if !m.mine { Spacer(minLength: 56) }
+            if !m.mine { Spacer(minLength: 60) }
+        }
+    }
+
+    private var typingRow: some View {
+        HStack(spacing: 8) {
+            TypingDots()
+                .padding(.horizontal, 15).padding(.vertical, 13)
+                .imSurface(effectiveStyle, mine: false, shape: IMBubble(mine: false, tail: true))
+            if !model.status.isEmpty && model.status != "在想…" {
+                Text(model.status).font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            Spacer()
         }
     }
 
@@ -858,62 +966,49 @@ struct NativeChatView: View {
         return AttributedString(s)
     }
 
-    // MARK: 输入框 —— 跟网页一样：上面一行字，下面一排 ＋ ｜ 模型 ｜ 思考 表情 电话 发送
+    // MARK: 输入框 —— ＋ ｜ 胶囊（字 + 发送键在里面）
 
     private var composer: some View {
         VStack(spacing: 6) {
-            if !model.status.isEmpty || !model.errorText.isEmpty {
-                Text(model.errorText.isEmpty ? model.status : model.errorText)
+            if !model.errorText.isEmpty {
+                Text(model.errorText)
                     .font(.system(size: 12))
-                    .foregroundColor(model.errorText.isEmpty ? .secondary : .red)
+                    .foregroundColor(.red)
                     .padding(.horizontal, 12).padding(.vertical, 5)
                     .bubbleSurface(effectiveStyle, mine: false, radius: 12)
             }
 
             if showThink { thinkPanel }
 
-            VStack(alignment: .leading, spacing: 8) {
-                if !model.pending.isEmpty || model.uploading { pendingRow }
-
-                inputField
-                    .font(.system(size: 16))
-                    .padding(.horizontal, 4)
-
-                HStack(spacing: 14) {
-                    Button(action: { pickingPhoto = true }) {
-                        Image(systemName: "plus").font(.system(size: 16, weight: .semibold))
-                            .frame(width: 32, height: 32)
-                            .overlay(Circle().stroke(Color.primary.opacity(0.25), lineWidth: 1))
-                    }
-
-                    Menu { modelMenu } label: {
-                        Text(model.modelLabel + (model.effortLabel.isEmpty ? "" : " " + model.effortLabel))
-                            .font(.system(size: 13, weight: .medium))
-                            .lineLimit(1)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .overlay(Capsule().stroke(Color.primary.opacity(0.2), lineWidth: 1))
-                    }
-
-                    Spacer(minLength: 0)
-
+            HStack(alignment: .bottom, spacing: 8) {
+                Menu {
+                    Button(action: { pickingPhoto = true }) { Label("照片", systemImage: "photo") }
+                    Button(action: { model.loadStickers(); showStickers = true }) { Label("表情", systemImage: "face.smiling") }
                     Button(action: { withAnimation(.easeOut(duration: 0.2)) { showThink.toggle() } }) {
-                        Image(systemName: showThink || !thinkText.isEmpty ? "lightbulb.fill" : "lightbulb")
-                            .font(.system(size: 17))
+                        Label(showThink ? "收起思考草稿" : "思考草稿", systemImage: "lightbulb")
                     }
-                    Button(action: { model.loadStickers(); showStickers = true }) {
-                        Image(systemName: "face.smiling").font(.system(size: 18))
-                    }
-                    Button(action: { NativeChat.handOff(clickId: "callButton") }) {
-                        Image(systemName: "phone").font(.system(size: 17))
-                    }
-                    sendButton
+                    Button(action: { NativeChat.handOff(clickId: "callButton") }) { Label("打电话", systemImage: "phone") }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 38, height: 38)
                 }
+                .bubbleSurface(effectiveStyle, mine: false, radius: 19)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    if !model.pending.isEmpty || model.uploading { pendingRow }
+                    HStack(alignment: .bottom, spacing: 6) {
+                        inputField
+                            .font(.system(size: 16.5))
+                            .padding(.vertical, 8)
+                        if canSend || model.busy { sendButton.padding(.bottom, 4) }
+                    }
+                }
+                .padding(.leading, 14)
+                .padding(.trailing, 4)
+                .bubbleSurface(effectiveStyle, mine: false, radius: 19)
             }
             .foregroundColor(.primary)
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-            .bubbleSurface(effectiveStyle, mine: false, radius: 24)
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
@@ -922,21 +1017,19 @@ struct NativeChatView: View {
     private var sendButton: some View {
         Button(action: { if model.busy { model.stop() } else { doSend() } }) {
             Image(systemName: model.busy ? "stop.fill" : "arrow.up")
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.white)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color(red: 0.85, green: 0.47, blue: 0.34)
-                    .opacity(model.busy || canSend ? 1 : 0.35)))
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Self.imBlue))
         }
-        .disabled(!model.busy && !canSend)
     }
 
     @ViewBuilder private var inputField: some View {
         if #available(iOS 16.0, *) {
-            TextField("Reply to Claude", text: $draft, axis: .vertical)
+            TextField("iMessage", text: $draft, axis: .vertical)
                 .lineLimit(1...6)
         } else {
-            TextField("Reply to Claude", text: $draft, onCommit: doSend)
+            TextField("iMessage", text: $draft, onCommit: doSend)
         }
     }
 
@@ -957,7 +1050,7 @@ struct NativeChatView: View {
                 }
                 if model.uploading { ProgressView().frame(width: 56, height: 56) }
             }
-            .padding(.top, 4)
+            .padding(.top, 8)
         }
     }
 
@@ -995,6 +1088,73 @@ struct NativeChatView: View {
         thinkText = ""
         thinkShare = false
         showThink = false
+    }
+}
+
+// MARK: - iMessage 气泡外形：圆角 18，一组最后一条在底角拖一个小尾巴
+
+struct IMBubble: Shape {
+    var mine: Bool
+    var tail: Bool
+
+    // 按「尾巴在右」画一遍，他那边（尾巴在左）整条水平翻过去
+    func path(in rect: CGRect) -> Path {
+        let r = min(18, rect.height / 2)
+        let minX = rect.minX, maxX = rect.maxX, minY = rect.minY, maxY = rect.maxY
+        var p = Path()
+        p.move(to: CGPoint(x: minX + r, y: minY))
+        p.addArc(tangent1End: CGPoint(x: maxX, y: minY), tangent2End: CGPoint(x: maxX, y: maxY), radius: r)
+        if tail {
+            p.addLine(to: CGPoint(x: maxX, y: maxY - 10))
+            p.addQuadCurve(to: CGPoint(x: maxX + 5, y: maxY), control: CGPoint(x: maxX, y: maxY - 2))
+            p.addQuadCurve(to: CGPoint(x: maxX - 12, y: maxY - 1.5), control: CGPoint(x: maxX - 4, y: maxY + 0.5))
+            p.addQuadCurve(to: CGPoint(x: maxX - r, y: maxY), control: CGPoint(x: maxX - 14, y: maxY))
+        } else {
+            p.addArc(tangent1End: CGPoint(x: maxX, y: maxY), tangent2End: CGPoint(x: minX, y: maxY), radius: r)
+        }
+        p.addArc(tangent1End: CGPoint(x: minX, y: maxY), tangent2End: CGPoint(x: minX, y: minY), radius: r)
+        p.addArc(tangent1End: CGPoint(x: minX, y: minY), tangent2End: CGPoint(x: maxX, y: minY), radius: r)
+        p.closeSubpath()
+        if mine { return p }
+        return p.applying(CGAffineTransform(translationX: rect.midX * 2, y: 0).scaledBy(x: -1, y: 1))
+    }
+}
+
+extension View {
+    /// 同 GlassChatTest 的 bubbleSurface，只是外形可以是任意 Shape（带尾巴的气泡）。
+    /// 「液态带色」在这儿是 iMessage 那套：她这边蓝，他那边不带色。
+    func imSurface<S: Shape>(_ style: BubbleStyle, mine: Bool, shape: S) -> AnyView {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), style != .frosted {
+            var glass: Glass = .regular
+            if style == .tinted && mine {
+                glass = glass.tint(Color(red: 0.0, green: 0.48, blue: 1.0).opacity(0.75))
+            }
+            return AnyView(self.glassEffect(glass.interactive(), in: shape))
+        }
+        #endif
+        return AnyView(
+            self.background(.ultraThinMaterial, in: shape)
+                .overlay(shape.stroke(Color.white.opacity(0.45), lineWidth: 0.6))
+        )
+    }
+}
+
+// 他在打字：三个点轮流亮
+struct TypingDots: View {
+    @State private var on = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .frame(width: 7, height: 7)
+                    .opacity(on ? 0.9 : 0.25)
+                    .animation(.easeInOut(duration: 0.55).repeatForever().delay(Double(i) * 0.18), value: on)
+            }
+        }
+        .foregroundColor(.secondary)
+        .onAppear { on = true }
     }
 }
 
