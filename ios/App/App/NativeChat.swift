@@ -1145,7 +1145,7 @@ struct NativeChatView: View {
 
 extension View {
     /// 同 GlassChatTest 的 bubbleSurface，只是外形可以是任意 Shape。
-    /// 他奶白玻璃，她粉色玻璃（liquid，09-25 她从参考图的淡黄绿改成粉）；tinted = 她 iMessage 蓝。
+    /// 他透明玻璃（.clear），她粉色玻璃（liquid，09-25 她从参考图的淡黄绿改成粉）；tinted = 她 iMessage 蓝。
     func imSurface<S: Shape>(_ style: BubbleStyle, mine: Bool, shape: S) -> AnyView {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *), style != .frosted {
@@ -1155,13 +1155,15 @@ extension View {
                                    ? Color(red: 0.0, green: 0.48, blue: 1.0).opacity(0.75)
                                    : Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.5))
             } else {
-                glass = glass.tint(Color.white.opacity(0.35))
+                // 他那边：09-25 她嫌 .regular + 白 .35 太像牛奶（「他的可以透一点吗」）→ 换更透的 .clear，
+                // 只留一点白垫着字。还嫌白就把 0.12 往下调，嫌字看不清就往上调。
+                glass = Glass.clear.tint(Color.white.opacity(0.12))
             }
             return AnyView(self.glassEffect(glass.interactive(), in: shape))
         }
         #endif
         // 老系统 / 磨砂档：磨砂上叠同一层颜色，看着还是那两种色
-        let wash = mine ? Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.3) : Color.white.opacity(0.3)
+        let wash = mine ? Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.3) : Color.white.opacity(0.1)
         return AnyView(
             self.background(shape.fill(wash))
                 .background(.ultraThinMaterial, in: shape)
