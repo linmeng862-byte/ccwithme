@@ -1,6 +1,7 @@
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 
-platform :ios, '14.0'
+# 09-25：Xcode 27 最低只收 iOS 15，14 直接报红叉编不过
+platform :ios, '15.0'
 use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires
@@ -22,4 +23,12 @@ end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
+  # Capacitor 的 podspec 自己写死 14.0，上面那句只往 14 抬 —— Xcode 27 下 Pods 也得抬到 15
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      if config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f < 15.0
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      end
+    end
+  end
 end

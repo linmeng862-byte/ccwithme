@@ -2,8 +2,8 @@
 # Creates the BroadcastUpload (ReplayKit screen-share) extension target inside App.xcodeproj.
 # 仿 add_widget_extension.rb。CI 里在 xcodebuild 之前跑。Requires: gem install xcodeproj
 #
-# App target: iOS 14.0（不变）
-# Broadcast Upload Extension: iOS 14.0
+# App target: iOS 15.0（09-25 从 14 抬的，Xcode 27 不收 14）
+# Broadcast Upload Extension: iOS 15.0
 
 require 'xcodeproj'
 
@@ -33,7 +33,7 @@ puts "🔨 Creating Broadcast Upload Extension target '#{EXT_NAME}'..."
 puts "   Bundle ID: #{BUNDLE_ID_BASE}.#{EXT_NAME}"
 
 # ── 1. Create extension target ──
-ext_target = project.new_target(:app_extension, EXT_NAME, :ios, '14.0')
+ext_target = project.new_target(:app_extension, EXT_NAME, :ios, '15.0')
 puts "   Target created (product_type: #{ext_target.product_type})"
 
 # ── 2. Build settings ──
@@ -42,7 +42,7 @@ ext_target.build_configurations.each do |config|
   config.build_settings['PRODUCT_NAME'] = EXT_NAME
   config.build_settings['SWIFT_VERSION'] = '5.0'
   config.build_settings['TARGETED_DEVICE_FAMILY'] = '1'
-  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
   config.build_settings['INFOPLIST_FILE'] = "#{EXT_DIR}/Info.plist"
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = "#{EXT_DIR}/#{EXT_NAME}.entitlements"
   config.build_settings['CODE_SIGN_STYLE'] = 'Automatic'

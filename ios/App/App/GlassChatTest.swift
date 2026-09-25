@@ -13,7 +13,7 @@ import PhotosUI
 //    2. 手机 iOS 26+
 //    缺一个就自动退回磨砂（ultraThinMaterial），页面顶上会写明现在是哪种 —— 别让她对着磨砂以为是液态。
 //
-// 部署目标是 iOS 14，所以 iOS 15/16 才有的东西（material、PhotosPicker）都带了 #available。
+// 部署目标是 iOS 15（09-25 从 14 抬的），iOS 16 才有的东西（material、PhotosPicker）都带了 #available。
 
 enum GlassChatTest {
     static let shortcutType = "glass-test"

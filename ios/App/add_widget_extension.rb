@@ -2,7 +2,7 @@
 # Creates the LiveActivityWidget extension target inside App.xcodeproj.
 # Runs in CI before xcodebuild. Requires: gem install xcodeproj
 #
-# App target: iOS 14.0  (unchanged)
+# App target: iOS 15.0  (09-25 raised from 14 — Xcode 27 rejects 14)
 # Widget Extension: iOS 17.0  (WidgetBundle requires iOS 17)
 
 require 'xcodeproj'
