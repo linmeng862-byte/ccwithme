@@ -956,6 +956,10 @@ struct NativeChatView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
             }
+            // 09-25 她：「打完字空白处键盘不会下去」→ 点聊天区任意处收键盘，往下划也收（iOS 16+）。
+            // 用 simultaneousGesture 不抢气泡里的长按选字。
+            .simultaneousGesture(TapGesture().onEnded { Self.hideKeyboard() })
+            .modifier(ScrollDismissesKeyboard())
             .onChange(of: model.msgs) { _ in
                 withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
@@ -1021,6 +1025,10 @@ struct NativeChatView: View {
             }
             Spacer()
         }
+    }
+
+    static func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     /// 行内 markdown（粗体、斜体、链接、行内代码），保留换行。解析失败就原样显示。
@@ -1245,6 +1253,16 @@ struct StickerSheet: View {
             .padding(16)
         }
         .modifier(HalfSheet())
+    }
+}
+
+struct ScrollDismissesKeyboard: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.scrollDismissesKeyboard(.interactively)
+        } else {
+            content
+        }
     }
 }
 
