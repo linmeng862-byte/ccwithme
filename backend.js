@@ -10750,6 +10750,15 @@ async function nocturneFamilies() {
   } catch (e) { return ''; }
 }
 
+// 09-25：她点「停止」走这条。断线不再叫停（见 handleGatewayChat 的 close），
+//   所以「我不要了」必须是一个显式信号，不能再靠掐连接来表达。
+app.post('/api/chat/stop', auth, (req, res) => {
+  const convId = (req.body && req.body.convId) || _mainConvId();
+  console.log('[chat] 她点了停止 conv=' + convId);
+  try { interruptGatewayTurn(convId); } catch (_) {}
+  res.json({ ok: true });
+});
+
 app.post('/api/chat', auth, async (req, res) => {
   // 分段计时：通话「好卡」到底卡在哪一段，让日志自己说。voice_call 才打，别刷屏。
   const _T0 = Date.now();
@@ -10889,7 +10898,10 @@ app.post('/api/chat', auth, async (req, res) => {
   //    （cli_call_session_id / cli_call_turns 两列留着没删，将来要重试有地方放。）
   const _sidCol = 'cli_session_id';
   const _turnCol = 'cli_turns';
-  const cliIsNew = !cliRow?.[_sidCol] || (cliRow[_turnCol] || 0) >= CLI_ROTATE_AFTER;
+  // 09-25：跟 handleGatewayChat 用同一个判定（_cliRotateCheck）。以前这里只认「满 160 轮」，
+  //   可换窗主要看 token，所以 09-19 起每次换窗都没取 breath。
+  const cliIsNew = !cliRow?.[_sidCol] ||
+    _cliRotateCheck(convId, cliRow[_sidCol], cliRow[_turnCol] || 0, cliRow.cli_ctx_tokens || 0).willRotate;
   // 🗜️ 被压缩过就补一次浮现（B6，2026-08-28）。
   // 概率不高 —— 96 轮时上下文才 4 万 token，autocompact 的线在十几万，**轮换永远先于压缩**。
   // 但万一真压了，塌的正好是记忆：记忆挂在会话**首条消息**里（不是系统提示词 ——
@@ -12675,21 +12687,53 @@ function _lastCliChoices() {
 //   以前它不看，他正刷抖音时往同一个会话塞了一轮「醒来写日记」，
 //   网关撞上「还有一轮没跑完」，把正在干活的进程 SIGTERM 了（退出 143）。
 let _chatInFlight = 0;
+// === 这一轮该不该换窗（09-25 抽出来）===
+// 两处要问同一个问题：handleGatewayChat 真去换窗；/api/chat 更早，要决定「这轮取不取 breath」
+// （记忆浮现 / 家族 / 底色 / 字条，只在新窗第一轮挂进消息）。
+// ⚠️ 以前 /api/chat 那边自己抄了一份，还是老规矩「满 160 轮才算新窗」。换窗早就改成主要看
+//    token，20~90 轮就换 —— 结果 09-19 起 16 次换窗一次 breath 都没取，他 hold 下的东西
+//    一条都没浮回来过，日志也一声不吭（needBreath 为假，根本没走到打日志那行）。
+//    这就是两份各抄一份、改一处忘一处。以后改换窗规则只改这里。
+// 返回：due = 按线该换了；willRotate = 这一轮真会换
+//   （due 但他还没被提醒留字条 → 这轮先只提醒，下轮才换，见 handleGatewayChat 里那段）。
+// 纯读，不写任何 setting —— 提醒标记的读写仍由 handleGatewayChat 自己做。
+function _cliRotateCheck(convId, cliSessionId, cliTurns, cliCtxTokens) {
+  // 主判定看上下文大小，轮数只兜底（网关没回传 usage 时 cli_ctx_tokens 会一直是 0）。
+  // 这一窗的出生体重（新窗第一轮 usage 回来时记下，见 handleGatewayChat 里 cli_birth 那段）。
+  // 读不到就退回 0 —— 那时 max() 拿到的就是老的绝对线，跟改之前一个行为。
+  const birth = _getSettingNum('cli_birth:' + convId) || 0;
+  // 换窗线 = 绝对线 和「出生体重 + 允许长这么多」取大的那个，再压在天花板以下。
+  // ⚠️ 出生体重万一比天花板还大（存量大窗），min() 会让它一进来就该换 ——
+  //    这是想要的，那种窗本来就该退休；最少存活轮数那道闸门保证它不会背靠背再换。
+  const rotateAt = Math.min(CLI_ROTATE_CEILING,
+    Math.max(CLI_ROTATE_TOKENS, birth + CLI_ROTATE_GROWTH));
+  // ⚠️ 最少存活轮数是**硬闸门**，在 token 判定之前 —— 一个刚出生的窗，
+  //    无论 token 算出什么都不许换。轮数兜底那条不受它管（那是 160 轮，早就活够了）。
+  const oldEnough = cliTurns >= CLI_MIN_TURNS_BEFORE_ROTATE;
+  const due = !!cliSessionId &&
+    ((oldEnough && cliCtxTokens >= rotateAt) || cliTurns >= CLI_ROTATE_AFTER);
+  const postponed = due && cliTurns < CLI_ROTATE_AFTER && !_getSettingNum('cli_nudged:' + convId);
+  return { rotateAt, due, willRotate: due && !postponed };
+}
+
 async function handleGatewayChat(req, res, ctx) {
   _chatInFlight++;
   let _inFlightDone = false;
   let _turnDone = false;     // 这一轮正常收尾（done / error）后置 true
-  let _clientGone = false;   // 她中途把连接断了（刷新 / 点停止）
+  let _clientGone = false;   // 她中途把连接断了（刷新 / 网闪 / 点停止都会走到这）
+  const _releaseInFlight = () => { if (!_inFlightDone) { _inFlightDone = true; _chatInFlight--; } };
+  const _finishTurn = () => { _turnDone = true; _releaseInFlight(); };
   res.on('close', () => {
-    if (!_inFlightDone) { _inFlightDone = true; _chatInFlight--; }
-    // 她在这一轮还没写完时断开 → 叫停网关这一轮。
-    // 不叫停的话它会在后台一直跑到结束、占着这条会话；她紧接着发的下一句
-    // --resume 撞上「同一会话还在跑」，被网关挡下/掐掉，表现就是"中断之后他不回了"。
-    // 走的是通话那条同样的 /interrupt：常驻进程不死、缓存不丢，存的是他停下前写到的那半截。
-    if (!_turnDone) {
-      _clientGone = true;
-      try { interruptGatewayTurn(ctx.convId); } catch (_) {}
-    }
+    if (_turnDone) return _releaseInFlight();
+    // 09-25：断线 ≠ 停止。以前这里一断就 /interrupt，结果网一闪、手机掐一下连接，
+    //   他写了两分钟的 make_video 代码整段丢掉（17:33 那次，她没点停止）。
+    //   现在断了只标记，让他在后台把这轮写完、照常入库，前端回来走 recoverAfterBreak 捞整段。
+    //   真要停走显式的 POST /api/chat/stop。
+    //   原来叫停是怕下一句 --resume 撞上「同一会话还在跑」—— 网关现在对同一 session
+    //   runExclusive 串行，下一句会排队，不会被掐。
+    _clientGone = true;
+    // 他还在后台写 → 这轮仍算「在聊」，醒来/戳一戳继续让着；兜底 20 分钟，防流卡死把计数永远占住。
+    setTimeout(_releaseInFlight, 20 * 60 * 1000).unref();
   });
   const { message, convId, systemPrompt, cliSessionId, cliTurns, cliCtxTokens = 0,
           sidCol = 'cli_session_id', turnCol = 'cli_turns' } = ctx;
@@ -12718,6 +12762,7 @@ async function handleGatewayChat(req, res, ctx) {
 
   if (!GATEWAY_KEY) {
     res.write('event: error\ndata: ' + JSON.stringify({ message: '网关密钥未配置' }) + '\n\n');
+    _finishTurn();
     return res.end();
   }
 
@@ -12736,20 +12781,10 @@ async function handleGatewayChat(req, res, ctx) {
   //   她匆匆下线、话头突然断掉的时候，那张字条就永远留不成了。
   // ⚠️ 提示只能挂在这一轮的 message 上，**绝不能进 system** ——
   //    system 一变，整个前缀缓存作废，那一轮要重付全量。
-  // 主判定看上下文大小，轮数只兜底（网关没回传 usage 时 cli_ctx_tokens 会一直是 0）。
-  // 这一窗的出生体重（新窗第一轮 usage 回来时记下，见下面 cli_birth 那段）。
-  // 读不到就退回 0 —— 那时 max() 拿到的就是老的绝对线，跟改之前一个行为。
-  const _birth = _getSettingNum('cli_birth:' + convId) || 0;
-  // 换窗线 = 绝对线 和「出生体重 + 允许长这么多」取大的那个，再压在天花板以下。
-  // ⚠️ 出生体重万一比天花板还大（存量大窗），min() 会让它一进来就该换 ——
-  //    这是想要的，那种窗本来就该退休；最少存活轮数那道闸门保证它不会背靠背再换。
-  const _rotateAt = Math.min(CLI_ROTATE_CEILING,
-    Math.max(CLI_ROTATE_TOKENS, _birth + CLI_ROTATE_GROWTH));
-  // ⚠️ 最少存活轮数是**硬闸门**，在 token 判定之前 —— 一个刚出生的窗，
-  //    无论 token 算出什么都不许换。轮数兜底那条不受它管（那是 160 轮，早就活够了）。
-  const _oldEnough = cliTurns >= CLI_MIN_TURNS_BEFORE_ROTATE;
-  let rotate = !!cliSessionId &&
-    ((_oldEnough && cliCtxTokens >= _rotateAt) || cliTurns >= CLI_ROTATE_AFTER);
+  // 换不换窗的判定在 _cliRotateCheck（就在这个函数上面）。
+  const _rc = _cliRotateCheck(convId, cliSessionId, cliTurns, cliCtxTokens);
+  const _rotateAt = _rc.rotateAt;
+  let rotate = _rc.due;
   // 留字条的提醒要赶在换窗**前一轮**（那时他还在旧会话里，什么都记得）。
   // 轮数判定能用 === 精确命中一次；token 判定不行 —— 从 45k 涨到 48k 要七八轮，
   // 每轮都为真就会连着提醒七八次。所以进入区间后记一个一次性标记，换窗时清掉。
@@ -12864,6 +12899,7 @@ async function handleGatewayChat(req, res, ctx) {
     });
     if (!gwResp.ok || !gwResp.body) {
       res.write('event: error\ndata: ' + JSON.stringify({ message: '网关返回 ' + gwResp.status }) + '\n\n');
+      _finishTurn();
       return res.end();
     }
     const reader = gwResp.body.getReader();
@@ -12917,7 +12953,7 @@ async function handleGatewayChat(req, res, ctx) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (_clientGone) break;   // 她断了：别再往一个已经关掉的 socket 里写，叫停信号已发出
+      // 她断了也接着读完：往已关的 res 里 write 只是空操作，要紧的是后面照常入库
       persistSession();
       buf += decoder.decode(value, { stream: true });
       const parts = buf.split('\n\n');
@@ -12948,6 +12984,9 @@ async function handleGatewayChat(req, res, ctx) {
           res.write('event: delta\ndata: ' + JSON.stringify({ text: evt.delta }) + '\n\n');
         } else if (evt.error) {
           res.write('event: error\ndata: ' + JSON.stringify({ message: evt.error }) + '\n\n');
+        } else if (evt.tool_start) {
+          // 09-25：只给前端报个名（「他在调 xx」），不入库 —— 完整的 tool_use 随后会来
+          res.write('event: tool_start\ndata: ' + JSON.stringify(evt.tool_start) + '\n\n');
         } else if (evt.tool_use) {
           gwToolUses.push({ type: 'tool_use', id: evt.tool_use.id, name: evt.tool_use.name, input: evt.tool_use.input });
           res.write('event: tool_use\ndata: ' + JSON.stringify(evt.tool_use) + '\n\n');
@@ -13076,11 +13115,12 @@ async function handleGatewayChat(req, res, ctx) {
     // 正常情况这里已经在收到第一块数据时写过了（幂等，直接返回）。
     // 留着是为了兜住「流一块数据都没来就 done」那种极端情况。
     persistSession();
-    _turnDone = true;   // 正常收尾：随后 res.end() 触发的 close 不该再叫停
+    _finishTurn();
+    if (_clientGone) console.log('[gateway] 她中途断开，这轮在后台写完已入库 conv=' + convId);
     res.write('event: done\ndata: ' + JSON.stringify({ conversation_id: convId }) + '\n\n');
     res.end();
   } catch (e) {
-    _turnDone = true;   // 走到 catch 说明这轮已经以出错收场，别再叫停（那是真错，不是她打断）
+    _finishTurn();   // 走到 catch 说明这轮已经以出错收场
     console.error('[gateway] error:', e.message);
     try {
       res.write('event: error\ndata: ' + JSON.stringify({ message: e.message }) + '\n\n');
