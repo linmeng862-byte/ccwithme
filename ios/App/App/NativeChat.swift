@@ -10,7 +10,7 @@ import Capacitor
 //   - 原生自己做：消息列表、顶栏、输入框、发消息 / 流式 / 叫停、切模型和 effort、思考草稿、发图、表情。
 //   - 交给网页做（handOff）：抽屉、用量、作品集、待办、⋯ 菜单里那几项、打电话。
 //     点了 → 原生层淡出 → 替她点网页上对应那个按钮 → 网页的面板出来；
-//     然后每 0.4 秒看一眼「屏幕正中间是不是又露出网页的聊天流了」，连着两次是 → 面板关了 → 原生层回来。
+//     然后每 0.15 秒看一眼「屏幕正中间是不是又露出网页的聊天流了」，连着两次是 → 面板关了 → 原生层回来。
 //     这样网页那几十个面板一个都不用搬，以后网页加新面板这边也不用跟。
 //
 // 身份、会话、模型、effort、背景**全部从网页借**（WKWebView 里的 state / localStorage），改也是调网页自己的函数改。
@@ -80,11 +80,14 @@ enum NativeChat {
         guard let v = host?.view else { return }
         v.superview?.bringSubviewToFront(v)
         v.isHidden = false
+        bridge?.webView?.evaluateJavaScript("document.documentElement.classList.remove('nc-handoff')", completionHandler: nil)
         UIView.animate(withDuration: 0.22) { v.alpha = 1 }
+        model?.visible = true
         model?.refresh()
     }
 
     private static func hide() {
+        model?.visible = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         guard let v = host?.view else { return }
         UIView.animate(withDuration: 0.18, animations: { v.alpha = 0 }, completion: { _ in
@@ -105,9 +108,15 @@ enum NativeChat {
     static func handOff(clickId id: String) {
         guard id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else { return }
         hide()
-        model?.syncWebIfDirty(then: "var el=document.getElementById('\(id)');if(el)el.click();")
+        model?.syncWebIfDirty(then: hideWebChatJS + "var el=document.getElementById('\(id)');if(el)el.click();")
         watchReturn()
     }
+
+    // 交出去的这段时间，把网页聊天的内容（气泡 / 顶栏 / 输入框）藏起来，只留背景 ——
+    // 抽屉拉开时网页会把聊天推到右边、关上时再滑回来，不藏的话她会看到网页那版气泡闪一下（09-25 她报的）。
+    // 背景跟原生页是同一张，所以滑回来的那一下看着就像原生页本身。原生层露出来时把 class 摘掉。
+    // visibility:hidden 的元素 elementFromPoint 点不中，会落到 #stream 本身上，下面的判断不受影响。
+    private static let hideWebChatJS = "(function(){if(!document.getElementById('ncHandoffCss')){var st=document.createElement('style');st.id='ncHandoffCss';st.textContent='html.nc-handoff #streamInner,html.nc-handoff #chat .composer-wrap,html.nc-handoff #chat .topbar{visibility:hidden!important}';document.head.appendChild(st)}document.documentElement.classList.add('nc-handoff')})();"
 
     // 屏幕正中间那个点落在 #stream 里 = 没有面板/抽屉/遮罩盖着聊天流了。
     // ⋯ 菜单和表情面板盖不到正中间，单独看它们开没开。
@@ -118,14 +127,15 @@ enum NativeChat {
       var mm=document.getElementById('moreMenu');
       var sp=document.getElementById('stickerPanel');
       var open=(mm&&mm.style.display==='block')||(sp&&sp.style.display&&sp.style.display!=='none');
-      return !!(s&&e&&s.contains(e))&&!open;
+      var dp=(typeof drawerProgress==='number')?drawerProgress:0;   // 抽屉还没收完不算
+      return !!(s&&e&&s.contains(e))&&!open&&dp<=0.01;
     }catch(err){return false}})()
     """
 
     private static func watchReturn() {
         watchTask?.cancel()
         watchTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 800_000_000)   // 等面板滑出来，别一上来就误判
+            try? await Task.sleep(nanoseconds: 500_000_000)   // 等面板滑出来，别一上来就误判
             var hits = 0
             while !Task.isCancelled {
                 guard let web = bridge?.webView else { return }
@@ -134,7 +144,7 @@ enum NativeChat {
                     if !Task.isCancelled { show() }
                     return
                 }
-                try? await Task.sleep(nanoseconds: 400_000_000)
+                try? await Task.sleep(nanoseconds: 150_000_000)   // 09-25 从 0.4s 提到 0.15s：关抽屉后回来得快
             }
         }
     }
@@ -215,9 +225,25 @@ final class NativeChatModel: ObservableObject {
     private var wallKey = ""
     private var avatarKeys = ["", ""]
     private var dirty = false                  // 原生这边发过东西，网页还没重读
+    var visible = false                        // 原生层露着没有（NativeChat.show / hide 设）
+    private var pollTask: Task<Void, Never>? = nil
 
     init(webView: WKWebView?) {
         self.webView = webView
+        startPolling()
+    }
+
+    // 他会自己找她（醒来 / 定时那些），网页是 60 秒问一次 /api/wake/unread。
+    // 原生这边更简单：露着的时候每 30 秒重读一遍最近 50 条 —— 内容没变 msgs 就是相等的，界面不会动。
+    // 她正在跟他说话（busy）时不读，免得把正在流的那条冲掉。
+    private func startPolling() {
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                guard let self = self else { return }
+                if self.visible && !self.busy && self.creds != nil { await self.reloadHistory() }
+            }
+        }
     }
 
     var busy: Bool { liveText != nil }
