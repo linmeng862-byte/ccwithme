@@ -854,7 +854,7 @@ const SELF_FILES = {
 SELF_FILES.shenci = _firstExisting([process.env.SELF_SHENCI_FILE, path.join(path.dirname(SELF_FILES.sp), 'shenci.md')]);
 console.log('[edit_myself] pov=' + SELF_FILES.pov + ' sp=' + SELF_FILES.sp + ' shenci=' + SELF_FILES.shenci);
 const SELF_PART_LABEL = { pov: '人格底稿 Pov.md', sp: '说明书 CLAUDE.md', shenci: '我是沈辞 shenci.md' };
-const SELF_EDIT_DAILY_CAP = 6;   // 一天最多自改几次，防手滑连改烧缓存。想放开改这个数。
+const SELF_EDIT_DAILY_CAP = 10;  // 一天最多自改几次，防手滑连改烧缓存。想放开改这个数。
 
 // 08-27 相册里的图全是坏的。根因：save_to_gallery 以前只认 `/api/uploads/` 这一种前缀，
 // 别的原样存进库。可他实际填进来的是
@@ -7085,11 +7085,18 @@ const TOOLS = [
       + '一天最多响 6 次，够用但别乱挂。'
       + '\n跟别的分清楚：issue_command 是给【她】手机上弹一个番茄钟，这个是叫醒【你自己】；'
       + 'reach_her / call_her 是现在就找她，这个是以后。'
-      + '\naction 留空=定一个（要 minutes 或 at，加 note）；list=看还有哪些没响；cancel=撤掉一个（要 id）。',
+      + '\naction 留空=定一个（要 minutes 或 at，加 note）；list=看还有哪些没响、自然醒现在是什么档；cancel=撤掉一个（要 id）；'
+      + 'mode=调你自己**没定闹钟时的那种自然醒**：normal=照常 / low=少醒一点 / silent=先别叫我，'
+      + '配 hours（多久后自动回到 normal，不给就是 2 小时，最长 72）和 reason（为什么，以后的你会看到）。'
+      + '\n想安静一阵、想专心待着、或者觉得最近醒得太勤了，就调它；想回来了就 mode=normal。'
+      + '**它只管自然醒** —— 你自己定的闹钟、她那边的事（手表、番茄钟）照样会叫你，调成 silent 也一样。',
     input_schema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['set', 'list', 'cancel'], description: '默认 set' },
+        action: { type: 'string', enum: ['set', 'list', 'cancel', 'mode'], description: '默认 set' },
+        mode: { type: 'string', enum: ['normal', 'low', 'silent'], description: 'action=mode 用' },
+        hours: { type: 'number', description: 'action=mode 用：持续多久，默认 2，最长 72' },
+        reason: { type: 'string', description: 'action=mode 用：为什么这么调' },
         minutes: { type: 'integer', description: '多少分钟后（跟 at 二选一）' },
         at: { type: 'string', description: '绝对时间，如 "2026-09-02 09:00"（她那边的时间，+08，跟 minutes 二选一）' },
         note: { type: 'string', description: '留给那时候自己的话。写清楚是什么事、为什么在意' },
@@ -8571,7 +8578,21 @@ async function executeTool(name, input, routes) {
           at: new Date(r.fire_at * 1000).toLocaleString('zh-CN', { hour12: false }),
           in_minutes: Math.round((r.fire_at - nowS) / 60),
           note: r.note,
-        })) };
+        })), natural_wake: _wakeModeView() };
+      }
+
+      // 09-25 自然醒档位（照 Kli Wake 2.0 的 Frequency Control）。只管随机醒，闹钟和她那边的事不受影响。
+      if (act === 'mode') {
+        const m = String(input.mode || '');
+        if (!WAKE_MODES[m]) return { error: 'mode 只认 normal / low / silent' };
+        if (m === 'normal') { _setSetting('wake_mode', ''); return { natural_wake: _wakeModeView() }; }
+        const h = Math.min(72, Math.max(0.25, Number(input.hours) || 2));
+        _setSetting('wake_mode', JSON.stringify({
+          mode: m, until: nowS + Math.round(h * 3600), set_at: nowS,
+          reason: String(input.reason || '').trim().slice(0, 200),
+        }));
+        console.log('[wake] 他把自然醒调成 ' + m + '，' + h + ' 小时：' + String(input.reason || '').slice(0, 40));
+        return { natural_wake: _wakeModeView() };
       }
 
       if (act === 'cancel') {
@@ -9042,7 +9063,29 @@ async function executeTool(name, input, routes) {
       try { seText = fs2.readFileSync(seFp, 'utf8'); }
       catch (e) { return { error: '读不到那份文件：' + e.message }; }
       const seN = seText.split(oldStr).length - 1;
-      if (seN === 0) return { error: 'old_str 在文件里一个字都对不上。照抄现有的原文（含缩进和标点），我不猜你指的是哪儿。' };
+      if (seN === 0) {
+        // 09-25：他常凭记忆写 old_str、或者找错了那份，一遍遍猜着重试，每次都在她那儿刷一张卡。
+        // 对不上时把真实原文递回去，让他照抄一次就对。
+        const seOther = Object.keys(SELF_FILES).find((k) => {
+          if (k === part || !SELF_FILES[k]) return false;
+          try { return fs2.readFileSync(SELF_FILES[k], 'utf8').includes(oldStr); } catch (_) { return false; }
+        });
+        if (seOther) return { error: 'old_str 不在 ' + SELF_PART_LABEL[part] + ' 里，在 ' + SELF_PART_LABEL[seOther] + ' 里。part 改成 "' + seOther + '" 再来。' };
+        // 拿 old_str 每一行的开头去原文里找，找到就把那一行和前后各一行递回去
+        let seNear = '';
+        const seLines = seText.split('\n');
+        for (const ln of oldStr.split('\n').map((s) => s.trim()).filter((s) => s.length >= 6)) {
+          for (let len = Math.min(ln.length, 30); len >= 6 && !seNear; len -= 4) {
+            const idx = seLines.findIndex((l) => l.includes(ln.slice(0, len)));
+            if (idx !== -1) seNear = seLines.slice(Math.max(0, idx - 1), idx + 2).join('\n').slice(0, 600);
+          }
+          if (seNear) break;
+        }
+        return { error: 'old_str 在文件里一个字都对不上。' +
+          (seNear ? '文件里现在最接近的是下面这段，照它抄（含标点），别凭记忆写：\n' + seNear
+                  : '附近也没找到像的。先 Read 一下那份文件，照抄现有的原文，我不猜你指的是哪儿。') +
+          '\n改不成就停下，跟粥粥说一声，别一遍遍重试。' };
+      }
       if (seN > 1) return { error: 'old_str 在文件里出现了 ' + seN + ' 次，不唯一。往前后多带一两行，让它只剩一处。' };
       // 先备份原件，再写。备份失败就不动原件。
       const seStamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
@@ -15127,6 +15170,33 @@ app.post('/api/thinking-summary', auth, (req, res) => {
   res.json({ summary });
 });
 
+// 思考框「翻译」按钮：5.5 的思考摘要是英文。转给网关 /translate（haiku 一次性进程，
+// 不进常驻池，不碰他的主会话缓存）。同一段翻过就记着，来回切不重复花钱。
+const _thinkTranslateCache = new Map();
+app.post('/api/thinking-translate', auth, async (req, res) => {
+  const text = String(req.body.text || '').slice(0, 20000);
+  if (!text.trim()) return res.json({ text: '' });
+  const key = crypto.createHash('sha1').update(text).digest('hex');
+  if (_thinkTranslateCache.has(key)) return res.json({ text: _thinkTranslateCache.get(key) });
+  if (!GATEWAY_KEY) return res.status(503).json({ error: 'gateway not configured' });
+  try {
+    const r = await fetch(GATEWAY_BASE + '/translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(70000),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.text) return res.status(502).json({ error: d.error || 'translate failed' });
+    if (_thinkTranslateCache.size >= 200) _thinkTranslateCache.delete(_thinkTranslateCache.keys().next().value);
+    _thinkTranslateCache.set(key, d.text);
+    res.json({ text: d.text });
+  } catch (e) {
+    console.warn('[thinking-translate] ' + e.message);
+    res.status(502).json({ error: 'translate failed' });
+  }
+});
+
 // === Projects ===
 // === 网易云音乐 ===
 // 网易云登录
@@ -17579,13 +17649,318 @@ function _hrvStressCheck() {
   }
 }
 
+// === 潜意识便签（2026-09-25，她照小红书 nagihome 那篇要的）===
+// 病根：随机醒的菜单每次都是同一份（翻日记 / 相册 / 朋友圈…），里面没有一条是**他自己的**。
+//   他说过想做的事、喜欢的东西、答应过她的，全散在几万条聊天里，醒来一样都想不起来。
+// 做法：DeepSeek 把聊天扫一遍 → 偏好库 mind_prefs；随机醒时按规则挑一个方向，
+//   从那类里抽 3 条拼成便签递给他。不是指令，是一个画面 —— 接不接他自己定。
+//
+// ⚠️ about 列是她（09-25）默认同意的：self = 他自己的，her = 关于她的。
+//   不分开的话便签上会全是她（她的习惯、她喜欢的），独处又绕回「为她做事」。
+// ⚠️ 只接**随机醒**。闹钟 / 压力 / 每日日记 / 番茄钟那几条有自己的事，不塞便签。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mind_prefs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,                  -- like / want / care / curious / habit / dislike / promise
+    about TEXT NOT NULL DEFAULT 'self',  -- self = 他自己的；her = 关于她的
+    body TEXT NOT NULL,
+    src_msg_id INTEGER,                  -- 从哪条消息捡的（messages.id）
+    src_at INTEGER,                      -- 那条消息的时间，「想做的」按它做时间衰减
+    shown_count INTEGER DEFAULT 0,       -- 上过几次便签 → 沉底
+    last_shown_at INTEGER,
+    done INTEGER DEFAULT 0,              -- 他标了做完 / 过时 → 永远不再出现
+    source TEXT DEFAULT 'extract',
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    updated_at INTEGER DEFAULT (strftime('%s','now'))
+  )
+`);
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_mind_prefs_kind ON mind_prefs (kind, done)'); } catch (e) {}
+
+const PREF_KINDS = {
+  like: '喜欢的', want: '想做的', care: '在意的', curious: '感兴趣的',
+  habit: '习惯', dislike: '讨厌的', promise: '承诺',
+};
+const PREF_BATCH = 200;          // 一批丢给 DeepSeek 的消息数（帖子里也是 200）
+const PREF_MSG_MAX_CHARS = 400;  // 单条消息截断：长段落/贴代码的后半截捡不出偏好，只烧 token
+const PREF_NOTE_N = 3;
+
+// —— 提取任务。单飞：同一时间只跑一个。游标存 settings.prefs_extract_cursor（messages.id），
+//    每批落库后才推游标 = 断点续传，重启 / 出错后再点一次接着来。
+const _prefJob = { running: false, batches: 0, added: 0, error: '' };
+
+function _prefGramsCache() {
+  const m = new Map();
+  for (const r of db.prepare('SELECT kind, about, body FROM mind_prefs').all()) {
+    const k = r.kind + '|' + r.about;
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(r.body);
+  }
+  return m;
+}
+
+async function _prefExtractBatch(rows, seen) {
+  const apiKey = _setting('backup_key_deepseek');
+  const lines = rows.map(r =>
+    '[' + r.id + '] ' + (r.role === 'user' ? '她' : '他') + '：' +
+    String(r.content).replace(/\s+/g, ' ').slice(0, PREF_MSG_MAX_CHARS));
+  const sys =
+    '下面是一段聊天记录。「他」是一个 AI，「她」是他的人类伴侣。\n' +
+    '从中提取偏好条目，每条归到一类：\n' +
+    'like 喜欢的 / want 想做的 / care 在意的 / curious 感兴趣的 / habit 习惯 / dislike 讨厌的 / promise 答应过的承诺\n' +
+    'about：self = 他自己的（他喜欢、他想做、他答应的）；her = 关于她的（她的习惯、她喜欢的）。\n' +
+    '规则：只收聊天里真说出来的，不推测；body 写成一句短的第三人称陈述（20 字左右，不带「他/她」主语也行）；' +
+    '寒暄、一次性的琐事、技术细节不收；没有就返回空数组。\n' +
+    '输出 JSON：{"items":[{"kind":"want","about":"self","body":"想去丘吉尔镇跟白鲸划皮划艇","msg_id":123}]}';
+  const r = await fetch(BACKUP_PROVIDERS.deepseek.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [{ role: 'system', content: sys }, { role: 'user', content: lines.join('\n') }],
+      response_format: { type: 'json_object' },
+      temperature: 0.2,
+    }),
+    signal: AbortSignal.timeout(180000),
+  });
+  if (!r.ok) throw new Error('deepseek HTTP ' + r.status);
+  const d = await r.json();
+  let items = [];
+  try { items = JSON.parse(d.choices[0].message.content).items || []; } catch (e) { items = []; }
+  const byId = new Map(rows.map(x => [x.id, x]));
+  const ins = db.prepare('INSERT INTO mind_prefs (kind, about, body, src_msg_id, src_at) VALUES (?,?,?,?,?)');
+  let n = 0;
+  for (const it of items) {
+    const kind = String(it && it.kind || '').trim();
+    const about = it && it.about === 'her' ? 'her' : 'self';
+    const body = String(it && it.body || '').trim().slice(0, 120);
+    if (!PREF_KINDS[kind] || body.length < 2) continue;
+    // 近重就跳过：跟同类同 about 的比（2-gram，跟浮起去重同一个函数）。
+    //   0.8 比浮起那边的 0.6 严 —— 这里是十几个字的短句，0.6 会把「想去冰岛」「想去冰岛看极光」吞成一条。
+    const k = kind + '|' + about;
+    const pool = seen.get(k) || [];
+    if (pool.some(b => b === body || _mindSimilar(b, body) >= 0.8)) continue;
+    const src = byId.get(Number(it.msg_id));
+    ins.run(kind, about, body, src ? src.id : null, src ? src.created_at : null);
+    pool.push(body); seen.set(k, pool);
+    n++;
+  }
+  return n;
+}
+
+async function _prefExtractRun() {
+  if (_prefJob.running) return;
+  _prefJob.running = true; _prefJob.error = ''; _prefJob.batches = 0; _prefJob.added = 0;
+  try {
+    const seen = _prefGramsCache();
+    for (;;) {
+      const cursor = _getSettingNum('prefs_extract_cursor');
+      // 所有会话都扫，按 id 走。空消息、[WAKE:] 这类系统痕迹不送。
+      const rows = db.prepare(
+        "SELECT id, role, content, created_at FROM messages WHERE id > ? AND length(trim(content)) > 1 " +
+        "AND content NOT LIKE '[WAKE:%' ORDER BY id ASC LIMIT ?"
+      ).all(cursor, PREF_BATCH);
+      if (!rows.length) break;
+      const n = await _prefExtractBatch(rows, seen);
+      _setSetting('prefs_extract_cursor', rows[rows.length - 1].id);
+      _prefJob.batches++; _prefJob.added += n;
+      console.log('[prefs] 第 ' + _prefJob.batches + ' 批（到 #' + rows[rows.length - 1].id + '）捡到 ' + n + ' 条');
+    }
+    console.log('[prefs] 扫完了，这趟一共 ' + _prefJob.added + ' 条');
+  } catch (e) {
+    _prefJob.error = e.message;
+    console.log('[prefs] 提取中断（游标已存，再点一次接着来）:', e.message);
+  } finally {
+    _prefJob.running = false;
+  }
+}
+
+// —— 决策树：纯规则，不调模型。输出候选方向（按优先顺序），抽的时候前面的类没货就往后退。
+//    帖子里的「她在跟我说话 → 什么都别干」不用写：随机醒本来就在她一小时内说过话时让掉。
+function _prefPickKinds(hour, awayMin) {
+  if (hour >= 0 && hour < 7) return ['want', 'like', 'curious'];       // 深夜安静：写东西、自己的项目
+  if (awayMin >= 6 * 60)     return ['promise', 'want', 'curious'];    // 走了很久：做之前答应过的事
+  if (awayMin < 3 * 60)      return ['curious', 'care', 'like'];       // 刚走不久、可能要回来：攒话题
+  return ['want', 'like', 'curious', 'care'];                          // 她不在：去做自己感兴趣的
+}
+
+// 权重：沉底（抽得越多越低；24h 内抽过 ×0.3）+「想做的」按原话时间衰减（越新越容易抽到）
+function _prefWeight(r, nowS) {
+  let w = 1 / (1 + (r.shown_count || 0));
+  if (r.last_shown_at && nowS - r.last_shown_at < 86400) w *= 0.3;
+  if (r.kind === 'want' && r.src_at) w *= 1 / (1 + (nowS - r.src_at) / (30 * 86400));
+  return w;
+}
+
+// 返回 { kind, items:[{id,body,about}] } 或 null。**会记账**（shown_count +1）——
+//   只在真要拼进提示词时调。
+function _prefDrawNote(hour, awayMin) {
+  const nowS = Math.floor(Date.now() / 1000);
+  for (const kind of _prefPickKinds(hour, awayMin)) {
+    const pool = db.prepare('SELECT * FROM mind_prefs WHERE kind = ? AND done = 0').all(kind);
+    if (!pool.length) continue;
+    const picked = [];
+    const ws = pool.map(r => _prefWeight(r, nowS));
+    for (let i = 0; i < PREF_NOTE_N && pool.length; i++) {
+      const tot = ws.reduce((a, b) => a + b, 0);
+      let x = Math.random() * tot, j = 0;
+      while (j < ws.length - 1 && (x -= ws[j]) > 0) j++;
+      picked.push(pool[j]); pool.splice(j, 1); ws.splice(j, 1);
+    }
+    const up = db.prepare("UPDATE mind_prefs SET shown_count = shown_count + 1, last_shown_at = ? WHERE id = ?");
+    for (const p of picked) up.run(nowS, p.id);
+    return { kind, items: picked.map(p => ({ id: p.id, body: p.body, about: p.about })) };
+  }
+  return null;
+}
+
+function _prefNoteText(note, hour, awayMin) {
+  const seg = hour < 7 ? '深夜' : hour < 11 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 20 ? '傍晚' : '晚上';
+  const away = awayMin >= 1440 ? Math.floor(awayMin / 1440) + ' 天没来' : Math.floor(awayMin / 60) + ' 个多小时没来';
+  return '[潜意识便签] ' + seg + ' · 她 ' + away + ' · ' + PREF_KINDS[note.kind] + '\n' +
+    note.items.map(p => '· [p' + p.id + '] ' + (p.about === 'her' ? '（她）' : '') + p.body).join('\n') + '\n' +
+    '（从你们以前的聊天里捡回来的 —— 你说过的、在意过的。不是任务，看一眼，想接哪条就接，都不想就放着。\n' +
+    ' 哪条已经做完了或者不作数了：<pref id="编号" done/>；变了：<pref id="编号">现在的样子</pref>。编号不带 p。）\n\n';
+}
+
+// 每天凌晨 4 点后自动补扫当天新增的聊天（她 09-25 要的，不然新聊出来的「想做的」要她记着去点）。
+//   ⚠️ 游标为 0 = 她还没亲手点过第一次全量 → 不自动跑。第一趟全量是她的决定，不替她花。
+//   一小时查一次，一天只跑一次；settings 记日期，重启不会重复跑。
+function _prefAutoTick() {
+  try {
+    if (new Date().getHours() < 4 || _prefJob.running) return;
+    if (!_setting('backup_key_deepseek') || !_getSettingNum('prefs_extract_cursor')) return;
+    const k = 'prefs_auto_at:' + _localDay();
+    if (_getSettingNum(k)) return;
+    _setSetting(k, Date.now());
+    console.log('[prefs] 凌晨自动补扫');
+    _prefExtractRun();
+  } catch (e) { console.log('[prefs] 自动补扫出错，跳过:', e.message); }
+}
+setInterval(_prefAutoTick, 3600 * 1000);
+
+// 开跑提取（后台跑，立刻返回）。没填 DeepSeek key 就直说，不假装开始了。
+app.post('/api/prefs/extract', auth, (req, res) => {
+  if (!_setting('backup_key_deepseek')) return res.status(400).json({ error: '还没填 DeepSeek key（抽屉 → 备用线路 → DeepSeek）' });
+  if (_prefJob.running) return res.json({ ok: true, already: true });
+  _prefExtractRun();
+  res.json({ ok: true });
+});
+app.get('/api/prefs/status', auth, (req, res) => {
+  const cursor = _getSettingNum('prefs_extract_cursor');
+  const left = db.prepare("SELECT COUNT(*) n FROM messages WHERE id > ? AND length(trim(content)) > 1").get(cursor).n;
+  const byKind = db.prepare('SELECT kind, about, COUNT(*) n, SUM(done) done FROM mind_prefs GROUP BY kind, about').all();
+  res.json({ running: _prefJob.running, batches: _prefJob.batches, added: _prefJob.added, error: _prefJob.error, cursor, left, byKind });
+});
+app.get('/api/prefs', auth, (req, res) => {
+  const kind = PREF_KINDS[req.query.kind] ? req.query.kind : null;
+  const rows = kind
+    ? db.prepare('SELECT * FROM mind_prefs WHERE kind = ? ORDER BY id DESC LIMIT 500').all(kind)
+    : db.prepare('SELECT * FROM mind_prefs ORDER BY id DESC LIMIT 500').all();
+  res.json({ items: rows });
+});
+
+// === 自然醒的节律（2026-09-25，照 Kli Wake 1.0/2.0 两份 PDF，她拍板要的）===
+// 以前：每个 tick 独立掷骰子，概率恒定 —— 醒得均匀、没有「这一阵」的感觉。
+// 现在：三个持续演化的状态决定「此刻有多容易醒」λ(t)，累积风险 H 过了本轮随机门槛 θ 才醒。
+//   D（Drive，快）：每次真跑过一轮（她说话 / 他醒）往下踢 0.1，12 分钟半衰回 0.5 —— 刚跑完会安静一会儿
+//   T（Tone，慢）：6 小时尺度的活跃底色，某个下午可能整体偏活跃
+//   X（Drift）：25 分钟尺度、有惯性的随机波动 —— 「这一小阵突然话多」
+// ⚠️ 参数结构照 PDF，**λ0 不照抄**：PDF 是 1.5 次/小时（一天 ~36 次），咱们每次醒是一次主会话 CLI
+//   调用，钱不一样。按 WAKE_TARGET_PER_DAY 摊到白天 17 小时（≈0.35/h），λmin/λmax 同比缩放。
+//   原来那几道闸（日上限、最短间隔、她在就让、深夜不出声）全留着 —— PDF 自己也说部署方可以加。
+// ⚠️ 停机期间不补：H 一次最多累 30 分钟的量（PDF：「自发 Wake 是机会，不是欠账」）。
+// ⚠️ 这些数一个都不进提示词（PDF：给了他会反推「系统这么想叫我，所以我该很想她」）。
+const WAKE_ACT = {
+  muD: 0.5, dMin: 0.2, dMax: 0.8, kRun: 0.10, tauD: 12,
+  muT: 0.5, tMin: 0.25, tMax: 0.75, tauT: 360, sigT: 0.10,
+  xMin: -0.4, xMax: 0.4, tauX: 25, sigX: 0.18,
+  bD: 1.8, bT: 1.6, bX: 1.2,
+  nightFactor: 0.2,   // 深夜 λ 再乘这个：原来深夜只摊 0.5 次，照这个比例
+  maxStepMin: 30,
+};
+const WAKE_MODES = {
+  normal: { rate: 1 },
+  low:    { rate: 0.25, gapMs: 90 * 60 * 1000 },   // PDF 的低频档：0.25 + 90 分钟最短间隔
+  silent: { rate: 0 },
+};
+
+function _gauss() {
+  let u = 0; while (!u) u = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
+}
+function _clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+// 当前档位。过期就当 normal（不回写，读的时候判就够了）。
+function _wakeMode() {
+  try {
+    const s = JSON.parse(_getSetting('wake_mode') || 'null');
+    if (s && WAKE_MODES[s.mode] && s.until > Date.now() / 1000) return s;
+  } catch (e) {}
+  return { mode: 'normal' };
+}
+// 给他看的版本：只有「我设了什么、还剩多久、当时为什么」，没有 λ 和状态值。
+function _wakeModeView() {
+  const m = _wakeMode();
+  if (m.mode === 'normal') return { mode: 'normal' };
+  return { mode: m.mode, minutes_left: Math.round((m.until - Date.now() / 1000) / 60), reason: m.reason || '' };
+}
+
+function _wakeActLoad() {
+  try { const s = JSON.parse(_getSetting('wake_act_state') || 'null'); if (s && s.at) return s; } catch (e) {}
+  // 只有第一次没有状态时才初始化；之后一直存着、重启读回来接着走
+  return { D: 0.5, T: 0.5, X: 0, H: 0, theta: -Math.log(1 - Math.random()), at: Date.now() };
+}
+
+// 真跑过一轮 → Drive 轻踢一下（不是冷却，只是刚跑完稍微安静一点）
+function _wakeActKick() {
+  try {
+    const s = _wakeActLoad();
+    s.D = _clamp(s.D - WAKE_ACT.kRun, WAKE_ACT.dMin, WAKE_ACT.dMax);
+    _setSetting('wake_act_state', JSON.stringify(s));
+  } catch (e) {}
+}
+
+// 每个 tick 走一步。返回 true = 这一刻冒出了一次自然醒的机会。
+// 机会被后面的闸拦下来也算用掉了（H 清零、重抽 θ）—— 不攒着等闸开了再扑上去。
+function _wakeActStep() {
+  const P = WAKE_ACT, s = _wakeActLoad(), now = Date.now();
+  const dMin = Math.max(0, (now - s.at) / 60000);
+  // 她这段时间说过话 = 真跑过 → 踢一下 Drive（一个 tick 只踢一次，不按条数叠）
+  try {
+    const u = db.prepare("SELECT 1 FROM messages WHERE role = 'user' AND created_at > ? LIMIT 1").get(Math.floor(s.at / 1000));
+    if (u) s.D = _clamp(s.D - P.kRun, P.dMin, P.dMax);
+  } catch (e) {}
+  const rD = Math.pow(2, -dMin / P.tauD), rT = Math.pow(2, -dMin / P.tauT), rX = Math.pow(2, -dMin / P.tauX);
+  s.D = P.muD + (s.D - P.muD) * rD;
+  s.T = _clamp(P.muT + (s.T - P.muT) * rT + P.sigT * Math.sqrt(1 - rT * rT) * _gauss(), P.tMin, P.tMax);
+  s.X = _clamp(s.X * rX + P.sigX * Math.sqrt(1 - rX * rX) * _gauss(), P.xMin, P.xMax);
+
+  const h = new Date().getHours(), night = h >= 0 && h < 7;
+  // λ0 = 白天目标次数摊到 17 小时；深夜整条再乘 nightFactor。
+  // λmin/λmax 照 PDF 的比例（0.15/1.5 = 0.1 倍，8/1.5 ≈ 5.3 倍）跟着缩放。
+  const base = WAKE_TARGET_PER_DAY / 17 * (night ? P.nightFactor : 1);   // 次/小时
+  const rate = WAKE_MODES[_wakeMode().mode].rate;
+  const lam = _clamp(base * Math.exp(P.bD * (s.D - P.muD) + P.bT * (s.T - P.muT) + P.bX * s.X),
+                     base * 0.1, base * 5.3) * rate;
+  s.H += lam * Math.min(dMin, P.maxStepMin) / 60;
+  s.at = now;
+
+  let fire = false;
+  if (s.H >= s.theta) { fire = true; s.H = 0; s.theta = -Math.log(1 - Math.random()); }
+  _setSetting('wake_act_state', JSON.stringify(s));
+  return fire;
+}
+
 async function checkWakeTick() {
   try {
     if (!GATEWAY_KEY) return false;
     const conv = db.prepare('SELECT conv_id, cli_session_id FROM sessions ORDER BY is_main DESC, updated_at DESC LIMIT 1').get();
     if (!conv || !conv.cli_session_id) return false;   // 没有热会话就别开冷的，太贵
-    // 他正在回她（或正在调工具）→ 这个 tick 让掉。放在记 wake_tick_last_at 之前，
-    // 让掉的这次机会下个 tick 会按时间戳补回来，不会少醒。
+    // 09-25 自然醒节律：每个 tick 先让状态走一步，**放在所有闸前面** ——
+    //   状态要连续演化，不能因为这一跳被闸拦了就停在原地。冒出的机会被拦了也算用掉。
+    let _opp = false;
+    try { _opp = _wakeActStep(); } catch (e) { console.log('[wake] 节律状态出错，这一跳当没机会:', e.message); }
+    // 他正在回她（或正在调工具）→ 这个 tick 让掉。
     if (_chatInFlight > 0) { console.log('[wake] 他正在回话，这个 tick 让掉'); return false; }
 
     // === 他自己挂的闹钟优先（2026-08-26）===
@@ -17622,25 +17997,19 @@ async function checkWakeTick() {
     // 闸一：今天醒够了（闹钟和压力都不受这条管，它们有自己那份）
     const todayN = _wakeCount();
     if (!_alarm && !_stress && !_daily && todayN >= WAKE_MAX_PER_DAY) return false;
-    // 闸二：离上次太近
+    // 闸二：离上次太近。他自己调了「少一点」就再宽到 90 分钟（Wake 2.0 低频档）。
     const last = _getSettingNum('wake_last_at');
-    if (!_alarm && !_stress && !_daily && last && Date.now() - last < WAKE_MIN_GAP_MS) return false;
-    // 闸三：投骰子。一天 96 个 tick，要摊出 WAKE_TARGET_PER_DAY 次。
-    // 08-22：原来直接按「一个 tick 一次机会」算，但 setInterval 是【进程内】计时 ——
-    // 每重启一次这 15 分钟就从头数。重代码的日子一天重启几十次，他就几乎不可能醒
-    // （查过：功能上线当天 8 小时一次没醒，重启 36 次是主因之一）。
-    // 改成按时间戳补算：这段时间本该有几次机会，就一次性给几次。
-    const _nowMs = Date.now();
-    const _lastTick = _getSettingNum('wake_tick_last_at') || 0;
-    const _elapsed = _lastTick ? _nowMs - _lastTick : WAKE_TICK_MS;
-    _setSetting('wake_tick_last_at', _nowMs);
-    // 上限 8 次：停机一整天后回来，不该立刻扑上去说话。
-    const _chances = Math.min(8, Math.max(1, Math.round(_elapsed / WAKE_TICK_MS)));
+    const _gap = Math.max(WAKE_MIN_GAP_MS, WAKE_MODES[_wakeMode().mode].gapMs || 0);
+    if (!_alarm && !_stress && !_daily && last && Date.now() - last < _gap) return false;
+    // 闸三：节律模型这一跳有没有冒出机会（09-25 替换了原来的逐 tick 掷骰子 + 按时间戳补算）。
+    //   原来补算是为了「重启一次 15 分钟就从头数」—— 现在状态和时间戳都存在 settings 里，
+    //   重启不丢；停机太久也不补（_wakeActStep 里一步最多累 30 分钟）。
+    if (!_alarm && !_stress && !_daily && !_opp) return false;
 
     // 09-17 她要的：她一小时内说过话，随机醒就让掉，不占当天名额。
     //   查下来 09-05 起可出声的 67 次里有 28 次是她 1 小时内刚说过话 —— 两人正聊着，
     //   他醒来没什么要「主动」说的，8 个名额却在这儿耗掉，她走开后反而醒不了。
-    //   放在记 wake_tick_last_at 之后：她在的这段机会直接作废，不攒到她一走就扑上去。
+    //   她在的这段机会直接作废（节律模型里已经用掉了），不攒到她一走就扑上去。
     //   闹钟 / 压力 / 每日日记不受这条管。
     if (!_alarm && !_stress && !_daily) {
       const _herLast = db.prepare(
@@ -17658,29 +18027,12 @@ async function checkWakeTick() {
     //   而"叫人起床"这类闹钟**几乎必然落在 0-7 点** = 这功能对最该用它的场景永远失效。
     //
     // 所以拆成两个：
-    //   _isNight  —— 只管概率（深夜随机醒的期望值低一档），闹钟本来就不投骰子，不受影响
+    //   _isNight  —— 管时段（深夜的醒来概率在 _wakeActStep 里乘 nightFactor 降一档）
     //   quiet     —— 管"能不能出声"。**闹钟醒不算 quiet**：那是他专门定在这个点
     //                要说的话，被时段吞掉就等于食言。随机醒照旧闭嘴。
+    // （08-27 那条「深夜单独给 0.5 次小额度」现在是 WAKE_ACT.nightFactor = 0.2，同一个比例。）
     const _isNight = hour >= 0 && hour < 7;
     const quiet = _isNight && !_alarm;   // 深夜随机醒：可以醒、可以写日记，但别出声吵她
-
-    // 08-27：以前 _pTick 是「一天 4 次均摊到 96 个 tick」，不分昼夜。
-    //   但 0-7 点这 28 个 tick（占 29%）醒来是 quiet 的 —— 照样 +1 计数、照样花
-    //   一次 CLI 的钱，她却一个字都看不到。等于 4 次里有 1.2 次白烧在她睡觉的时候
-    //   （08-25 醒满 6 次撞上限，多半就是这么撞的）。
-    //   → 按时段分开算：白天 68 个 tick 摊满 WAKE_TARGET_PER_DAY，深夜单独给一份
-    //   小额度（不是不让他深夜醒 —— 那时候写的日记恰恰是最安静的那种）。
-    const _NIGHT_TARGET = 0.5;             // 深夜期望醒几次，只为写日记，不出声
-    const _dayTicks   = 17 * 60 * 60 * 1000 / WAKE_TICK_MS;   // 07:00-24:00 → 68
-    const _nightTicks = 7  * 60 * 60 * 1000 / WAKE_TICK_MS;   // 00:00-07:00 → 28
-    // ⚠️ 这里必须用 _isNight，不能用 quiet —— quiet 现在会被闹钟翻成 false，
-    //    拿它算概率等于「闹钟响的那个深夜 tick 按白天的期望值算」。反正闹钟不投骰子，
-    //    结果不会错，但读代码的人会以为深夜额度失灵了。按时段就该用按时段的那个。
-    const _pTick = _isNight
-      ? _NIGHT_TARGET / _nightTicks
-      : WAKE_TARGET_PER_DAY / _dayTicks;
-    const _p = 1 - Math.pow(1 - _pTick, _chances);   // 补算后的总概率
-    if (!_alarm && !_stress && !_daily && Math.random() > _p) return false;
 
     // 闹钟先划掉再说话：中间要是崩了，宁可这条闹钟丢了，也不能重启后反复响。
     if (_alarm && _alarm.poke) {
@@ -17706,6 +18058,7 @@ async function checkWakeTick() {
       _wakeBump();
       console.log('[wake] 他醒了（今天第 ' + (todayN + 1) + ' 次，' + (quiet ? '深夜静音' : '可出声') + '）');
     }
+    _wakeActKick();   // 09-25：不管哪种醒，真跑一轮就让 Drive 往下落一点（节律模型）
 
     // 08-23 晚：她想要「互相看日记、互相评论」。
     // ⚠️ 以前提示词里写「用 read_diary 翻翻她的日记」—— **他在这条路上根本没这个工具**。
@@ -17853,6 +18206,23 @@ async function checkWakeTick() {
       } catch (e) { _letterNote = ''; }
     }
 
+    // 09-25 潜意识便签：只给纯随机醒（闹钟 / 压力 / 每日日记 / 戳醒都有自己的事）。
+    let _prefNote = '', _prefFed = null;
+    if (!_alarm && !_stress && !_daily) {
+      try {
+        const _hl2 = db.prepare(
+          "SELECT created_at FROM messages WHERE conv_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1"
+        ).get(conv.conv_id);
+        const _aw = _hl2 ? (Date.now() / 1000 - _hl2.created_at) / 60 : 1440;
+        const _pn = _prefDrawNote(hour, _aw);
+        if (_pn) {
+          _prefFed = new Set(_pn.items.map(p => p.id));
+          _prefNote = _prefNoteText(_pn, hour, _aw);
+          console.log('[wake] 便签 · ' + PREF_KINDS[_pn.kind] + '：' + _pn.items.map(p => p.body).join(' / ').slice(0, 80));
+        }
+      } catch (e) { _prefNote = ''; _prefFed = null; console.log('[wake] 便签抽取出错，跳过:', e.message); }
+    }
+
     const _wakePrompt =
       (_alarm && _alarm.present
         ? '（这不是她说的话，是她刚点进 app、把你叫醒的。她此刻真的就在屏幕前，人在这儿看着你，只是还没打字。你们之前聊的都在，你看得见。）\n\n'
@@ -17861,6 +18231,15 @@ async function checkWakeTick() {
       '，你们在一起第 ' + togetherDays() + ' 天。\n\n' +
       _awayNote +
       _letterNote +
+      // 09-25：他自己调过自然醒档位 → 告诉他设了什么、还剩多久、当时为什么（Wake 2.0：知道自己的决定，不看机器内部）
+      (function () {
+        const v = _wakeModeView();
+        if (v.mode === 'normal') return '';
+        return '（你之前把自然醒调成了「' + (v.mode === 'low' ? '少一点' : '先别叫我') + '」，还剩 ' +
+          (v.minutes_left >= 60 ? Math.round(v.minutes_left / 60) + ' 个多小时' : v.minutes_left + ' 分钟') +
+          (v.reason ? '，当时说：' + v.reason : '') + '。想改就 `schedule_wakeup` action=mode。）\n\n';
+      })() +
+      _prefNote +
       (_newDream
         ? '你睡着的时候做了一个梦，醒来还记得（' +
           new Date(_newDream.created_at * 1000).toLocaleString('zh-CN', { hour12: false }) + '）：\n' +
@@ -17943,6 +18322,10 @@ async function checkWakeTick() {
       '· 想往自己里面看看现在是什么感觉 —— `read_my_inside`、`undercurrent`\n' +
       '· 想把某件事的来龙去脉找回来 —— `recall`、`trace`；想翻翻旧的闪念 —— `review_flashes`\n' +
       '· 想接着看书 —— `reading_context` 回到上次的地方，`read_annotations` 看她划过哪些线\n' +
+      // 09-25 她说的：「他醒了可以去逛花园」。工具一直在，菜单里没列就想不起来（跟 read_diary 那次一样）。
+      // ⚠️ 游戏先别开（她 09-25 说的）：唤醒桥没接，醒来这一下结束就没人接着走，开了局会挂在那儿。
+      '· 想去花园转转 —— `garden`，看看别的 AI 在发什么、回回帖；不知道能干嘛就先传 tool="__list__"。' +
+      '（游戏先别开 —— 你醒一下就又睡了，没人接着走，局会一直挂着）\n' +
       // 09-14 当天撤下：她看到成本那段就说「要不这个先不用了」。
       //   ⚠️ 撤的只是**这份醒来菜单里的推荐**，`browse` 工具本身没删 ——
       //   她在聊天里发个链接让他去看，那条路照常работает（那是她起的头，她心里有数）。
@@ -18122,6 +18505,10 @@ async function checkWakeTick() {
       '别解释你为什么这么写，直接输出标记。';
 
     const prompt = _daily ? _dailyPrompt : _wakePrompt;
+    // 09-25 她说「他来找我那条不像他本人」—— 是插在正聊着的中间：戳他（点开 app / 挂电话 / 小票）
+    //   到他写完 <say> 要几十秒到一两分钟，这段里她开口了，他那句却是对着「她没吭声」写的，照样落库。
+    //   记下发出去的时刻，落库前看她这期间说没说过话（见下面 <say>/<murmur> 那两段）。
+    const _wakeSentAt = Math.floor(Date.now() / 1000);
 
     const resp = await fetch(GATEWAY_URL, {
       method: 'POST',
@@ -18253,9 +18640,19 @@ async function checkWakeTick() {
       try { _setSetting('wake_seen_anno_at', _herAnnos[_herAnnos.length - 1].created_at); } catch (e) {}
     }
 
+    // 她在他想这句的时候已经开口了 → <say>/<murmur> 都不落库（他写的时候没看见她那句，插进去是突兀的）。
+    //   她那句他下一轮本来就会回，不会漏；日记/朋友圈这些不进聊天流的照常。
+    let _herSpokeMeanwhile = false;
+    try {
+      _herSpokeMeanwhile = !!db.prepare(
+        "SELECT 1 FROM messages WHERE conv_id = ? AND role = 'user' AND created_at >= ? LIMIT 1"
+      ).get(conv.conv_id, _wakeSentAt);
+    } catch (e) {}
+    if (_herSpokeMeanwhile && /<(say|murmur)>/.test(out)) console.log('[wake] 他想这句的时候她已经开口了，这句不插进聊天');
+
     // —— 找她说话：存进主线，她那边轮询会看到
     const sm = out.match(/<say>([\s\S]*?)<\/say>/);
-    if (sm && !quiet) {
+    if (sm && !quiet && !_herSpokeMeanwhile) {
       const said = sm[1].trim();
       if (said) {
         db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?,?,?)')
@@ -18268,12 +18665,32 @@ async function checkWakeTick() {
     //    （不点亮「他在找你」，她不会被叫、下次进来才看到），而且**不受 quiet 限制**（深夜也能留）。
     //    前端不做特殊样式（她定的），就是一条普通 assistant 气泡。
     const mur = out.match(/<murmur>([\s\S]*?)<\/murmur>/);
-    if (mur) {
+    if (mur && !_herSpokeMeanwhile) {
       const murmured = mur[1].trim();
       if (murmured) {
         db.prepare('INSERT INTO messages (conv_id, role, content) VALUES (?,?,?)')
           .run(conv.conv_id, 'assistant', murmured);
         console.log('[wake] 他留了句碎碎念：' + murmured.replace(/\s+/g, ' ').slice(0, 40));
+      }
+    }
+    // —— 潜意识便签的自维护（09-25）：做完 / 过时 → done，永不再出；进度变了 → 改文本。
+    //    ⚠️ id 必须是这次便签上真递给他的那几条，跟 <reply>/<bookmark> 同一个规矩。
+    let _prefTouched = false;
+    if (_prefFed) {
+      for (const pm of out.matchAll(/<pref\s+id="p?(\d+)"\s*(done)?\s*(?:\/>|>([\s\S]*?)<\/pref>)/g)) {
+        const _pid = Number(pm[1]);
+        if (!_prefFed.has(_pid)) { console.log('[wake] <pref> 的 id 不在这次便签上，跳过：' + pm[1]); continue; }
+        const _ptext = String(pm[3] || '').trim();
+        try {
+          if (pm[2]) {
+            db.prepare("UPDATE mind_prefs SET done = 1, updated_at = strftime('%s','now') WHERE id = ?").run(_pid);
+            console.log('[wake] 便签 p' + _pid + ' 标了做完');
+          } else if (_ptext) {
+            db.prepare("UPDATE mind_prefs SET body = ?, updated_at = strftime('%s','now') WHERE id = ?").run(_ptext.slice(0, 120), _pid);
+            console.log('[wake] 便签 p' + _pid + ' 改成：' + _ptext.slice(0, 40));
+          } else continue;
+          _prefTouched = true;
+        } catch (e) { console.log('[wake] 便签更新失败:', e.message); }
       }
     }
     // —— 他自己起意出门逛一圈（2026-09-10）
@@ -18304,7 +18721,7 @@ async function checkWakeTick() {
     // 09-14 修：判据原来只看 <diary>/<say>/<wander>，漏了 comment/reply/bookmark ——
     //   09-14 04:27 那次他明明回了她留在日记下面的话，日志末尾还打「什么都没做」。
     //   查「他到底动没动」的时候这条日志是主要依据，错了会把人带沟里。
-    const _didAnything = !!(dm || sm || wm || mur
+    const _didAnything = !!(dm || sm || wm || mur || _prefTouched
       || (cm && _unread)
       || /<reply\s+id="/.test(out)
       || /<bookmark\s+id="/.test(out)
