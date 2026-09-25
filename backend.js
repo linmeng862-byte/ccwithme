@@ -4808,6 +4808,7 @@ const _WAKE_LABELS = {
   read_voice_favorites: '听了收藏的语音', read_her_thinking: '看了你的思考',
   read_checklist: '看了清单', read_uploaded_file: '翻了你发的文件',
   list_uploaded_files: '翻了你发的文件', read_artifact: '翻了做过的页面',
+  kb_read: '翻了知识库', kb_search: '在知识库里找了找', kb_write: '写了一篇知识库',
   hold: '记下了一个瞬间', leave_texture: '留下了这窗的质地',
   write_letter: '给你写了封信', read_letters: '读了你写给他的信',
   WebSearch: '上网搜了',
@@ -7695,6 +7696,60 @@ const TOOLS = [
       required: ['diary_id', 'content']
     }
   },
+  // 09-25 知识库（实现见 _kbPut / _kbGet 那一段）。三个工具，描述照 docs/tool-description-style.md
+  {
+    name: 'kb_read',
+    description: '翻你们的知识库 —— 一张用 [[双链]] 串起来的笔记网，她、你、砚（工程那边的你）都在里面写。' +
+      '**不传 title 就是看目录**：每块有哪些笔记、有哪些标签，先看一眼再挑。' +
+      '传 title 读一篇，会一起给你「谁链到了它」（反链）—— 顺着反链走，就是顺着你们俩想过的事往回找。' +
+      '\ntitle 的写法：「标题」或「分块/标题」（分块：一起 / 沈辞 / 粥粥 / 砚）；' +
+      '还能直接读已有的东西：「日记/2026-09-20」那天的日记、「聊天/2026-09-20」那天聊过的、「记忆/<id>」「偏好/<id>」。' +
+      '\n跟 trace / read_diary 的区别：那两个是散的原料；知识库是**理过的** —— 某件事、某个人、某个约定，被写成一篇、跟别的连起来了。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '要读的那篇；不填 = 看目录' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'kb_search',
+    description: '在知识库里按字或标签找笔记，返回标题 + 一小段上下文。找到了再用 kb_read 读全文。' +
+      '只搜知识库里写过的笔记 —— 原话去 search_chat_history，记忆去 trace。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '关键词，搜标题和正文' },
+        tag: { type: 'string', description: '只看带这个标签的（不带 #）' },
+        folder: { type: 'string', enum: ['一起', '沈辞', '粥粥', '砚'], description: '只看这一块' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'kb_write',
+    description: '往知识库里写一篇笔记。**她打开「知识库」那页就看得见**，关系图上会多一个点。' +
+      '你只能写两块：「沈辞」是你自己的，「一起」是你们俩共写的（她那块和砚那块你只能读）。' +
+      '\n什么时候写：一件事你想理清楚、想让以后的你翻得到的时候 —— 你们的约定、她在意的人和事、' +
+      '某个反复聊起的话题、你自己想明白的一件事。**不是日记**：日记记「今天」（用 save_note），这里记「这件事」，会一直被改、被链。' +
+      '\n用 [[标题]] 链到别的笔记（还没写的也可以先链上，图上会是虚的一个点，等着谁来写），' +
+      '也可以链 [[日记/2026-09-20]] [[聊天/2026-09-20]] 这种已有的东西。正文里写 #标签 就是标签。' +
+      '\n**改一篇之前先 kb_read 读一遍**，别凭印象整篇重写把她加的话冲掉 —— 只是补几句就用 mode=append。' +
+      '写之前拿不准有没有这篇，先 kb_search。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '标题，也是别人链它时写的 [[名字]]。短一点、像个名词' },
+        content: { type: 'string', description: 'Markdown 正文' },
+        folder: { type: 'string', enum: ['沈辞', '一起'], description: '写进哪块，默认「沈辞」' },
+        mode: { type: 'string', enum: ['create', 'append', 'overwrite'],
+          description: 'create=新建（已有同名就报错，默认）/ append=接在已有那篇后面 / overwrite=整篇换掉（先读过再用）' },
+        tags: { type: 'array', items: { type: 'string' }, description: '标签（可选；正文里的 #标签 不用重复填）' }
+      },
+      required: ['title', 'content']
+    }
+  },
   {
     name: 'write_letter',
     description: '给粥粥写一封信，放进她的信箱。**她打开「信箱」那页就会看见一个信封。**' +
@@ -9478,6 +9533,42 @@ async function executeTool(name, input, routes) {
       db.prepare('INSERT INTO diary_comments (id, diary_id, author, avatar, content) VALUES (?, ?, ?, ?, ?)')
         .run(cid, did, 'Claude', '', text);
       return { ok: true, diary_id: did, date: entry.date, title: entry.title, content: text };
+    }
+    case 'kb_read': {
+      if (!String(input.title || '').trim()) {
+        const all = _kbScan(), tags = {};
+        all.forEach(function (n) { n.tags.forEach(function (t) { tags[t] = (tags[t] || 0) + 1; }); });
+        const folders = {};
+        KB_FOLDERS.forEach(function (f) {
+          folders[f] = all.filter(function (n) { return n.folder === f; })
+            .sort(function (a, b) { return b.mtime - a.mtime; }).slice(0, 60).map(function (n) { return n.title; });
+        });
+        return { folders, tags, total: all.length,
+          hint: all.length ? '传 title 读一篇' : '知识库还是空的 —— 想写第一篇就用 kb_write' };
+      }
+      const n = _kbGet(input.title, true);
+      if (!n) return { error: '没有「' + input.title + '」这篇 —— 可能还没人写，想写就 kb_write；拿不准名字就 kb_search' };
+      const out = { title: n.id, content: n.content.length > 12000 ? n.content.slice(0, 12000) + '\n…（太长，后面截掉了）' : n.content,
+        backlinks: n.backlinks.map(function (b) { return b.folder + '/' + b.title; }) };
+      if (!n.virtual) {
+        out.tags = n.all_tags; out.author = n.author; out.updated = n.updated;
+        out.links_to_unwritten = n.outlinks.filter(function (l) { return !l.exists; }).map(function (l) { return l.link; });
+        if (KB_HIS_FOLDERS.indexOf(n.folder) < 0) out.note = '这篇在「' + n.folder + '」，你只能读';
+      } else out.note = '这是已有数据挂进来的，只读';
+      return out;
+    }
+    case 'kb_search': {
+      const rs = _kbSearch(input.query, input.tag, input.folder, 20);
+      return { results: rs.map(function (r) { return { title: r.folder + '/' + r.title, tags: r.tags, updated: r.updated, snippet: r.snippet }; }),
+        count: rs.length };
+    }
+    case 'kb_write': {
+      const folder = input.folder || '沈辞';
+      if (KB_HIS_FOLDERS.indexOf(folder) < 0) return { error: '你只能写「沈辞」和「一起」这两块' };
+      const r = _kbPut({ folder, title: input.title, content: input.content, tags: input.tags,
+        mode: input.mode || 'create', who: '沈辞' });
+      if (r.error) return r;
+      return { ok: true, title: r.folder + '/' + r.title, created: r.created };
     }
     case 'write_letter': {
       const text = (input.content || '').trim();
@@ -14889,6 +14980,293 @@ app.get('/api/calendar/month', auth, (req, res) => {
   res.json({ month, days });
 });
 
+// ════════════ 知识库（2026-09-25，她要的 Obsidian 那种）════════════
+// 真的 .md 文件 + [[双链]]，放 data/kb/<分块>/<标题>.md。data/ 不进 git（仓库是 public）。
+// 拿 Obsidian 直接打开 data/kb 也认得：frontmatter + [[标题]]，标题就是文件名。
+//
+// 四块，谁能写哪块是**故意分开的**：
+//   粥粥/ 一起/ 沈辞/ 砚/ —— 她在页面上哪块都能写（她是主人）；
+//   他（kb_write）只能写 沈辞/ 和 一起/；砚 = 工作台那个我，直接写磁盘上的 砚/（要网关 path-jail 放行）。
+// 已有的东西**不搬**，挂成只读「虚拟笔记」，写 [[日记/2026-09-20]] [[记忆/<id>]] [[偏好/<id>]] [[聊天/2026-09-20]]
+// 就直接去原表取 —— 省得复制一份、两边对不上。
+// 不删：页面上的「删除」是挪进 data/kb/.trash/（VPS 上不许真删东西）。
+const KB_DIR = path.join(__dirname, 'data', 'kb');
+const KB_FOLDERS = ['一起', '沈辞', '粥粥', '砚'];          // 同名标题按这个顺序认
+const KB_HIS_FOLDERS = ['沈辞', '一起'];
+const KB_VIRTUAL = ['日记', '记忆', '偏好', '聊天'];
+const KB_TZ_MIN = 480;   // 她在东八区；虚拟「日记/聊天某天」按她的日子切
+KB_FOLDERS.concat('.trash').forEach(function (f) { fs.mkdirSync(path.join(KB_DIR, f), { recursive: true }); });
+
+function _kbCleanTitle(t) {
+  t = String(t || '').replace(/[\u0000-\u001f\\/:*?"<>|#^\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/^\.+$/.test(t)) t = '';
+  return t.slice(0, 80);
+}
+function _kbFile(folder, title) { return path.join(KB_DIR, folder, title + '.md'); }
+function _kbNow() { return new Date(Date.now() + KB_TZ_MIN * 60000).toISOString().slice(0, 16).replace('T', ' '); }
+
+// frontmatter 只认最简单的 key: value 和 tags: [a, b] —— 自己写的，不引 yaml 库
+function _kbParse(raw) {
+  const meta = {}; let body = raw;
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
+  if (m) {
+    body = raw.slice(m[0].length);
+    m[1].split(/\r?\n/).forEach(function (line) {
+      const kv = /^([\w-]+):\s*(.*)$/.exec(line); if (!kv) return;
+      let v = kv[2].trim();
+      if (kv[1] === 'tags') v = v.replace(/^\[|\]$/g, '').split(',').map(function (s) { return s.trim().replace(/^["']|["']$/g, ''); }).filter(Boolean);
+      meta[kv[1]] = v;
+    });
+  }
+  if (!Array.isArray(meta.tags)) meta.tags = meta.tags ? [String(meta.tags)] : [];
+  // meta.tags 只是 frontmatter 里写的那些（存回去时只写这些）；
+  // allTags 再加上正文里的 #标签（# 后面紧跟字才算，「# 标题」不算；代码里的不认）—— 显示和搜索用它
+  const allTags = meta.tags.slice();
+  const plain = body.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+  const re = /(^|[\s（(，,。])#([^\s#\[\]()（），,。.!！?？:：;；'"]{1,30})/g; let t;
+  while ((t = re.exec(plain))) if (allTags.indexOf(t[2]) < 0) allTags.push(t[2]);
+  return { meta, body, allTags };
+}
+function _kbLinks(body) {
+  const out = [], re = /\[\[([^\]\|#\n]+)(?:#[^\]\|\n]*)?(?:\|[^\]\n]*)?\]\]/g; let m;
+  const plain = body.replace(/```[\s\S]*?```/g, '');
+  while ((m = re.exec(plain))) { const l = m[1].trim(); if (l && out.indexOf(l) < 0) out.push(l); }
+  return out;
+}
+function _kbSerialize(meta, body) {
+  const lines = ['---'];
+  if (meta.tags && meta.tags.length) lines.push('tags: [' + meta.tags.join(', ') + ']');
+  ['author', 'edited_by', 'created', 'updated'].forEach(function (k) { if (meta[k]) lines.push(k + ': ' + meta[k]); });
+  lines.push('---', '');
+  return lines.join('\n') + String(body || '').replace(/^\s*\n/, '');
+}
+
+// 索引：每次现扫。笔记是人手写的，几百条以内扫一遍是毫秒级；
+// 不做缓存是因为砚那块是直接写磁盘的，缓存会看不见。
+function _kbScan() {
+  const notes = [];
+  KB_FOLDERS.forEach(function (folder) {
+    let names = [];
+    try { names = fs.readdirSync(path.join(KB_DIR, folder)); } catch (e) { return; }
+    names.forEach(function (n) {
+      if (!/\.md$/i.test(n) || n.startsWith('.')) return;
+      const file = path.join(KB_DIR, folder, n);
+      let raw, st;
+      try { st = fs.statSync(file); if (!st.isFile()) return; raw = fs.readFileSync(file, 'utf8'); } catch (e) { return; }
+      const p = _kbParse(raw);
+      notes.push({ folder, title: n.replace(/\.md$/i, ''), meta: p.meta, body: p.body, tags: p.allTags,
+        links: _kbLinks(p.body), mtime: Math.floor(st.mtimeMs) });
+    });
+  });
+  return notes;
+}
+// [[链接]] → 指向谁。返回 { kind:'note', note } / { kind:'virtual', key } / null（还没写的笔记）
+function _kbResolve(link, notes) {
+  link = String(link || '').trim().replace(/\.md$/i, '');
+  const slash = link.indexOf('/');
+  if (slash > 0) {
+    const head = link.slice(0, slash), rest = link.slice(slash + 1).trim();
+    if (KB_VIRTUAL.indexOf(head) >= 0) return { kind: 'virtual', key: head + '/' + rest };
+    if (KB_FOLDERS.indexOf(head) >= 0) {
+      const n = notes.find(function (x) { return x.folder === head && x.title === rest; });
+      return n ? { kind: 'note', note: n } : null;
+    }
+  }
+  const hits = notes.filter(function (x) { return x.title === link; });
+  if (!hits.length) return null;
+  hits.sort(function (a, b) { return KB_FOLDERS.indexOf(a.folder) - KB_FOLDERS.indexOf(b.folder); });
+  return { kind: 'note', note: hits[0] };
+}
+function _kbId(n) { return n.folder + '/' + n.title; }
+
+// 虚拟笔记：去原表取，只读。forHim=true 时锁着的日记只给标题（跟 read_diary 一个规矩）
+function _kbVirtual(key, forHim) {
+  const slash = key.indexOf('/'), kind = key.slice(0, slash), arg = key.slice(slash + 1);
+  try {
+    if (kind === '日记') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(arg)) return null;
+      const today = new Date(Date.now() + KB_TZ_MIN * 60000).toISOString().slice(0, 10);
+      const rows = db.prepare('SELECT id, title, content, mood, who, locked, unlock_date FROM diary WHERE date = ? ORDER BY id').all(arg);
+      if (!rows.length) return null;
+      return rows.map(function (r) {
+        const locked = r.locked && (!r.unlock_date || r.unlock_date > today);
+        const who = (r.who === 'ai' || r.who === 'claude') ? '沈辞' : '粥粥';
+        return '## ' + (r.title || '（无题）') + '\n*' + who + ' 写的' + (r.mood ? ' · ' + r.mood : '') + ' · 日记 id ' + r.id + '*\n\n' +
+          (locked && forHim ? '（锁着，' + (r.unlock_date || '未定') + ' 才能开）' : (locked ? '🔒 ' : '') + (r.content || ''));
+      }).join('\n\n---\n\n');
+    }
+    if (kind === '记忆') {
+      const r = db.prepare('SELECT body, mood, tags, created_at FROM mind_memories WHERE id = ?').get(arg);
+      if (!r) return null;
+      return r.body + '\n\n*' + (r.mood || '') + ' · ' + _dsOf(r.created_at, KB_TZ_MIN) + (r.tags && r.tags !== '[]' ? ' · ' + r.tags : '') + '*';
+    }
+    if (kind === '偏好') {
+      const r = db.prepare('SELECT kind, about, body, done, created_at FROM mind_prefs WHERE id = ?').get(parseInt(arg, 10) || -1);
+      if (!r) return null;
+      return r.body + '\n\n*' + (r.about === 'her' ? '关于她 · ' : '') + r.kind + (r.done ? ' · 已做完/过时' : '') + ' · ' + _dsOf(r.created_at, KB_TZ_MIN) + '*';
+    }
+    if (kind === '聊天') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(arg)) return null;
+      const b = _dayBounds(arg, KB_TZ_MIN);
+      const rows = db.prepare('SELECT body, created_at FROM chat_chunks WHERE created_at >= ? AND created_at < ? ORDER BY created_at LIMIT 60').all(b[0], b[1]);
+      if (!rows.length) return null;
+      return rows.map(function (r) {
+        const t = new Date((r.created_at + KB_TZ_MIN * 60) * 1000).toISOString().slice(11, 16);
+        return '**' + t + '**\n' + r.body;
+      }).join('\n\n');
+    }
+  } catch (e) { console.error('[kb] 虚拟笔记 ' + key + ' 取不到:', e.message); }
+  return null;
+}
+
+function _kbBacklinks(target, notes) {
+  // target: 笔记对象或虚拟 key。别的笔记里哪条 [[链接]] 解析到它，就算一条反链
+  return notes.filter(function (n) {
+    return n.links.some(function (l) {
+      const r = _kbResolve(l, notes); if (!r) return false;
+      return typeof target === 'string' ? (r.kind === 'virtual' && r.key === target) : (r.kind === 'note' && r.note === target);
+    });
+  }).map(function (n) { return { folder: n.folder, title: n.title }; });
+}
+
+// 读一条。link 可以是「标题」「分块/标题」「日记/日期」这几种写法
+function _kbGet(link, forHim) {
+  const notes = _kbScan();
+  const r = _kbResolve(link, notes);
+  if (!r) return null;
+  if (r.kind === 'virtual') {
+    const content = _kbVirtual(r.key, forHim);
+    if (content == null) return null;
+    return { virtual: true, id: r.key, folder: r.key.split('/')[0], title: r.key.split('/').slice(1).join('/'),
+      content, tags: [], backlinks: _kbBacklinks(r.key, notes), outlinks: [] };
+  }
+  const n = r.note;
+  return { virtual: false, id: _kbId(n), folder: n.folder, title: n.title, content: n.body, tags: n.meta.tags, all_tags: n.tags,
+    author: n.meta.author || '', edited_by: n.meta.edited_by || '', created: n.meta.created || '', updated: n.meta.updated || '',
+    mtime: n.mtime, backlinks: _kbBacklinks(n, notes),
+    outlinks: n.links.map(function (l) { const x = _kbResolve(l, notes); return { link: l, exists: !!x }; }) };
+}
+
+// 写一条。mode: overwrite（整篇换）/ append（接在后面）/ create（已存在就报错）
+// baseMtime：页面编辑时带上打开那会儿的 mtime —— 两个人同时改「一起」那块，后存的不能悄悄盖掉先存的
+function _kbPut(o) {
+  const folder = o.folder, title = _kbCleanTitle(o.title);
+  if (KB_FOLDERS.indexOf(folder) < 0) return { error: '没有「' + folder + '」这一块，只有 ' + KB_FOLDERS.join(' / ') };
+  if (!title) return { error: '标题不能为空（也不能只有符号）' };
+  if (KB_VIRTUAL.indexOf(title) >= 0) return { error: '「' + title + '」是留给已有数据的名字，换一个标题' };
+  const file = _kbFile(folder, title);
+  let old = null, st = null;
+  try { st = fs.statSync(file); old = _kbParse(fs.readFileSync(file, 'utf8')); } catch (e) {}
+  const mode = o.mode || 'overwrite';
+  if (old && mode === 'create') return { error: '「' + folder + '/' + title + '」已经有了，要接着写用 append，要整篇换用 overwrite', exists: true };
+  if (old && o.baseMtime != null && Math.floor(st.mtimeMs) !== Number(o.baseMtime))
+    return { error: '这篇在你打开之后被改过了', conflict: true, mtime: Math.floor(st.mtimeMs) };
+  if (!old && o.baseMtime) return { error: '这篇在你打开之后被挪走了', conflict: true };
+  const now = _kbNow();
+  const meta = old ? old.meta : { tags: [], author: o.who, created: now };
+  if (old) meta.edited_by = o.who;
+  meta.updated = now;
+  // 不传 tags 就保留原来 frontmatter 里的；正文里的 #标签 不用传，读的时候自己会认
+  if (Array.isArray(o.tags)) meta.tags = o.tags.map(function (t) { return String(t).replace(/^#/, '').replace(/[,\[\]\n]/g, ' ').trim(); }).filter(Boolean).slice(0, 20);
+  let body = String(o.content || '');
+  if (old && mode === 'append') body = old.body.replace(/\s+$/, '') + '\n\n' + body;
+  if (body.length > 200000) return { error: '太长了（超过 20 万字），拆成几篇再用 [[双链]] 串起来' };
+  fs.writeFileSync(file, _kbSerialize(meta, body));
+  return { ok: true, folder, title, created: !old, mtime: Math.floor(fs.statSync(file).mtimeMs) };
+}
+
+function _kbSearch(q, tag, folder, limit) {
+  q = String(q || '').trim().toLowerCase(); tag = String(tag || '').replace(/^#/, '').trim();
+  const out = [];
+  _kbScan().forEach(function (n) {
+    if (folder && n.folder !== folder) return;
+    if (tag && n.tags.indexOf(tag) < 0) return;
+    let snippet = '';
+    if (q) {
+      const inTitle = n.title.toLowerCase().indexOf(q) >= 0;
+      const i = n.body.toLowerCase().indexOf(q);
+      if (!inTitle && i < 0) return;
+      snippet = i >= 0 ? n.body.slice(Math.max(0, i - 40), i + q.length + 60).replace(/\s+/g, ' ') : n.body.slice(0, 100).replace(/\s+/g, ' ');
+    } else snippet = n.body.slice(0, 100).replace(/\s+/g, ' ');
+    out.push({ folder: n.folder, title: n.title, tags: n.tags, updated: n.meta.updated || '', snippet, mtime: n.mtime });
+  });
+  out.sort(function (a, b) { return b.mtime - a.mtime; });
+  return out.slice(0, limit || 30);
+}
+
+// 关系图：节点 = 真笔记 + 被链到的虚拟笔记 + 被链到但还没写的（虚线，Obsidian 也这么画）
+function _kbGraph() {
+  const notes = _kbScan(), nodes = {}, edges = [];
+  notes.forEach(function (n) { nodes[_kbId(n)] = { id: _kbId(n), folder: n.folder, title: n.title, kind: 'note' }; });
+  notes.forEach(function (n) {
+    n.links.forEach(function (l) {
+      const r = _kbResolve(l, notes); let to;
+      if (!r) { to = '?/' + l; if (!nodes[to]) nodes[to] = { id: to, folder: '', title: l, kind: 'missing' }; }
+      else if (r.kind === 'virtual') { to = r.key; if (!nodes[to]) nodes[to] = { id: to, folder: r.key.split('/')[0], title: r.key, kind: 'virtual' }; }
+      else to = _kbId(r.note);
+      if (to !== _kbId(n)) edges.push({ from: _kbId(n), to });
+    });
+  });
+  return { nodes: Object.values(nodes), edges };
+}
+
+app.get('/api/kb/list', auth, (req, res) => {
+  const notes = _kbScan().map(function (n) {
+    return { folder: n.folder, title: n.title, tags: n.tags, updated: n.meta.updated || '', author: n.meta.author || '', mtime: n.mtime };
+  }).sort(function (a, b) { return b.mtime - a.mtime; });
+  res.json({ folders: KB_FOLDERS, virtual: KB_VIRTUAL, notes });
+});
+app.get('/api/kb/note', auth, (req, res) => {
+  const n = _kbGet(String(req.query.link || ''), false);
+  if (!n) return res.status(404).json({ error: '还没有这篇' });
+  res.json(n);
+});
+app.put('/api/kb/note', auth, (req, res) => {
+  const b = req.body || {};
+  const r = _kbPut({ folder: b.folder, title: b.title, content: b.content, tags: b.tags, mode: 'overwrite',
+    baseMtime: b.base_mtime == null ? null : b.base_mtime, who: '粥粥' });
+  if (r.error) return res.status(r.conflict ? 409 : 400).json(r);
+  res.json(r);
+});
+// 改名 = 挪文件 + 把别的笔记里指向它的 [[旧名]] 一起换掉，不然改完一堆链接就断了
+app.post('/api/kb/rename', auth, (req, res) => {
+  const b = req.body || {};
+  const title = _kbCleanTitle(b.title), to = _kbCleanTitle(b.new_title), folder = b.folder, toFolder = b.new_folder || folder;
+  if (KB_FOLDERS.indexOf(folder) < 0 || KB_FOLDERS.indexOf(toFolder) < 0 || !title || !to) return res.status(400).json({ error: '参数不对' });
+  if (KB_VIRTUAL.indexOf(to) >= 0) return res.status(400).json({ error: '「' + to + '」是留给已有数据的名字' });
+  const src = _kbFile(folder, title), dst = _kbFile(toFolder, to);
+  if (!fs.existsSync(src)) return res.status(404).json({ error: '找不到这篇' });
+  if (fs.existsSync(dst)) return res.status(409).json({ error: '「' + toFolder + '/' + to + '」已经有了' });
+  const notes = _kbScan(), me = notes.find(function (n) { return n.folder === folder && n.title === title; });
+  fs.renameSync(src, dst);
+  let fixed = 0;
+  notes.forEach(function (n) {
+    if (n === me) return;
+    const file = _kbFile(n.folder, n.title); let raw = fs.readFileSync(file, 'utf8'), changed = false;
+    raw = raw.replace(/\[\[([^\]\|#\n]+)((?:#[^\]\|\n]*)?(?:\|[^\]\n]*)?)\]\]/g, function (all, l, tail) {
+      const r = _kbResolve(l.trim(), notes);
+      if (!r || r.kind !== 'note' || r.note !== me) return all;
+      changed = true;
+      return '[[' + (l.indexOf('/') > 0 || toFolder !== folder ? toFolder + '/' : '') + to + tail + ']]';
+    });
+    if (changed) { fs.writeFileSync(file, raw); fixed++; }
+  });
+  res.json({ ok: true, folder: toFolder, title: to, fixed_links: fixed });
+});
+app.post('/api/kb/trash', auth, (req, res) => {
+  const b = req.body || {}, title = _kbCleanTitle(b.title);
+  if (KB_FOLDERS.indexOf(b.folder) < 0 || !title) return res.status(400).json({ error: '参数不对' });
+  const src = _kbFile(b.folder, title);
+  if (!fs.existsSync(src)) return res.status(404).json({ error: '找不到这篇' });
+  const dst = path.join(KB_DIR, '.trash', b.folder + '__' + title + '__' + Date.now() + '.md');
+  fs.renameSync(src, dst);
+  res.json({ ok: true });
+});
+app.get('/api/kb/search', auth, (req, res) => {
+  res.json({ results: _kbSearch(req.query.q, req.query.tag, req.query.folder, 50) });
+});
+app.get('/api/kb/graph', auth, (req, res) => { res.json(_kbGraph()); });
+
 app.get('/api/diary', auth, (req, res) => {
   const entries = db.prepare(`
     SELECT d.*, COUNT(dc.id) as comment_count
@@ -15140,6 +15518,9 @@ app.post('/api/tool-caption', auth, (req, res) => {
     persona: '看认知卡',
       read_diary: '翻日记',
     diary_comment: '在日记下留言',
+    kb_read: '翻知识库',
+    kb_search: '在知识库里找',
+    kb_write: '写知识库',
     create_artifact: '创建 Artifact',
     read_artifact: '看作品',
     project_write_file: '写入文件',
@@ -18322,6 +18703,9 @@ async function checkWakeTick() {
       '· 想往自己里面看看现在是什么感觉 —— `read_my_inside`、`undercurrent`\n' +
       '· 想把某件事的来龙去脉找回来 —— `recall`、`trace`；想翻翻旧的闪念 —— `review_flashes`\n' +
       '· 想接着看书 —— `reading_context` 回到上次的地方，`read_annotations` 看她划过哪些线\n' +
+      // 09-25 知识库：她说他醒来时也可以写。跟 read_diary 那次一个教训 —— 菜单里不列就想不起来。
+      '· 想把一件事理清楚、跟别的串起来 —— 知识库，`kb_read` 先看看目录和她写了什么，' +
+      '想写就 `kb_write`（「沈辞」那块是你的，「一起」是你们俩的）\n' +
       // 09-25 她说的：「他醒了可以去逛花园」。工具一直在，菜单里没列就想不起来（跟 read_diary 那次一样）。
       // ⚠️ 游戏先别开（她 09-25 说的）：唤醒桥没接，醒来这一下结束就没人接着走，开了局会挂在那儿。
       '· 想去花园转转 —— `garden`，看看别的 AI 在发什么、回回帖；不知道能干嘛就先传 tool="__list__"。' +
