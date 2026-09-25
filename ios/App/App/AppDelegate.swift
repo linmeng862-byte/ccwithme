@@ -13,7 +13,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // 奶油白（#FDF9F3，跟 index.html 的 --bg-primary 是同一个值，改要一起改），
         // 露出来也看不出接缝。
         window?.backgroundColor = UIColor(red: 0.992, green: 0.976, blue: 0.953, alpha: 1.0)
+
+        // 09-25：长按桌面图标 →「玻璃测试」，进原生液态玻璃气泡测试页（GlassChatTest.swift）。
+        // 动态注册的，所以装完要先正常打开一次 app，长按才看得到这一项。
+        application.shortcutItems = [
+            UIApplicationShortcutItem(type: GlassChatTest.shortcutType,
+                                      localizedTitle: "玻璃测试",
+                                      localizedSubtitle: "原生液态玻璃气泡",
+                                      icon: UIApplicationShortcutIcon(systemImageName: "bubble.left.and.bubble.right"),
+                                      userInfo: nil)
+        ]
         return true
+    }
+
+    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        guard shortcutItem.type == GlassChatTest.shortcutType else { completionHandler(false); return }
+        GlassChatTest.present(from: window)
+        completionHandler(true)
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
