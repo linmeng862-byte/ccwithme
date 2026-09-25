@@ -1153,7 +1153,7 @@ extension View {
             if mine {
                 glass = glass.tint(style == .tinted
                                    ? Color(red: 0.0, green: 0.48, blue: 1.0).opacity(0.75)
-                                   : Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.5))
+                                   : Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.3))   // 09-25 她：「我的粉色也淡一点」0.5 → 0.3
             } else {
                 // 他那边：09-25 她嫌 .regular + 白 .35 太像牛奶（「他的可以透一点吗」）→ 换更透的 .clear，
                 // 只留一点白垫着字。还嫌白就把 0.12 往下调，嫌字看不清就往上调。
@@ -1163,7 +1163,7 @@ extension View {
         }
         #endif
         // 老系统 / 磨砂档：磨砂上叠同一层颜色，看着还是那两种色
-        let wash = mine ? Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.3) : Color.white.opacity(0.1)
+        let wash = mine ? Color(red: 0.96, green: 0.62, blue: 0.74).opacity(0.18) : Color.white.opacity(0.1)
         return AnyView(
             self.background(shape.fill(wash))
                 .background(.ultraThinMaterial, in: shape)
