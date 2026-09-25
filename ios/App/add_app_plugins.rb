@@ -28,6 +28,7 @@ PLUGIN_SOURCES = %w[
   ScreenSharePlugin.swift
   ScreenSharePlugin.m
   GlassChatTest.swift
+  SceneDelegate.swift
 ]
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
