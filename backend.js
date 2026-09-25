@@ -14121,10 +14121,12 @@ app.put('/api/profile', auth, (req, res) => {
 const fileUpload = multer({ dest: path.join(__dirname, 'data', 'uploads', 'files'), limits: { fileSize: 50 * 1024 * 1024 } });
 if (!fs.existsSync(path.join(__dirname, 'data', 'uploads', 'files'))) fs.mkdirSync(path.join(__dirname, 'data', 'uploads', 'files'), { recursive: true });
 // 图片过期清理 — 30天以上的 uploads 标记为过期
+// 09-25 她定的：她收藏的语音（voice_favorites）不清。相册的图不用管，存的时候已经拷进 gallery/ 了。
 function cleanupExpiredUploads() {
   try {
     var cutoff = Math.floor(Date.now()/1000) - 30*86400;
-    var oldUploads = db.prepare('SELECT id, path FROM uploads WHERE created_at < ? AND (expired IS NULL OR expired = 0)').all(cutoff);
+    var oldUploads = db.prepare('SELECT id, path FROM uploads WHERE created_at < ? AND (expired IS NULL OR expired = 0)' +
+      ' AND id NOT IN (SELECT file_id FROM voice_favorites)').all(cutoff);
     oldUploads.forEach(function(u){
       try { if (u.path && fs.existsSync(u.path)) fs.unlinkSync(u.path); } catch(_) {}
       db.prepare('UPDATE uploads SET expired = 1 WHERE id = ?').run(u.id);
