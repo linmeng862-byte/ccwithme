@@ -4058,6 +4058,9 @@ let _nocturneSessionId = null;
 //    当时白名单漏加，09-24 之前他 hold 下的东西醒来一次都没浮上来过。她 09-24 拍板放回来。
 // ⚠️ 09-24 她拍板：Dream Veil / Pulse Weather 摘掉，Memory Drift 放回来（约 1.7k 字符，换窗时一次）。
 const BREATH_KEEP = ['Time', '时间留下的', '你怎么看她的', '不想忘的', 'Memory Drift', 'Feel Trace'];
+// 认得、但是故意不要的段：丢掉照丢，不报「没见过」。
+// 09-25：Dream Veil / Pulse Weather 是 09-24 她拍板摘的，原来没进这份名单，每次换窗都误报一行。
+const BREATH_KNOWN_DROP = ['House Rules', 'Dream Veil', 'Pulse Weather'];
 const BREATH_KEEP_ALL = false;   // 调试用：设 true 就整份放行，不裁
 
 function _trimHouseRules(raw) {
@@ -4077,7 +4080,7 @@ function _trimHouseRules(raw) {
     } else {
       dropped.push(name + '(' + body.length + ')');
       // 名单里没有、也不是我们知道该丢的 —— 提醒一声，免得又悄悄长东西
-      if (name !== 'House Rules' && name !== 'Memory Drift') unknown.push(name);
+      if (BREATH_KNOWN_DROP.indexOf(name) < 0) unknown.push(name);
     }
   }
   const out = kept.join('\n\n');
