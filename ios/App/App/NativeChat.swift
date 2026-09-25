@@ -679,11 +679,13 @@ final class NativeChatModel: ObservableObject {
     }
 }
 
-// MARK: - 页面（09-25 她要「做成 iMessage 那种」）
+// MARK: - 页面（09-25 她发了参考图：「宝宝想要这样子的」）
 //
-// iMessage 的规矩：气泡不带头像（他的头像和名字在顶上正中间）；同一个人连着说的挨得很近，
-// 一组的最后一条带小尾巴；隔得久了中间出一行灰色时间；输入框是一颗胶囊、发送键在里面，
-// 左边一个 ＋ 收着照片 / 表情 / 思考草稿 / 打电话；他在打字就显示三个跳动的点。
+// 参考图的规矩：
+//   - 气泡是整颗胶囊（两头全圆、没尾巴），他奶白玻璃、她淡黄绿玻璃；时间写在气泡里右下角
+//   - 头像只挂在一组的最后一条旁边（底对齐），组里其余几条空出头像那一格，排得齐
+//   - 底下没有整条输入栏，是一排浮着的玻璃：☰ 圆钮、📎 圆钮、Reply to Claude 胶囊、右边一个圆钮
+//   - 顶上几乎是空的：正中一颗小胶囊写他的名字（点开切模型），右边 [待办 | ⋯]
 
 struct NativeChatView: View {
     @ObservedObject var model: NativeChatModel
@@ -697,7 +699,7 @@ struct NativeChatView: View {
     @State private var showStickers = false
     @State private var pickingPhoto = false
 
-    private static let imBlue = Color(red: 0.0, green: 0.48, blue: 1.0)
+    private static let avatarSize: CGFloat = 36
 
     private var effectiveStyle: BubbleStyle { GlassChatTest.liquidAvailable ? style : .frosted }
     private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.pending.isEmpty }
@@ -740,25 +742,17 @@ struct NativeChatView: View {
         }
     }
 
-    // MARK: 顶栏 —— 左 ☰，正中他的头像 + 名字（点名字切模型），右边 [待办 | ⋯]
+    // MARK: 顶栏 —— 正中他的名字（点开切模型），右边 [待办 | ⋯]
 
     private var topBar: some View {
-        ZStack(alignment: .top) {
-            HStack(spacing: 8) {
-                Button(action: { NativeChat.handOff(clickId: "openDrawer") }) {
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 36, height: 36)
-                }
-                .bubbleSurface(effectiveStyle, mine: false, radius: 18)
-
+        ZStack {
+            HStack {
                 Spacer()
-
                 HStack(spacing: 0) {
                     Button(action: { NativeChat.handOff(clickId: "todoTopBtn") }) {
-                        Image(systemName: "checklist").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
+                        Image(systemName: "checklist").font(.system(size: 14, weight: .semibold)).frame(width: 34, height: 34)
                     }
-                    Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 16)
+                    Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 14)
                     Menu {
                         Button(action: { NativeChat.handOff(clickId: "usageTopBtn") }) { Label("用量", systemImage: "chart.bar") }
                         Button(action: { NativeChat.handOff(clickId: "artifactsTopBtn") }) { Label("作品集", systemImage: "doc.text") }
@@ -767,38 +761,46 @@ struct NativeChatView: View {
                             Button(it.label) { NativeChat.handOff(clickId: it.id) }
                         }
                     } label: {
-                        Image(systemName: "ellipsis").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
+                        Image(systemName: "ellipsis").font(.system(size: 14, weight: .semibold)).frame(width: 34, height: 34)
                     }
                 }
-                .bubbleSurface(effectiveStyle, mine: false, radius: 18)
+                .bubbleSurface(effectiveStyle, mine: false, radius: 17)
             }
 
             Menu { modelMenu } label: {
-                VStack(spacing: 3) {
-                    avatar(size: 46)
-                    HStack(spacing: 2) {
-                        Text(model.himName).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundColor(.secondary)
+                HStack(spacing: 4) {
+                    Text(model.himName).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                    if !model.effortLabel.isEmpty {
+                        Text(model.effortLabel).font(.system(size: 11)).foregroundColor(.secondary)
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .bubbleSurface(effectiveStyle, mine: false, radius: 10)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
                 }
+                .padding(.horizontal, 14).padding(.vertical, 8)
             }
+            .bubbleSurface(effectiveStyle, mine: false, radius: 17)
         }
         .foregroundColor(.primary)
         .padding(.horizontal, 12)
         .padding(.top, 2)
-        .padding(.bottom, 6)
+        .padding(.bottom, 4)
     }
 
-    /// 他的头像：网页首页传过的就用那张，没有就是橘色圆底上一个星芒（网页默认的 Claude 标）
-    @ViewBuilder private func avatar(size: CGFloat) -> some View {
-        if let img = model.avatarHim {
+    /// 头像：网页首页传过的就用那张；没有就跟网页默认一样（她 🦀 粉橘渐变，他橘底星芒）
+    @ViewBuilder private func avatar(mine: Bool) -> some View {
+        let size = Self.avatarSize
+        if let img = mine ? model.avatarMe : model.avatarHim {
             Image(uiImage: img).resizable().scaledToFill()
                 .frame(width: size, height: size)
                 .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.6), lineWidth: 1))
+        } else if mine {
+            Text("🦀").font(.system(size: 16))
+                .frame(width: size, height: size)
+                .background(Circle().fill(LinearGradient(
+                    gradient: Gradient(colors: [Color(red: 0.91, green: 0.66, blue: 0.72), Color(red: 0.85, green: 0.47, blue: 0.34)]),
+                    startPoint: .topLeading, endPoint: .bottomTrailing)))
         } else {
-            Image(systemName: "asterisk").font(.system(size: size * 0.38, weight: .bold)).foregroundColor(.white)
+            Image(systemName: "asterisk").font(.system(size: 14, weight: .bold)).foregroundColor(.white)
                 .frame(width: size, height: size)
                 .background(Circle().fill(Color(red: 0.85, green: 0.47, blue: 0.34)))
         }
@@ -825,7 +827,9 @@ struct NativeChatView: View {
         Section(header: Text("原生聊天")) {
             if GlassChatTest.liquidAvailable {
                 Picker("气泡", selection: $style) {
-                    ForEach(BubbleStyle.allCases) { Text($0 == .tinted ? "液态 · 我这边蓝" : $0.rawValue).tag($0) }
+                    ForEach(BubbleStyle.allCases) { s in
+                        Text(s == .liquid ? "液态 · 我这边淡黄" : (s == .tinted ? "液态 · 我这边蓝" : s.rawValue)).tag(s)
+                    }
                 }
             }
             Toggle("有背景时一打开就用原生", isOn: $autoNative)
@@ -840,41 +844,57 @@ struct NativeChatView: View {
         return model.bubbles(id: "live", mine: false, raw: t, time: Date())
     }
 
-    /// 隔 20 分钟以上算「新一段」：中间出时间，前后也不算同一组
+    /// 连着说超过 20 分钟就不算一组了（头像会各挂各的）
     private static func timeBreak(_ a: Date?, _ b: Date?) -> Bool {
         guard let a = a, let b = b else { return false }
         return b.timeIntervalSince(a) > 20 * 60
     }
 
-    private static func timeLabel(_ d: Date) -> String {
+    private static let hm: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private static func dayLabel(_ d: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "今天" }
+        if cal.isDateInYesterday(d) { return "昨天" }
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
-        let cal = Calendar.current
-        if cal.isDateInToday(d) { f.dateFormat = "今天 HH:mm" }
-        else if cal.isDateInYesterday(d) { f.dateFormat = "昨天 HH:mm" }
-        else { f.dateFormat = "M月d日 HH:mm" }
+        f.dateFormat = "M月d日 EEEE"
         return f.string(from: d)
     }
 
-    /// 一条消息在列表里怎么摆：要不要先出时间、跟上一条挨不挨着、带不带尾巴
+    /// 一条消息在列表里怎么摆：要不要先出日期、跟上一条挨不挨着、挂不挂头像
     private struct Placed: Identifiable {
         let msg: NMsg
-        let showTime: Bool
+        let dayHeader: String?
         let joinPrev: Bool
-        let tail: Bool
+        let lastInGroup: Bool
         var id: String { msg.id }
     }
 
     private func placed(_ all: [NMsg]) -> [Placed] {
         var out: [Placed] = []
+        let cal = Calendar.current
         for i in all.indices {
             let m = all[i]
             let prev: NMsg? = i > 0 ? all[i - 1] : nil
             let next: NMsg? = i + 1 < all.count ? all[i + 1] : nil
-            let showTime = m.time != nil && (prev == nil || Self.timeBreak(prev?.time, m.time))
-            let joinPrev = prev != nil && prev?.mine == m.mine && !showTime
-            let tail = next == nil || next?.mine != m.mine || Self.timeBreak(m.time, next?.time)
-            out.append(Placed(msg: m, showTime: showTime, joinPrev: joinPrev, tail: tail))
+            var day: String? = nil
+            if let t = m.time {
+                if let pt = prev?.time {
+                    if !cal.isDate(pt, inSameDayAs: t) { day = Self.dayLabel(t) }
+                } else if prev == nil {
+                    day = Self.dayLabel(t)
+                }
+            }
+            let joinPrev = prev != nil && prev?.mine == m.mine && day == nil && !Self.timeBreak(prev?.time, m.time)
+            var nextNewDay = false
+            if let t = m.time, let nt = next?.time { nextNewDay = !cal.isDate(t, inSameDayAs: nt) }
+            let last = next == nil || next?.mine != m.mine || nextNewDay || Self.timeBreak(m.time, next?.time)
+            out.append(Placed(msg: m, dayHeader: day, joinPrev: joinPrev, lastInGroup: last))
         }
         return out
     }
@@ -889,17 +909,17 @@ struct NativeChatView: View {
                     }
                     ForEach(items) { p in
                         VStack(spacing: 0) {
-                            if p.showTime, let t = p.msg.time {
-                                Text(Self.timeLabel(t))
+                            if let d = p.dayHeader {
+                                Text(d)
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundColor(.secondary)
-                                    .padding(.horizontal, 8).padding(.vertical, 3)
-                                    .bubbleSurface(effectiveStyle, mine: false, radius: 9)
-                                    .padding(.top, 14).padding(.bottom, 8)
+                                    .padding(.horizontal, 10).padding(.vertical, 4)
+                                    .bubbleSurface(effectiveStyle, mine: false, radius: 10)
+                                    .padding(.top, 12).padding(.bottom, 10)
                             }
-                            row(p.msg, tail: p.tail)
+                            row(p.msg, withAvatar: p.lastInGroup)
                         }
-                        .padding(.top, p.joinPrev ? 2 : (p.showTime ? 0 : 12))
+                        .padding(.top, p.joinPrev ? 6 : (p.dayHeader != nil ? 0 : 12))
                         .id(p.id)
                     }
                     if model.busy && liveBubbles.isEmpty {
@@ -907,7 +927,7 @@ struct NativeChatView: View {
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 10)
             }
             .onChange(of: model.msgs) { _ in
@@ -920,11 +940,16 @@ struct NativeChatView: View {
         }
     }
 
-    @ViewBuilder private func row(_ m: NMsg, tail: Bool) -> some View {
-        HStack(spacing: 0) {
-            if m.mine { Spacer(minLength: 60) }
+    /// 头像那一格：一组最后一条挂头像，其余空着占位，气泡才排得齐
+    @ViewBuilder private func avatarSlot(mine: Bool, show: Bool) -> some View {
+        if show { avatar(mine: mine) } else { Color.clear.frame(width: Self.avatarSize, height: 1) }
+    }
+
+    @ViewBuilder private func row(_ m: NMsg, withAvatar: Bool) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            if m.mine { Spacer(minLength: 50) } else { avatarSlot(mine: false, show: withAvatar) }
             if let u = m.sticker {
-                // 表情不套气泡，跟 iMessage 的贴纸一样裸着
+                // 表情不套气泡，裸着
                 AsyncImage(url: u) { img in
                     img.resizable().scaledToFit()
                 } placeholder: {
@@ -932,27 +957,41 @@ struct NativeChatView: View {
                 }
                 .frame(width: 120, height: 120)
             } else {
-                Text(Self.render(m.text))
-                    .font(.system(size: 16.5))
-                    .foregroundColor(m.mine && effectiveStyle == .tinted ? .white : .primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .padding(.leading, m.mine ? 13 : 15)
-                    .padding(.trailing, m.mine ? 15 : 13)
-                    .padding(.vertical, 8)
-                    .imSurface(effectiveStyle, mine: m.mine, shape: IMBubble(mine: m.mine, tail: tail))
+                bubble(m)
             }
-            if !m.mine { Spacer(minLength: 60) }
+            if m.mine { avatarSlot(mine: true, show: withAvatar) } else { Spacer(minLength: 50) }
         }
     }
 
+    /// 字 + 右下角的时间，一起装进一颗胶囊
+    private func bubble(_ m: NMsg) -> some View {
+        let blue = m.mine && effectiveStyle == .tinted
+        return HStack(alignment: .lastTextBaseline, spacing: 8) {
+            Text(Self.render(m.text))
+                .font(.system(size: 16))
+                .foregroundColor(blue ? .white : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            if let t = m.time {
+                Text(Self.hm.string(from: t))
+                    .font(.system(size: 11))
+                    .foregroundColor(blue ? Color.white.opacity(0.75) : .secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .imSurface(effectiveStyle, mine: m.mine, shape: RoundedRectangle(cornerRadius: 21, style: .continuous))
+    }
+
     private var typingRow: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .bottom, spacing: 8) {
+            avatar(mine: false)
             TypingDots()
-                .padding(.horizontal, 15).padding(.vertical, 13)
-                .imSurface(effectiveStyle, mine: false, shape: IMBubble(mine: false, tail: true))
+                .padding(.horizontal, 16).padding(.vertical, 14)
+                .imSurface(effectiveStyle, mine: false, shape: RoundedRectangle(cornerRadius: 21, style: .continuous))
             if !model.status.isEmpty && model.status != "在想…" {
                 Text(model.status).font(.system(size: 11)).foregroundColor(.secondary)
+                    .padding(.bottom, 12)
             }
             Spacer()
         }
@@ -966,7 +1005,13 @@ struct NativeChatView: View {
         return AttributedString(s)
     }
 
-    // MARK: 输入框 —— ＋ ｜ 胶囊（字 + 发送键在里面）
+    // MARK: 输入 —— 一排浮着的玻璃：☰ ｜ 📎 ｜ Reply to Claude ｜ 右钮
+
+    private func circleButton(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .medium))
+            .frame(width: 44, height: 44)
+    }
 
     private var composer: some View {
         VStack(spacing: 6) {
@@ -981,32 +1026,29 @@ struct NativeChatView: View {
             if showThink { thinkPanel }
 
             HStack(alignment: .bottom, spacing: 8) {
+                Button(action: { NativeChat.handOff(clickId: "openDrawer") }) { circleButton("line.3.horizontal") }
+                    .bubbleSurface(effectiveStyle, mine: false, radius: 22)
+
                 Menu {
                     Button(action: { pickingPhoto = true }) { Label("照片", systemImage: "photo") }
                     Button(action: { model.loadStickers(); showStickers = true }) { Label("表情", systemImage: "face.smiling") }
                     Button(action: { withAnimation(.easeOut(duration: 0.2)) { showThink.toggle() } }) {
                         Label(showThink ? "收起思考草稿" : "思考草稿", systemImage: "lightbulb")
                     }
-                    Button(action: { NativeChat.handOff(clickId: "callButton") }) { Label("打电话", systemImage: "phone") }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 38, height: 38)
-                }
-                .bubbleSurface(effectiveStyle, mine: false, radius: 19)
+                } label: { circleButton("paperclip") }
+                .bubbleSurface(effectiveStyle, mine: false, radius: 22)
 
                 VStack(alignment: .leading, spacing: 6) {
                     if !model.pending.isEmpty || model.uploading { pendingRow }
-                    HStack(alignment: .bottom, spacing: 6) {
-                        inputField
-                            .font(.system(size: 16.5))
-                            .padding(.vertical, 8)
-                        if canSend || model.busy { sendButton.padding(.bottom, 4) }
-                    }
+                    inputField
+                        .font(.system(size: 16))
+                        .padding(.vertical, 12)
                 }
-                .padding(.leading, 14)
-                .padding(.trailing, 4)
-                .bubbleSurface(effectiveStyle, mine: false, radius: 19)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+                .bubbleSurface(effectiveStyle, mine: false, radius: 22)
+
+                rightButton
             }
             .foregroundColor(.primary)
         }
@@ -1014,22 +1056,32 @@ struct NativeChatView: View {
         .padding(.bottom, 6)
     }
 
-    private var sendButton: some View {
-        Button(action: { if model.busy { model.stop() } else { doSend() } }) {
-            Image(systemName: model.busy ? "stop.fill" : "arrow.up")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(.white)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Self.imBlue))
+    /// 右边那颗：他在说 = ■ 叫停；有字 = ↑ 发送；空着 = 📞 打电话
+    /// （参考图这里是麦克风 = 语音消息，原生还没做，先放电话）
+    @ViewBuilder private var rightButton: some View {
+        if model.busy {
+            Button(action: { model.stop() }) { circleButton("stop.fill") }
+                .bubbleSurface(effectiveStyle, mine: false, radius: 22)
+        } else if canSend {
+            Button(action: { doSend() }) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Color(red: 0.85, green: 0.47, blue: 0.34)))
+            }
+        } else {
+            Button(action: { NativeChat.handOff(clickId: "callButton") }) { circleButton("phone") }
+                .bubbleSurface(effectiveStyle, mine: false, radius: 22)
         }
     }
 
     @ViewBuilder private var inputField: some View {
         if #available(iOS 16.0, *) {
-            TextField("iMessage", text: $draft, axis: .vertical)
+            TextField("Reply to Claude", text: $draft, axis: .vertical)
                 .lineLimit(1...6)
         } else {
-            TextField("iMessage", text: $draft, onCommit: doSend)
+            TextField("Reply to Claude", text: $draft, onCommit: doSend)
         }
     }
 
@@ -1050,7 +1102,7 @@ struct NativeChatView: View {
                 }
                 if model.uploading { ProgressView().frame(width: 56, height: 56) }
             }
-            .padding(.top, 8)
+            .padding(.top, 10)
         }
     }
 
@@ -1091,51 +1143,29 @@ struct NativeChatView: View {
     }
 }
 
-// MARK: - iMessage 气泡外形：圆角 18，一组最后一条在底角拖一个小尾巴
-
-struct IMBubble: Shape {
-    var mine: Bool
-    var tail: Bool
-
-    // 按「尾巴在右」画一遍，他那边（尾巴在左）整条水平翻过去
-    func path(in rect: CGRect) -> Path {
-        let r = min(18, rect.height / 2)
-        let minX = rect.minX, maxX = rect.maxX, minY = rect.minY, maxY = rect.maxY
-        var p = Path()
-        p.move(to: CGPoint(x: minX + r, y: minY))
-        p.addArc(tangent1End: CGPoint(x: maxX, y: minY), tangent2End: CGPoint(x: maxX, y: maxY), radius: r)
-        if tail {
-            p.addLine(to: CGPoint(x: maxX, y: maxY - 10))
-            p.addQuadCurve(to: CGPoint(x: maxX + 5, y: maxY), control: CGPoint(x: maxX, y: maxY - 2))
-            p.addQuadCurve(to: CGPoint(x: maxX - 12, y: maxY - 1.5), control: CGPoint(x: maxX - 4, y: maxY + 0.5))
-            p.addQuadCurve(to: CGPoint(x: maxX - r, y: maxY), control: CGPoint(x: maxX - 14, y: maxY))
-        } else {
-            p.addArc(tangent1End: CGPoint(x: maxX, y: maxY), tangent2End: CGPoint(x: minX, y: maxY), radius: r)
-        }
-        p.addArc(tangent1End: CGPoint(x: minX, y: maxY), tangent2End: CGPoint(x: minX, y: minY), radius: r)
-        p.addArc(tangent1End: CGPoint(x: minX, y: minY), tangent2End: CGPoint(x: maxX, y: minY), radius: r)
-        p.closeSubpath()
-        if mine { return p }
-        return p.applying(CGAffineTransform(translationX: rect.midX * 2, y: 0).scaledBy(x: -1, y: 1))
-    }
-}
-
 extension View {
-    /// 同 GlassChatTest 的 bubbleSurface，只是外形可以是任意 Shape（带尾巴的气泡）。
-    /// 「液态带色」在这儿是 iMessage 那套：她这边蓝，他那边不带色。
+    /// 同 GlassChatTest 的 bubbleSurface，只是外形可以是任意 Shape。
+    /// 参考图的配色：他奶白玻璃，她淡黄绿玻璃（liquid）；tinted = 她 iMessage 蓝。
     func imSurface<S: Shape>(_ style: BubbleStyle, mine: Bool, shape: S) -> AnyView {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *), style != .frosted {
             var glass: Glass = .regular
-            if style == .tinted && mine {
-                glass = glass.tint(Color(red: 0.0, green: 0.48, blue: 1.0).opacity(0.75))
+            if mine {
+                glass = glass.tint(style == .tinted
+                                   ? Color(red: 0.0, green: 0.48, blue: 1.0).opacity(0.75)
+                                   : Color(red: 0.93, green: 0.95, blue: 0.55).opacity(0.55))
+            } else {
+                glass = glass.tint(Color.white.opacity(0.35))
             }
             return AnyView(self.glassEffect(glass.interactive(), in: shape))
         }
         #endif
+        // 老系统 / 磨砂档：磨砂上叠同一层颜色，看着还是那两种色
+        let wash = mine ? Color(red: 0.93, green: 0.95, blue: 0.55).opacity(0.35) : Color.white.opacity(0.3)
         return AnyView(
-            self.background(.ultraThinMaterial, in: shape)
-                .overlay(shape.stroke(Color.white.opacity(0.45), lineWidth: 0.6))
+            self.background(shape.fill(wash))
+                .background(.ultraThinMaterial, in: shape)
+                .overlay(shape.stroke(Color.white.opacity(0.5), lineWidth: 0.6))
         )
     }
 }
