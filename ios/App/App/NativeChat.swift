@@ -3,6 +3,7 @@ import UIKit
 import WebKit
 import PhotosUI
 import AVFoundation
+import ImageIO
 import Capacitor
 
 // 原生聊天页（2026-09-25 立项）。她要的是「聊天铺着自定义背景时，气泡是原生的液态玻璃」。
@@ -496,15 +497,24 @@ final class NativeChatModel: ObservableObject {
     // MARK: 附件（发图）
 
     func addImage(_ data: Data) {
-        guard let c = creds, let img = UIImage(data: data), let jpg = img.jpegData(compressionQuality: 0.85) else { return }
+        guard let c = creds, let img = NImage.downsample(data, maxPixel: 1080) else { return }
+        // 跟网页 _shrinkImage 同一档（她定的）：长边 1080、JPEG 0.7 —— 省 token 优先，
+        // 1290x2796 的截图不压 ~4800 tok、压完 ~730。GIF 原样传（缩了就不动了）。
+        // 跟网页不同的一处：网页「压完更大就传原图」，这边不是 GIF 就一律传压好的 JPEG ——
+        // 原图可能是 PNG/HEIC，名字后缀跟内容对不上时后端会把它当成普通文件而不是图（按后缀认图）。
+        // 会压大的只有本来就很小的图，差几 KB 无所谓。
+        let isGif = data.starts(with: [0x47, 0x49, 0x46])
+        guard let payload = isGif ? data : img.jpegData(compressionQuality: 0.7) else { return }
+        let mime = isGif ? "image/gif" : "image/jpeg"
+        let fname = isGif ? "photo.gif" : "photo.jpg"
         uploading = true
         Task {
             defer { uploading = false }
             guard let url = URL(string: c.base + "/api/upload") else { return }
             let boundary = "native-" + UUID().uuidString
             var body = Data()
-            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"files\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
-            body.append(jpg)
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"files\"; filename=\"\(fname)\"\r\nContent-Type: \(mime)\r\n\r\n".utf8))
+            body.append(payload)
             body.append(Data("\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"conversation_id\"\r\n\r\n\(c.convId)\r\n--\(boundary)--\r\n".utf8))
             var r = URLRequest(url: url)
             r.httpMethod = "POST"
@@ -1314,10 +1324,31 @@ struct TypingDots: View {
     }
 }
 
-// MARK: - 图片（带登录头拉，缓存在内存里）
+// MARK: - 图片（带登录头拉，缩过再缓存在内存里）
 
 enum NImageCache {
-    static let shared = NSCache<NSURL, UIImage>()
+    static let shared: NSCache<NSURL, UIImage> = {
+        let c = NSCache<NSURL, UIImage>()
+        c.countLimit = 80
+        return c
+    }()
+}
+
+enum NImage {
+    /// 用 ImageIO 直接解出缩小版，不先把原图整张解进内存（一张 12MP 原图解开要 ~48MB）。
+    /// 顺带把 EXIF 方向转正。
+    static func downsample(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+        let opts = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let src = CGImageSourceCreateWithData(data as CFData, opts) else { return UIImage(data: data) }
+        let thumbOpts = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ] as CFDictionary
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, thumbOpts) else { return UIImage(data: data) }
+        return UIImage(cgImage: cg)
+    }
 }
 
 struct RemoteImage: View {
@@ -1353,7 +1384,8 @@ struct RemoteImage: View {
         if let hit = NImageCache.shared.object(forKey: u as NSURL) { img = hit; return }
         var r = URLRequest(url: u)
         if let t = token { r.setValue("Bearer " + t, forHTTPHeaderField: "Authorization") }
-        guard let got = try? await URLSession.shared.data(for: r), let i = UIImage(data: got.0) else { failed = true; return }
+        // 显示用长边 1600 就够（手机屏宽 ~1200 像素），大图不缩着解，翻多了会把内存吃爆
+        guard let got = try? await URLSession.shared.data(for: r), let i = NImage.downsample(got.0, maxPixel: 1600) else { failed = true; return }
         NImageCache.shared.setObject(i, forKey: u as NSURL)
         img = i
     }
