@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import WebKit
 import PhotosUI
+import AVFoundation
 import Capacitor
 
 // 原生聊天页（2026-09-25 立项）。她要的是「聊天铺着自定义背景时，气泡是原生的液态玻璃」。
@@ -158,11 +159,20 @@ enum NativeChat {
 
 // MARK: - 数据
 
+/// 一个气泡里装的是什么。一条消息会按标记拆成好几个（字 / 语音条 / 图），各占一行。
+enum NKind: Equatable {
+    case text
+    case sticker(URL?)
+    case voice(id: String, dur: String, transcript: String)   // transcript 非空 = 通话语音（原文就跟在标记后面）
+    case image(URL?)                                          // 同站地址拉图时会带登录头（她传的附件要）
+    case localImage(UIImage)                                  // 刚发出去、还没从库里读回来的那张
+}
+
 struct NMsg: Identifiable, Equatable {
     let id: String
     let mine: Bool
     let text: String
-    var sticker: URL? = nil
+    var kind: NKind = .text
     var time: Date? = nil
 }
 
@@ -462,9 +472,19 @@ final class NativeChatModel: ObservableObject {
                 let id = "\(row["id"] ?? UUID().uuidString)"
                 let mine = (row["role"] as? String) == "user"
                 var text = row["text"] as? String ?? ""
-                let nAtt = (row["attachments"] as? [Any])?.count ?? 0
-                if nAtt > 0 { text = String(repeating: "[附件] ", count: nAtt) + (text.isEmpty ? "" : "\n" + text) }
                 let t = (row["timestamp"] as? String).flatMap { Self.parseTime($0) }
+                // 她发的附件：图一张一行画出来（/api/uploads/会话/id，要登录头），别的文件先写个名字
+                var names: [String] = []
+                for (k, a) in ((row["attachments"] as? [[String: Any]]) ?? []).enumerated() {
+                    let aid = (a["path"] as? String) ?? (a["id"] as? String) ?? ""
+                    if (a["is_image"] as? Bool) == true && !aid.isEmpty {
+                        out.append(NMsg(id: "\(id)-a\(k)", mine: mine, text: "",
+                                        kind: .image(absURL("/api/uploads/\(c.convId)/\(aid)")), time: t))
+                    } else {
+                        names.append((a["name"] as? String) ?? "文件")
+                    }
+                }
+                if !names.isEmpty { text = names.map { "[文件] " + $0 }.joined(separator: "\n") + (text.isEmpty ? "" : "\n" + text) }
                 out.append(contentsOf: bubbles(id: id, mine: mine, raw: text, time: t))
             }
             msgs = out
@@ -535,8 +555,11 @@ final class NativeChatModel: ObservableObject {
         guard !t.isEmpty || !pending.isEmpty, !busy, let c = creds else { return }
         errorText = ""
         let atts = pending.map { $0.id }
-        let shown = (atts.isEmpty ? "" : String(repeating: "[附件] ", count: atts.count) + (t.isEmpty ? "" : "\n")) + t
-        msgs.append(contentsOf: bubbles(id: "local-" + UUID().uuidString, mine: true, raw: shown, time: Date()))
+        let lid = "local-" + UUID().uuidString
+        for (k, a) in pending.enumerated() {
+            msgs.append(NMsg(id: "\(lid)-a\(k)", mine: true, text: "", kind: .localImage(a.thumb), time: Date()))
+        }
+        if !t.isEmpty { msgs.append(contentsOf: bubbles(id: lid, mine: true, raw: t, time: Date())) }
         pending = []
         liveText = ""
         status = "在想…"
@@ -658,20 +681,74 @@ final class NativeChatModel: ObservableObject {
         isoFrac.date(from: s) ?? ISO8601DateFormatter().date(from: s)
     }
 
+    private static let voiceCallRe = try? NSRegularExpression(pattern: #"^\[VOICEC:([A-Za-z0-9_]+)\|([^\]]*)\]([\s\S]*)$"#)
+    // 1 语音 id  2 时长  3 [IMAGE:] 地址  4 markdown 图地址
+    private static let mediaRe = try? NSRegularExpression(
+        pattern: #"\[VOICE:([^\]|]+)(?:\|([^\]]*))?\]|\[IMAGE:([^\]]+)\]|!\[[^\]]*\]\(([^)\s]+)[^)]*\)"#)
+
+    /// 他那条按 `\n---\n` 分成几段（跟网页的分条规则一样），她那条不分；
+    /// 每段再按语音 / 图片标记拆开，字归字、语音条归语音条、图归图，各占一行。
     func bubbles(id: String, mine: Bool, raw: String, time: Date? = nil) -> [NMsg] {
         let whole = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if whole.range(of: #"^\[Sticker\]\s*\S+$"#, options: .regularExpression) != nil {
             let u = whole.replacingOccurrences(of: #"^\[Sticker\]\s*"#, with: "", options: .regularExpression)
-            return [NMsg(id: id + "-0", mine: mine, text: "", sticker: absURL(u), time: time)]
+            return [NMsg(id: id + "-0", mine: mine, text: "", kind: .sticker(absURL(u)), time: time)]
         }
-        let parts = mine ? [raw] : raw.components(separatedBy: "\n---\n")
+        // 通话里的语音：整条就是 [VOICEC:文件|时长]原文
+        let ns = whole as NSString
+        if let m = Self.voiceCallRe?.firstMatch(in: whole, range: NSRange(location: 0, length: ns.length)) {
+            return [NMsg(id: id + "-0", mine: mine, text: "",
+                         kind: .voice(id: ns.substring(with: m.range(at: 1)),
+                                      dur: ns.substring(with: m.range(at: 2)),
+                                      transcript: ns.substring(with: m.range(at: 3)).trimmingCharacters(in: .whitespacesAndNewlines)),
+                         time: time)]
+        }
+        let segs = mine ? [raw] : raw.components(separatedBy: "\n---\n")
         var out: [NMsg] = []
-        for (i, p) in parts.enumerated() {
-            let t = Self.clean(p)
-            if t.isEmpty { continue }
-            out.append(NMsg(id: "\(id)-\(i)", mine: mine, text: t, time: time))
+        for (i, seg) in segs.enumerated() {
+            var j = 0
+            func addText(_ t: String) {
+                let c = Self.clean(t)
+                if c.isEmpty { return }
+                out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: c, time: time)); j += 1
+            }
+            let sn = seg as NSString
+            var last = 0
+            for m in Self.mediaRe?.matches(in: seg, range: NSRange(location: 0, length: sn.length)) ?? [] {
+                addText(sn.substring(with: NSRange(location: last, length: m.range.location - last)))
+                func g(_ k: Int) -> String? { m.range(at: k).location == NSNotFound ? nil : sn.substring(with: m.range(at: k)) }
+                if let vid = g(1) {
+                    out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: "",
+                                    kind: .voice(id: vid, dur: g(2) ?? "0:00", transcript: ""), time: time)); j += 1
+                } else if let u = g(3) ?? g(4) {
+                    out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: "", kind: .image(absURL(u)), time: time)); j += 1
+                }
+                last = m.range.location + m.range.length
+            }
+            addText(sn.substring(from: last))
         }
         return out
+    }
+
+    /// 语音文件的地址。<audio> 那条路带不了头，后端 /api/files/:id 专门认 ?t=（authFile）
+    func voiceURL(_ fileId: String) -> URL? {
+        guard let c = creds else { return nil }
+        let t = c.token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? c.token
+        return URL(string: c.base + "/api/files/" + fileId + "?t=" + t)
+    }
+
+    /// 同站的地址才带登录头，别把 token 发给别人的服务器
+    func authToken(for url: URL?) -> String? {
+        guard let c = creds, let u = url?.absoluteString, u.hasPrefix(c.base) else { return nil }
+        return c.token
+    }
+
+    /// 语音转文字，跟网页 _transcribeVoice 同一个接口
+    func transcribe(_ fileId: String) async -> String? {
+        guard let c = creds, let r = request("/api/stt", c, method: "POST", body: ["id": fileId]),
+              let got = try? await URLSession.shared.data(for: r),
+              let o = try? JSONSerialization.jsonObject(with: got.0) as? [String: Any] else { return nil }
+        return o["text"] as? String
     }
 
     private static let tagNames: [String: String] = [
@@ -724,6 +801,7 @@ struct NativeChatView: View {
     @State private var thinkShare = false
     @State private var showStickers = false
     @State private var pickingPhoto = false
+    @State private var viewing: ViewingImage? = nil
 
     private static let avatarSize: CGFloat = 36
 
@@ -740,6 +818,7 @@ struct NativeChatView: View {
             }
         }
         .modifier(PhotoPickModifier(isPresented: $pickingPhoto, onPick: { data in model.addImage(data) }))
+        .fullScreenCover(item: $viewing) { v in ImageViewer(img: v.img) { viewing = nil } }
         .sheet(isPresented: $showStickers) {
             StickerSheet(model: model, onPick: { s in
                 showStickers = false
@@ -978,15 +1057,26 @@ struct NativeChatView: View {
     @ViewBuilder private func row(_ m: NMsg, withAvatar: Bool) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
             if m.mine { Spacer(minLength: 50) } else { avatarSlot(mine: false, show: withAvatar) }
-            if let u = m.sticker {
+            switch m.kind {
+            case .sticker(let u):
                 // 表情不套气泡，裸着
-                AsyncImage(url: u) { img in
-                    img.resizable().scaledToFit()
-                } placeholder: {
-                    Color.clear
-                }
-                .frame(width: 120, height: 120)
-            } else {
+                RemoteImage(url: u, token: nil, placeholderSize: 120)
+                    .frame(maxWidth: 120, maxHeight: 120)
+            case .voice(let vid, let dur, let transcript):
+                VoiceBubble(fileId: vid, dur: dur, transcript: transcript, mine: m.mine,
+                            time: m.time.map { Self.hm.string(from: $0) } ?? "",
+                            url: model.voiceURL(vid), style: effectiveStyle,
+                            transcribe: { await model.transcribe($0) })
+            case .image(let u):
+                // 图也不套气泡，圆角裸图（跟网页 images-only 一样），点开看大图
+                RemoteImage(url: u, token: model.authToken(for: u), placeholderSize: 160, onTap: { img in viewing = ViewingImage(img: img) })
+                    .frame(maxWidth: 230, maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            case .localImage(let img):
+                Image(uiImage: img).resizable().scaledToFit()
+                    .frame(maxWidth: 230, maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            case .text:
                 bubble(m)
             }
             if m.mine { avatarSlot(mine: true, show: withAvatar) } else { Spacer(minLength: 50) }
@@ -1221,6 +1311,196 @@ struct TypingDots: View {
         }
         .foregroundColor(.secondary)
         .onAppear { on = true }
+    }
+}
+
+// MARK: - 图片（带登录头拉，缓存在内存里）
+
+enum NImageCache {
+    static let shared = NSCache<NSURL, UIImage>()
+}
+
+struct RemoteImage: View {
+    let url: URL?
+    let token: String?
+    var placeholderSize: CGFloat = 160
+    var onTap: ((UIImage) -> Void)? = nil
+    @State private var img: UIImage? = nil
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let img = img {
+                Image(uiImage: img).resizable().scaledToFit()
+                    .onTapGesture { onTap?(img) }
+            } else {
+                ZStack {
+                    Color.primary.opacity(0.06)
+                    if failed {
+                        Image(systemName: "photo").foregroundColor(.secondary)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .frame(width: placeholderSize, height: placeholderSize)
+            }
+        }
+        .task(id: url) { await load() }
+    }
+
+    private func load() async {
+        guard let u = url else { failed = true; return }
+        if let hit = NImageCache.shared.object(forKey: u as NSURL) { img = hit; return }
+        var r = URLRequest(url: u)
+        if let t = token { r.setValue("Bearer " + t, forHTTPHeaderField: "Authorization") }
+        guard let got = try? await URLSession.shared.data(for: r), let i = UIImage(data: got.0) else { failed = true; return }
+        NImageCache.shared.setObject(i, forKey: u as NSURL)
+        img = i
+    }
+}
+
+struct ViewingImage: Identifiable {
+    let id = UUID()
+    let img: UIImage
+}
+
+/// 点图看大图：黑底，双指放大，点一下关
+struct ImageViewer: View {
+    let img: UIImage
+    var onClose: () -> Void
+    @State private var scale: CGFloat = 1
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            Image(uiImage: img).resizable().scaledToFit()
+                .scaleEffect(scale)
+                .gesture(MagnificationGesture()
+                    .onChanged { scale = max(1, $0) }
+                    .onEnded { _ in withAnimation(.spring()) { scale = 1 } })
+        }
+        .onTapGesture { onClose() }
+    }
+}
+
+// MARK: - 语音条
+
+/// 同一时间只放一条。换一条播 = 先停上一条。
+@MainActor
+final class VoicePlayer: ObservableObject {
+    static let shared = VoicePlayer()
+    @Published var playingId: String? = nil
+    @Published var progress: Double = 0
+
+    private var player: AVPlayer? = nil
+    private var timeObs: Any? = nil
+    private var endObs: NSObjectProtocol? = nil
+
+    func toggle(id: String, url: URL) {
+        if playingId == id { stop(); return }
+        stop()
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        let item = AVPlayerItem(url: url)
+        let p = AVPlayer(playerItem: item)
+        player = p
+        playingId = id
+        progress = 0
+        timeObs = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] t in
+            Task { @MainActor in
+                guard let self = self, let d = self.player?.currentItem?.duration.seconds, d.isFinite, d > 0 else { return }
+                self.progress = min(1, t.seconds / d)
+            }
+        }
+        endObs = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.stop() }
+        }
+        p.play()
+    }
+
+    func stop() {
+        player?.pause()
+        if let o = timeObs { player?.removeTimeObserver(o) }
+        timeObs = nil
+        if let e = endObs { NotificationCenter.default.removeObserver(e) }
+        endObs = nil
+        player = nil
+        playingId = nil
+        progress = 0
+    }
+}
+
+/// 跟网页 .voice-msg 一个样子：▶ ｜ 一排小竖条（放到哪亮到哪）｜ 时长 ｜ 转文字
+/// 通话语音（transcript 非空）点「转文字」直接展开原文，不花钱；普通语音走 /api/stt 现识别。
+struct VoiceBubble: View {
+    let fileId: String
+    let dur: String
+    let transcript: String
+    let mine: Bool
+    let time: String
+    let url: URL?
+    let style: BubbleStyle
+    let transcribe: (String) async -> String?
+
+    @ObservedObject private var player = VoicePlayer.shared
+    @State private var showText = false
+    @State private var fetched: String? = nil
+    @State private var loadingText = false
+
+    private static let heights: [CGFloat] = [3, 6, 4, 8, 5, 7, 4, 6, 5, 3, 7, 5, 4, 6, 3]
+
+    private var playing: Bool { player.playingId == fileId }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                Button(action: { if let u = url { player.toggle(id: fileId, url: u) } }) {
+                    Image(systemName: playing ? "pause.fill" : "play.fill")
+                        .font(.system(size: 13))
+                        .frame(width: 18, height: 18)
+                }
+                HStack(alignment: .center, spacing: 2) {
+                    ForEach(0..<Self.heights.count, id: \.self) { i in
+                        let lit = playing && Double(i) / Double(Self.heights.count) < player.progress
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(Color.primary.opacity(lit ? 0.85 : 0.35))
+                            .frame(width: 2.5, height: Self.heights[i] * 1.6)
+                    }
+                }
+                Text(dur).font(.system(size: 12)).foregroundColor(.secondary)
+                Button(action: toggleText) {
+                    Image(systemName: loadingText ? "ellipsis" : (showText ? "chevron.up" : "text.bubble"))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                if !time.isEmpty {
+                    Text(time).font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
+            if showText, let t = shownText {
+                Text(t).font(.system(size: 14))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .foregroundColor(.primary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .imSurface(style, mine: mine, shape: RoundedRectangle(cornerRadius: 21, style: .continuous))
+    }
+
+    private var shownText: String? { transcript.isEmpty ? fetched : transcript }
+
+    private func toggleText() {
+        if showText { showText = false; return }
+        if !transcript.isEmpty || fetched != nil { showText = true; return }
+        loadingText = true
+        Task {
+            let t = await transcribe(fileId)
+            fetched = (t?.isEmpty == false) ? t : "没识别出内容"
+            loadingText = false
+            showText = true
+        }
     }
 }
 
