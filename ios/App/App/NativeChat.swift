@@ -3,6 +3,7 @@ import UIKit
 import WebKit
 import PhotosUI
 import AVFoundation
+import AVKit
 import ImageIO
 import Capacitor
 
@@ -109,8 +110,18 @@ enum NativeChat {
     /// id 只接受网页里的元素 id（字母数字 - _），不拼任意 JS。
     static func handOff(clickId id: String) {
         guard id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else { return }
+        handOff(js: "var el=document.getElementById('\(id)');if(el)el.click();")
+    }
+
+    /// 同上，但不是点按钮，是调网页里一个现成的函数（比如相册卡 → openGalleryPanel）。只收函数名。
+    static func handOff(callFn name: String) {
+        guard name.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else { return }
+        handOff(js: "if(typeof \(name)==='function')\(name)();")
+    }
+
+    private static func handOff(js: String) {
         hide()
-        model?.syncWebIfDirty(then: hideWebChatJS + "var el=document.getElementById('\(id)');if(el)el.click();")
+        model?.syncWebIfDirty(then: hideWebChatJS + js)
         watchReturn()
     }
 
@@ -167,6 +178,12 @@ enum NKind: Equatable {
     case voice(id: String, dur: String, transcript: String)   // transcript 非空 = 通话语音（原文就跟在标记后面）
     case image(URL?)                                          // 同站地址拉图时会带登录头（她传的附件要）
     case localImage(UIImage)                                  // 刚发出去、还没从库里读回来的那张
+    case file(name: String, id: String, size: String)         // [FILE:名|id] / 工具结果里的 file_card
+    case artifact(title: String, lang: String)                // [ARTIFACT:标题|语言|文件名|id] / 工具结果里的 artifact
+    case video(URL?)                                          // [VIDEO:/gallery-photo/vid_*.mp4]（不要 token）
+    case call(kind: String, dur: String)                      // [CALL:ended|02:17(|her)]
+    case music(title: String, artist: String, cover: URL?)    // 工具结果里的 music
+    case gallery(title: String, caption: String, image: URL?) // 工具结果里的 gallery_save / gallery_share / gallery_album
 }
 
 struct NMsg: Identifiable, Equatable {
@@ -487,6 +504,9 @@ final class NativeChatModel: ObservableObject {
                 }
                 if !names.isEmpty { text = names.map { "[文件] " + $0 }.joined(separator: "\n") + (text.isEmpty ? "" : "\n" + text) }
                 out.append(contentsOf: bubbles(id: id, mine: mine, raw: text, time: t))
+                if !mine, let tr = row["traces"] as? [[String: Any]], !tr.isEmpty {
+                    out.append(contentsOf: traceCards(id: id, traces: tr, raw: text, time: t))
+                }
             }
             msgs = out
         } catch {
@@ -692,9 +712,15 @@ final class NativeChatModel: ObservableObject {
     }
 
     private static let voiceCallRe = try? NSRegularExpression(pattern: #"^\[VOICEC:([A-Za-z0-9_]+)\|([^\]]*)\]([\s\S]*)$"#)
-    // 1 语音 id  2 时长  3 [IMAGE:] 地址  4 markdown 图地址
-    private static let mediaRe = try? NSRegularExpression(
-        pattern: #"\[VOICE:([^\]|]+)(?:\|([^\]]*))?\]|\[IMAGE:([^\]]+)\]|!\[[^\]]*\]\(([^)\s]+)[^)]*\)"#)
+    // 1 语音 id  2 时长 ｜ 3 [IMAGE:] 地址 ｜ 4 markdown 图地址 ｜ 5 文件名 6 文件 id ｜
+    // 7 作品标题 8 语言 9 文件名 10 作品 id ｜ 11 视频地址 ｜ 12 通话状态 13 时长
+    // ARTIFACT 第四段只认 id 的形状，跟网页 _renderArtifactCards 一样（老消息那段塞过 HTML）。
+    private static let mediaRe = try? NSRegularExpression(pattern:
+        #"\[VOICE:([^\]|]+)(?:\|([^\]]*))?\]|\[IMAGE:([^\]]+)\]|!\[[^\]]*\]\(([^)\s]+)[^)]*\)"# +
+        #"|\[FILE:([^|\]]+)\|([^\]]+)\]"# +
+        #"|\[ARTIFACT:([^|\]]*)\|([^|\]]*)\|([^|\]]*)(?:\|([A-Za-z0-9_-]{0,64}))?\]"# +
+        #"|\[VIDEO:([^\]]+)\]"# +
+        #"|\[CALL:(ended|rejected|missed_back|missed)\|([^\]|]*)(?:\|[a-z_]*)?\]"#)
 
     /// 他那条按 `\n---\n` 分成几段（跟网页的分条规则一样），她那条不分；
     /// 每段再按语音 / 图片标记拆开，字归字、语音条归语音条、图归图，各占一行。
@@ -704,6 +730,8 @@ final class NativeChatModel: ObservableObject {
             let u = whole.replacingOccurrences(of: #"^\[Sticker\]\s*"#, with: "", options: .regularExpression)
             return [NMsg(id: id + "-0", mine: mine, text: "", kind: .sticker(absURL(u)), time: time)]
         }
+        // 拨号提示不是她说的话，整条不摆（跟网页 _renderCallCards 一样，老数据的提示词原文也藏）
+        if whole == "[CALL_DIAL]" || whole.hasPrefix("[她给你打电话，你刚接起来") { return [] }
         // 通话里的语音：整条就是 [VOICEC:文件|时长]原文
         let ns = whole as NSString
         if let m = Self.voiceCallRe?.firstMatch(in: whole, range: NSRange(location: 0, length: ns.length)) {
@@ -732,12 +760,76 @@ final class NativeChatModel: ObservableObject {
                                     kind: .voice(id: vid, dur: g(2) ?? "0:00", transcript: ""), time: time)); j += 1
                 } else if let u = g(3) ?? g(4) {
                     out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: "", kind: .image(absURL(u)), time: time)); j += 1
+                } else if let name = g(5), let fid = g(6) {
+                    out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: "", kind: .file(name: name, id: fid, size: ""), time: time)); j += 1
+                } else if let title = g(7) {
+                    out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: "",
+                                    kind: .artifact(title: title.isEmpty ? "未命名" : title, lang: g(8) ?? "html"), time: time)); j += 1
+                } else if let v = g(11) {
+                    out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: "", kind: .video(absURL(v)), time: time)); j += 1
+                } else if let k = g(12) {
+                    out.append(NMsg(id: "\(id)-\(i)-\(j)", mine: mine, text: "", kind: .call(kind: k, dur: g(13) ?? ""), time: time)); j += 1
                 }
                 last = m.range.location + m.range.length
             }
             addText(sn.substring(from: last))
         }
         return out
+    }
+
+    /// 他调工具留下的卡（音乐 / 存进相册 / 分享 / 相册 / 作品 / 文件）。
+    /// 证据在 messages.traces 的 tool_result 里 —— 跟网页 _renderToolCardsFromTraces 同一套，那边加了新种类这边也要加。
+    func traceCards(id: String, traces: [[String: Any]], raw: String, time: Date?) -> [NMsg] {
+        var out: [NMsg] = []
+        for (k, t) in traces.enumerated() where (t["type"] as? String) == "tool_result" {
+            var po: [String: Any]? = t["content"] as? [String: Any]
+            if po == nil, let str = t["content"] as? String, let d = str.data(using: .utf8) {
+                po = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+            }
+            guard let o = po else { continue }
+            func add(_ kind: NKind) { out.append(NMsg(id: "\(id)-t\(k)-\(out.count)", mine: false, text: "", kind: kind, time: time)) }
+            if let a = o["artifact"] as? [String: Any] {
+                add(.artifact(title: (a["title"] as? String) ?? "未命名", lang: (a["language"] as? String) ?? "html"))
+            }
+            if let m = o["music"] as? [String: Any], let title = m["title"] as? String {
+                let cover = (m["cover_url"] as? String).flatMap { u -> URL? in
+                    let q = u.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? u
+                    return absURL("/api/music/cover?url=" + q)
+                }
+                add(.music(title: title, artist: (m["artist"] as? String) ?? "", cover: cover))
+            }
+            if let g = o["gallery_save"] as? [String: Any] {
+                add(.gallery(title: "存进相册 · " + ((g["album_title"] as? String) ?? "Home"),
+                             caption: (g["caption"] as? String) ?? "", image: (g["image_url"] as? String).flatMap { absURL($0) }))
+            }
+            if let g = o["gallery_share"] as? [String: Any] {
+                add(.gallery(title: "分享了一张照片", caption: (g["caption"] as? String) ?? "",
+                             image: (g["image_url"] as? String).flatMap { absURL($0) }))
+            }
+            if let g = o["gallery_album"] as? [String: Any], let title = g["title"] as? String {
+                add(.gallery(title: "相册 · " + title, caption: (g["mood"] as? String) ?? "", image: nil))
+            }
+            // 正文里已经有 [FILE:…|这个 id] 的就不再摆第二张（网页 08-27「文件卡渲染了两次」）
+            if let f = o["file_card"] as? [String: Any], let fid = f["id"].map({ "\($0)" }), !raw.contains(fid) {
+                let size = (f["size"] as? Double).map { Self.fileSize($0) } ?? ""
+                add(.file(name: (f["filename"] as? String) ?? "file", id: fid, size: size))
+            }
+        }
+        return out
+    }
+
+    static func fileSize(_ b: Double) -> String {
+        if b < 1024 { return "\(Int(b)) B" }
+        if b < 1024 * 1024 { return String(format: "%.1f KB", b / 1024) }
+        return String(format: "%.1f MB", b / 1024 / 1024)
+    }
+
+    /// 文件下载地址（/api/files/:id 走 authFile，认 ?t=）。点了交给系统浏览器，那边能存到「文件」—— 跟网页 app 里一样
+    func fileURL(_ fileId: String) -> URL? {
+        guard let c = creds else { return nil }
+        let t = c.token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? c.token
+        let f = fileId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileId
+        return URL(string: c.base + "/api/files/" + f + "?t=" + t)
     }
 
     /// 语音文件的地址。<audio> 那条路带不了头，后端 /api/files/:id 专门认 ?t=（authFile）
@@ -1086,11 +1178,118 @@ struct NativeChatView: View {
                 Image(uiImage: img).resizable().scaledToFit()
                     .frame(maxWidth: 230, maxHeight: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            case .file(let name, let fid, let size):
+                cardShell(m, icon: "doc.text", iconBg: Color(red: 0.85, green: 0.47, blue: 0.34),
+                          title: name, sub: [Self.ext(name), size].filter { !$0.isEmpty }.joined(separator: " · ")) {
+                    if let u = model.fileURL(fid) { UIApplication.shared.open(u) }
+                }
+            case .artifact(let title, let lang):
+                cardShell(m, icon: "chevron.left.forwardslash.chevron.right", iconBg: Color(red: 0.36, green: 0.42, blue: 0.55),
+                          title: title, sub: "作品 · " + lang.uppercased()) {
+                    NativeChat.handOff(clickId: "artifactsTopBtn")
+                }
+            case .video(let u):
+                InlineVideo(url: u)
+                    .frame(width: 230, height: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            case .call(let kind, let dur):
+                callPill(m, kind: kind, dur: dur)
+            case .music(let title, let artist, let cover):
+                HStack(spacing: 12) {
+                    RemoteImage(url: cover, token: model.authToken(for: cover), placeholderSize: 48)
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                        Text(artist.isEmpty ? "他分享的歌" : artist).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(1)
+                    }
+                    Image(systemName: "music.note").foregroundColor(.secondary)
+                }
+                .foregroundColor(.primary)
+                .padding(10)
+                .frame(maxWidth: 260, alignment: .leading)
+                .imSurface(effectiveStyle, mine: m.mine, shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            case .gallery(let title, let caption, let img):
+                Button(action: { NativeChat.handOff(callFn: "openGalleryPanel") }) {
+                    HStack(spacing: 12) {
+                        if img != nil {
+                            RemoteImage(url: img, token: model.authToken(for: img), placeholderSize: 48)
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        } else {
+                            Image(systemName: "photo.on.rectangle").font(.system(size: 18)).frame(width: 48, height: 48)
+                                .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                            if !caption.isEmpty {
+                                Text(caption).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(2)
+                            }
+                        }
+                    }
+                    .foregroundColor(.primary)
+                    .padding(10)
+                    .frame(maxWidth: 260, alignment: .leading)
+                    .imSurface(effectiveStyle, mine: m.mine, shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
             case .text:
                 bubble(m)
             }
             if m.mine { avatarSlot(mine: true, show: withAvatar) } else { Spacer(minLength: 50) }
         }
+    }
+
+    private static func ext(_ name: String) -> String {
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return "FILE" }
+        return String(name[name.index(after: dot)...]).uppercased()
+    }
+
+    /// 文件卡 / 作品卡的壳：左边一块带色的图标，右边标题 + 小字，整张是玻璃，点了干 action
+    private func cardShell(_ m: NMsg, icon: String, iconBg: Color, title: String, sub: String,
+                           action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 40, height: 40)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(iconBg))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 15, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
+                    if !sub.isEmpty {
+                        Text(sub).font(.system(size: 12)).foregroundColor(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(.primary)
+            .padding(10)
+            .frame(maxWidth: 260, alignment: .leading)
+            .imSurface(effectiveStyle, mine: m.mine, shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    /// 通话记录胶囊：跟网页 _renderCallCards 一样 —— 接通=莫兰迪绿电话、拒接=红挂断、未接=红（她 09-12 定的色）
+    private func callPill(_ m: NMsg, kind: String, dur: String) -> some View {
+        let label: String
+        switch kind {
+        case "ended": label = "语音通话" + (dur.isEmpty ? "" : " " + dur)
+        case "rejected": label = "已拒接"
+        case "missed_back": label = "未接来电 已回拨"
+        default: label = "未接来电"
+        }
+        let color = kind == "ended" ? Color(red: 0.50, green: 0.60, blue: 0.51) : Color(red: 0.90, green: 0.30, blue: 0.18)
+        let icon = kind == "ended" ? "phone" : (kind == "rejected" ? "phone.down" : "phone.arrow.down.left")
+        return HStack(spacing: 10) {
+            Image(systemName: icon).font(.system(size: 15, weight: .medium)).foregroundColor(color)
+            Text(label).font(.system(size: 15.5)).foregroundColor(.primary)
+            if let t = m.time {
+                Text(Self.hm.string(from: t)).font(.system(size: 11)).foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .imSurface(effectiveStyle, mine: m.mine, shape: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     /// 字 + 右下角的时间，一起装进一颗胶囊
@@ -1388,6 +1587,31 @@ struct RemoteImage: View {
         guard let got = try? await URLSession.shared.data(for: r), let i = NImage.downsample(got.0, maxPixel: 1600) else { failed = true; return }
         NImageCache.shared.setObject(i, forKey: u as NSURL)
         img = i
+    }
+}
+
+/// 他 make_video 做的视频，聊天里直接播（系统播放器，自带全屏 / 进度条）
+struct InlineVideo: View {
+    let url: URL?
+    @State private var player: AVPlayer? = nil
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.85)
+            if let p = player {
+                VideoPlayer(player: p)
+            } else {
+                Image(systemName: "play.circle.fill").font(.system(size: 44)).foregroundColor(.white.opacity(0.9))
+            }
+        }
+        .onTapGesture {
+            if player == nil, let u = url {
+                let p = AVPlayer(url: u)
+                player = p
+                p.play()
+            }
+        }
+        .onDisappear { player?.pause() }
     }
 }
 
