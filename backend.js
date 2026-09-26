@@ -3182,7 +3182,10 @@ app.post('/api/call/ring', (req, res) => {
 // 不新写消息，是把已经在库里的那条 content 换成 [VOICEC:文件|时长]原文 ——
 // 换成新写一条的话，同一句话会在聊天记录里出现两遍。
 app.post('/api/call/attach-voice', auth, (req, res) => {
-  const convId = req.body?.conv_id;
+  // 09-26：通话里说的话是 wss 那头按 _mainConvId() 存的，这里必须认同一个，
+  //   不能信前端的 state.convId —— 她打电话时屏幕开着别的对话，整通 4 分半一句都没挂上，
+  //   胶囊也落到了那个对话里，主线看着像这通电话没打过。
+  const convId = _mainConvId() || req.body?.conv_id;
   const role = req.body?.role === 'assistant' ? 'assistant' : 'user';
   const fileId = String(req.body?.file_id || '');
   const dur = String(req.body?.dur || '').replace(/[^0-9:]/g, '');
@@ -3293,7 +3296,8 @@ app.post('/api/call/log', auth, (req, res) => {
   if (!['ended', 'rejected', 'missed'].includes(kind)) {
     return res.status(400).json({ error: 'bad kind' });
   }
-  const convId = req.body?.conv_id;
+  // 跟 attach-voice 同理：通话挂在主线上，记录条也落主线（09-26）
+  const convId = _mainConvId() || req.body?.conv_id;
   if (!convId) return res.status(400).json({ error: 'conv_id required' });
 
   // 「未接来电 已回拨」——参考图里那条。不是新写一条，是把之前漏掉的那条改掉：
@@ -3320,7 +3324,7 @@ app.post('/api/call/log', auth, (req, res) => {
   console.log('[call] 记下了，下一轮告诉他：' + _pendingCallNote);
   // 她这侧没接好（拒接 / 没接到 / 她挂的）→ 直接戳醒他，别等她下次开口（2026-09-19）
   _maybeCallPoke(kind, by);
-  res.json({ ok: true });
+  res.json({ ok: true, conv_id: convId });
 });
 
 app.post('/api/call/ring/cancel', (req, res) => {

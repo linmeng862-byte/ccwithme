@@ -2560,7 +2560,10 @@ function _logCall(kind,dur,by){
   fetch('/api/call/log',{method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+(state.token||'')},
     body:JSON.stringify({kind:kind,dur:dur||'',by:by||'',conv_id:state.convId})})
-    .then(function(r){if(r&&r.ok)_showCallCardNow(kind,dur,_convAtCall)}).catch(function(){});
+    // 后端现在把记录条落在主线（09-26），回来的 conv_id 才是它真在的地方；
+    // 她屏幕开着别的对话时 _showCallCardNow 会自己跳过，不往错的那屏上插。
+    .then(function(r){return r&&r.ok?r.json():null})
+    .then(function(d){if(d)_showCallCardNow(kind,dur,d.conv_id||_convAtCall)}).catch(function(){});
 }
 // 挂断/拒接的**当场**也要把那条胶囊摆出来。
 // 08-29：她说「挂他电话没显示已拒绝的胶囊」—— 查下去发现三种（接通/拒接/未接）
