@@ -1187,6 +1187,11 @@ html[data-theme="dark"]{--bubble-her:#302825;--bubble-him:#26241F}
      不越过头像这件事由外面的气泡负责，卡片只要不超出气泡就行。 */
   max-width:min(440px,100%)!important;
 }
+/* 09-26 她要他的文件卡跟她的一样小：他那张挂在 .msg-body（flex 列，默认 stretch）里被撑满，
+   她那张在按内容缩的 .msg-user-col 里。让他的也按内容缩、靠左。
+   连着两张时内联 margin:0 让它们贴在一起（玻璃阴影看着像叠住了），隔开 8px。 */
+.msg-claude .file-card{width:fit-content;align-self:flex-start}
+.msg-claude .file-card+.file-card{margin-top:8px!important}
 
 /* 她说气泡太高了。上下 12px + 行高 1.62 撑得太厚，收一点：
    单行气泡从 51px 降到 42px 左右，两行以上的行距还是松的。 */
