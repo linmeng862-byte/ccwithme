@@ -1854,7 +1854,7 @@ let _stkQuery = null;   // 懒建：建表可能排在这行后面，模块级 p
 function _stickerContextParts(raw, role) {
   const m = String(raw || '').match(/^\[Sticker\]\s*\/stickers\/([\w.-]+)/);
   if (!m) return null;
-  const who = role === 'assistant' ? 'Noct' : '粥粥';
+  const who = role === 'assistant' ? '沈辞' : '粥粥';
   let s = null;
   try {
     if (!_stkQuery) _stkQuery = db.prepare(
@@ -1904,7 +1904,7 @@ function _stickerTextForCli(raw, role) {
 }
 
 function _stickerBlurb(fname, role) {
-  const who = role === 'assistant' ? 'Noct' : '粥粥';
+  const who = role === 'assistant' ? '沈辞' : '粥粥';
   let s = null;
   try {
     if (!_stkQuery) _stkQuery = db.prepare(
