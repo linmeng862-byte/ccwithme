@@ -4864,6 +4864,8 @@ function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripU
   //    所以半截的也挡掉：整条以 [QUOTE: 开头、还没见到闭合标签 = 他正在写引用，先什么都不显示。
   if(/^\[QUOTE:/.test(src)&&!/\[\/QUOTE\]/.test(src))src='';
   else src=_stripQuote(src);
+  // 09-26：他偶尔会在正文里自己写 [STICKER:/stickers/x]（表情已经由 send_sticker 单独成条了），不显示这行。
+  src=src.replace(/\[STICKER:[^\]]*\]/gi,'');
   if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
   var imgRe=/\[IMAGE:([^\]]+)\]/g;var imgsHtml='',imgMatch;imgRe.lastIndex=0;
   while((imgMatch=imgRe.exec(src))!==null){imgsHtml+='<img src=\"'+assetUrl(imgMatch[1])+'\" style=\"max-width:min(320px,100%);max-height:400px;border-radius:26px;display:block;margin:6px 0;cursor:pointer;object-fit:scale-down;box-shadow:0 4px 24px rgba(0,0,0,.06)\" onclick=\"var ex=document.createElement(\'div\');ex.className=\'image-expand\';var fi=document.createElement(\'img\');fi.src=this.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)\" />'}

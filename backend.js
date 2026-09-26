@@ -10246,6 +10246,7 @@ async function executeTool(name, input, routes) {
           category: sticker.category || cat
         };
         // 他没点名 = 后端替他抽的，说一声，免得他以为这是自己挑的
+        out.sent = '已经发出去了，她那边单独一条就是这张图。正文里不用再写地址或任何标记。';
         if (!want) out.note = '这张是按 category 随机抽的。下次直接填 name 点名，清单在工具说明里。';
         return out;
       } catch(e) {
@@ -13428,6 +13429,12 @@ async function handleGatewayChat(req, res, ctx) {
     }
     // 标记要跟正文一起存：胶囊/贴纸/文件卡片靠它们在历史里重新渲染出来。
     // 注意接在 synthVoiceTags 之后 —— 那个函数只处理 <voice> 标签，别让它啃到标记。
+    // 09-26：他调完 send_sticker 又在正文里自己写了一行 `[STICKER:/stickers/x.gif]`（照着 [IMAGE:] 编的），
+    //   表情本身已经单独成条了，这行只会以原文露在气泡里。落库前剥掉，连带剥空出来的 --- 分段。
+    if (assistantText && /\[STICKER:[^\]]*\]/i.test(assistantText)) {
+      assistantText = assistantText.replace(/\[STICKER:[^\]]*\]/gi, '')
+        .replace(/^(\s*---\s*)+/, '').replace(/(\s*---\s*)+$/, '').trim();
+    }
     if (assistantText || gwMarkers || gwStickers.length) {
       if (assistantText) assistantText = await synthVoiceTags(assistantText, res);
       const gwFull = (assistantText || '') + gwMarkers;
