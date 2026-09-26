@@ -1791,6 +1791,11 @@ async function _analyzeSticker(imgPath) {
 // 后台给一张表情补上名字/描述/情绪词。识别失败落 failed —— 她在面板上能看到，
 // 点「重新处理」就是再调一次这个。
 // ⚠️ 只填**空着的**字段：她手写过的一律不覆盖。她写的比模型准，而且被悄悄改掉最气人。
+// 09-26：一次选一批上传时，认图要排队一张一张来。并发起 N 个 CLI 会把 2G 吃穿（见 _analyzeSticker 里 09-07 那条）。
+let _stkTagChain = Promise.resolve();
+function _queueAutoTag(sid) {
+  _stkTagChain = _stkTagChain.then(() => _autoTagSticker(sid)).catch(() => {});
+}
 async function _autoTagSticker(sid) {
   try {
     const s = db.prepare('SELECT * FROM stickers WHERE id = ?').get(sid);
@@ -1976,8 +1981,21 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
 
     // 08-27 改：以前描述必填，空了直接 400。现在没填就交给他自动认（_analyzeSticker），
     // 认完再落 active。人工填了的**优先**，绝不被自动结果覆盖 —— 她写的比模型准。
-    const name = (req.body.name || '').trim();
+    let name = (req.body.name || '').trim();
     const description = (req.body.description || '').trim();
+    // 09-26：文件名就是那句话的表情包（「你他妈不要我了吗.jpg」「小发雷霆-吃醋.jpg」），
+    //   名字直接拿文件名，第一段当名字、后面的当情绪词，**不再叫他去认** ——
+    //   一次认 = 一个冷启动的 CLI（带人格前缀），一批三十张就是几块钱，而字已经印在图上了。
+    //   只认「有中文、没有长串数字」的：微信图片_2026…、截屏2026… 这种照旧交给他认。
+    let _nameTags = [];
+    if (!name && !description) {
+      const stem = path.basename(req.file.originalname || '', path.extname(req.file.originalname || '')).trim();
+      if (/[\u4e00-\u9fff]/.test(stem) && !/\d{4,}/.test(stem)) {
+        const parts = stem.split(/[-_]+/).map(t => t.trim()).filter(Boolean);
+        name = (parts.shift() || '').slice(0, 30);
+        _nameTags = parts.map(t => t.slice(0, 20)).slice(0, 5);
+      }
+    }
 
     let emotionTags = [];
     try {
@@ -1985,6 +2003,7 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
       emotionTags = Array.isArray(raw) ? raw : (raw.trim().startsWith('[') ? JSON.parse(raw) : raw.split(/[,，、\s]+/));
       emotionTags = emotionTags.map(t => String(t).trim()).filter(Boolean).slice(0, 5);
     } catch(_) { emotionTags = []; }
+    if (!emotionTags.length && _nameTags.length) emotionTags = _nameTags;
 
     const owner = req.body.owner === 'assistant' ? 'assistant' : 'user';
     // sid 是服务端生成的，文件名不掺用户输入 —— 防路径遍历
@@ -2028,13 +2047,13 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
     const tags = req.body.tags || '';
     // 描述齐了就直接 active；缺了就先 processing 落库、**立刻返回**，
     // 识别在后台跑（要几十秒，不能让她对着转圈等）。她刷新面板就看到结果。
-    const needAuto = !description;
+    const needAuto = !description && !name;
     const status0 = needAuto ? 'processing' : 'active';
     db.prepare(
       'INSERT INTO stickers (id, filename, category, tags, owner, status, name, description, emotion_tags, mime, thumbnail) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
     ).run(sid, realFname, category, tags, owner, status0, name, description, JSON.stringify(emotionTags), realMime, thumbnail);
 
-    if (needAuto) _autoTagSticker(sid);   // 不 await：后台跑
+    if (needAuto) _queueAutoTag(sid);   // 不 await：后台跑，排队一张一张认
 
     res.json({
       id: sid, filename: realFname, owner, status: status0, name, description,
