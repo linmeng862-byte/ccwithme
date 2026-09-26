@@ -4593,6 +4593,11 @@ function _buildClaudeRow(text,userText='',thinking='',timestamp='',userAttachmen
       var _res=toolTraces.find(function(r){return r.type==='tool_result'&&r.tool_use_id===t.id});
       _renderSelfEditCard({toolInput:t.input,status:(_res&&_res.is_error)?'error':'completed'},body);
     })}catch(e){console.warn('[history] self-edit card:',e)}
+    // 09-26：定闹钟那张「已记录」卡，刷新后照样在（同 edit_myself 的路子，从 traces 重建）
+    try{_renderScheduleCard(toolTraces.filter(function(t){return t.type==='tool_use'&&_bareToolName(t.name)==='schedule_wakeup'}).map(function(t){
+      var _res=toolTraces.find(function(r){return r.type==='tool_result'&&r.tool_use_id===t.id});
+      return {toolInput:t.input,toolOutput:_res&&_res.content,status:(_res&&_res.is_error)?'error':'completed'};
+    }),body)}catch(e){console.warn('[history] schedule card:',e)}
   }else if(thinking){body.append(thoughtSummary(thinking))}
   }catch(e){console.warn('[history] trace row:',e)}
   var b=document.createElement('div');b.className='bubble';
@@ -4989,12 +4994,61 @@ function _renderSelfEditCard(phase,parent){
   requestAnimationFrame(function(){if(card.scrollHeight<=card.clientHeight+1)fade.style.display='none'});
   parent.appendChild(card);
 }
+// 他给自己定闹钟（schedule_wakeup set）—— 09-26 她拿别家的截图要的样子：
+//   「Tool use · 已记录 · N 项」+ 竖线 + 橙点「【Cis】设定了日程：时间，内容：…」。
+//   只收**定成功**的（list / mode / cancel / 报错的不上卡）。内容取他的入参 note ——
+//   返回值里那个 note 是给他的提示语，不是他写的事。点头部折起 / 展开。
+function _renderScheduleCard(phases,parent){
+  if(!phases||!parent)return;
+  var items=[];
+  phases.forEach(function(p){
+    var inp=p.toolInput||{};if(typeof inp==='string'){try{inp=JSON.parse(inp)}catch(e){inp={}}}
+    if(inp.action&&inp.action!=='set')return;
+    if(p.status==='error')return;
+    var raw=p.toolOutput;
+    if(Array.isArray(raw))raw=(raw.find(function(c){return c&&c.type==='text'})||{}).text;   // MCP 形状 [{type:'text',text}]
+    var out={};try{out=typeof raw==='string'?JSON.parse(raw):(raw||{})}catch(e){}
+    if(!out||!out.scheduled)return;
+    // 后端 at 是 zh-CN 本地串「2026/10/1 09:00:00」→ 摆成「2026-10-01 09:00」
+    var m=String(out.at||'').match(/(\d{4})\D(\d{1,2})\D(\d{1,2})\D+(\d{1,2}):(\d{2})/);
+    var when=m?m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0')+' '+m[4].padStart(2,'0')+':'+m[5]:String(out.at||'');
+    items.push({when:when,note:String(inp.note||'')});
+  });
+  if(!items.length)return;
+  var who='Cis';   // 她定的（09-26）
+  var MUTED='var(--text-time,#A0988B)',LINE='var(--border,#E5DFD4)';
+  var card=document.createElement('div');
+  card.className='schedule-card';
+  card.style.cssText='margin:6px 0 10px;width:100%;max-width:440px;box-sizing:border-box';
+  var hdr=document.createElement('div');
+  hdr.style.cssText='display:flex;align-items:center;gap:14px;cursor:pointer;padding:4px 0';
+  hdr.innerHTML=
+    '<span style="flex:none;color:var(--text-secondary,#6B6358);display:grid;place-items:center;width:22px">'+
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="19" r="2.4"/><path d="M6 8.4c0 4 6 4 6 8.2M18 8.4c0 4-6 4-6 8.2"/></svg></span>'+
+    '<span style="flex:1;min-width:0"><span style="display:block;font:400 17px/1.3 var(--font-serif,Georgia,serif);color:var(--text-primary,#2C2821)">Tool use</span>'+
+      '<span style="display:block;margin-top:2px;font:400 12px/1.3 var(--font-sans);color:'+MUTED+'">已记录 · '+items.length+' 项</span></span>'+
+    '<span class="sc-chev" style="flex:none;color:'+MUTED+';transition:transform .2s;display:grid;place-items:center">'+
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>';
+  var list=document.createElement('div');
+  list.style.cssText='margin:8px 0 0 10px;padding:4px 0 4px 22px;border-left:1.5px solid '+LINE;
+  list.innerHTML=items.map(function(it){
+    return '<div style="display:flex;gap:10px;padding:4px 0;font:400 14px/1.6 var(--font-sans);color:var(--text-secondary,#4A4238)">'+
+      '<span style="flex:none;width:7px;height:7px;border-radius:50%;background:#D97757;margin-top:.62em"></span>'+
+      '<span style="min-width:0;word-break:break-word">【'+escHtml(who)+'】设定了日程：'+escHtml(it.when)+'，内容：'+escHtml(it.note)+'</span></div>';
+  }).join('');
+  hdr.onclick=function(){var open=list.style.display!=='none';list.style.display=open?'none':'';hdr.querySelector('.sc-chev').style.transform=open?'rotate(-90deg)':''};
+  card.append(hdr,list);
+  // 跟截图一样摆在他那段话**上面**：实时那条路气泡已经在了，插到它前头；历史那条气泡还没挂，直接 append 就在上面
+  var firstBubble=Array.prototype.find.call(parent.children,function(c){return c.classList&&c.classList.contains('bubble')});
+  if(firstBubble)parent.insertBefore(card,firstBubble);else parent.appendChild(card);
+}
 function _renderActionReportCard(phases,traceRow,parent){
   if(!phases||!phases.length||!parent)return;
   var toolPhases=phases.filter(function(p){return p.type==='tool'});
   if(!toolPhases.length)return;
   // 他自改自己 —— MCP 工具，不在 _CODE_TOOLS 里，给它专门的卡（不能落进下面那张通用终端卡）
   toolPhases.forEach(function(p){if(_bareToolName(p.toolName)==='edit_myself')_renderSelfEditCard(p,parent)});
+  _renderScheduleCard(toolPhases.filter(function(p){return _bareToolName(p.toolName)==='schedule_wakeup'}),parent);
   var _CODE_TOOLS=['Read','Write','Edit','Grep','Glob','Bash'];
   toolPhases=toolPhases.filter(function(p){return _CODE_TOOLS.indexOf(p.toolName)!==-1});
   if(!toolPhases.length)return;

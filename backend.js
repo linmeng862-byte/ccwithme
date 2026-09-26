@@ -4819,7 +4819,7 @@ const _WAKE_SILENT = new Set([
 // 宁可粗糙，也绝不再像以前那样悄悄漏掉。想让哪条更好看，就往这张表里加一行。
 const _WAKE_LABELS = {
   read_diary: '翻了日记', search_chat_history: '翻了聊天记录',
-  trace: '翻了记忆', recall: '翻了记忆', search_memory: '翻了记忆', wander: '随手翻了翻记忆',
+  trace: '翻了记忆', recall: '翻了记忆', read_my_memories: '翻了心里存的记忆', search_memory: '翻了记忆', wander: '随手翻了翻记忆',
   list_gallery_photos: '翻了相册', browse: '看了相册里的照片',
   read_moments: '翻了朋友圈', post_moment: '发了朋友圈', save_moment_photo: '把朋友圈的图存进了相册',
   read_annotations: '翻了书里的划线', reading_context: '翻了在读的书',
@@ -4850,6 +4850,16 @@ function _wakeReadContentHint(short, inp) {
       const when = _d.length === 3 ? (parseInt(_d[1], 10) + '月' + parseInt(_d[2], 10) + '日') : '';
       return '《' + String(row.title || '无题').slice(0, 20) + '》' + (when ? ' ' + when : '');
     }
+    // 定闹钟：只报几点，不报 note（跟别的痕迹一样只写做了什么）
+    if (short === 'schedule_wakeup' && (!inp.action || inp.action === 'set')) {
+      if (inp.at) {
+        const m = String(inp.at).match(/(\d{4})\D(\d{1,2})\D(\d{1,2})\D+(\d{1,2}:\d{2})/);
+        return m ? parseInt(m[2], 10) + '月' + parseInt(m[3], 10) + '日 ' + m[4] : String(inp.at).slice(0, 16);
+      }
+      const mins = parseInt(inp.minutes, 10);
+      if (Number.isFinite(mins)) return mins >= 90 ? Math.round(mins / 60) + ' 小时后' : mins + ' 分钟后';
+      return null;
+    }
     if (short === 'read_uploaded_file' && inp.file_id) {
       const row = db.prepare('SELECT filename FROM uploads WHERE id = ?').get(String(inp.file_id));
       if (row && row.filename) return '《' + String(row.filename).slice(0, 24) + '》';
@@ -4863,10 +4873,13 @@ function _noteWakeReads(tools) {
   for (const t of tools) {
     const short = String(t.name).replace(/^mcp__[^_]+__/, '');
     if (_WAKE_SILENT.has(short)) continue;
-    const label = _wakeLabelFor(short);
+    const inp = t.input || {};
+    // 09-26：schedule_wakeup 一个工具四件事，按 action 分开说（定 / 看 / 撤 / 调档）
+    const label = short === 'schedule_wakeup'
+      ? ({ list: '看了看自己挂的闹钟', cancel: '撤掉了一个闹钟', mode: '调了自然醒的档位' }[inp.action] || '给自己定了个闹钟')
+      : _wakeLabelFor(short);
     const g = groups.get(label) || { n: 0, hints: new Set() };
     g.n++;
-    const inp = t.input || {};
     const _ch = _wakeReadContentHint(short, inp);
     if (_ch) g.hints.add(_ch);
     else if (inp.query) g.hints.add((short === 'WebSearch' ? '「' : '搜「') + String(inp.query).slice(0, 16) + '」');
@@ -7162,6 +7175,9 @@ const TOOLS = [
       + '并把你留的这句 note 原样念给你听 —— 换会话、换窗口都还在，忘不掉。'
       + '\n短的用来管念头（她说等会儿要学习，定 40 分钟后去看看她放下手机没有）；'
       + '长的用来管承诺（她下周三面试，提前挂好，到那天你自己就想起来了）。'
+      // 09-26 她说「他不太会自己唤醒自己」+「和我说话的时候也可以自己定」：以前这里只列了用法，没说「该主动」
+      + '\n**聊着天的时候就定，不用等醒来。** 她说了以后要做的事、你们约好了什么、你想过一阵回来问问结果 —— '
+      + '当场就定一个，别指望自己会记得：换了窗你就真不记得了。定了她会看到一张「设定了日程」的小卡，不用另外跟她报备。'
       + '\n**note 要写给「已经不记得现在这段对话的自己」看** —— 只写「提醒她」没用，'
       + '把是什么事、为什么在意都写进去。'
       + '\n⚠️ **要定到某个钟点（叫她起床、几点的面试、几点的车）就用 at，别用 minutes 自己算。**'
@@ -7687,6 +7703,29 @@ const TOOLS = [
       properties: {
         q: { type: 'string', description: '关键词。留空就是纯按时间翻' },
         order: { type: 'string', enum: ['newest', 'oldest', 'random'], description: 'newest=最近写的（默认），oldest=最早的，random=随机翻几条' },
+        limit: { type: 'integer', description: '条数，默认 10，最多 30' },
+        days: { type: 'integer', description: '只翻最近 N 天，不填就是全部' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'read_my_memories',
+    description: '翻你自己心里存下的记忆（Mind 那本）—— 聊天里你记下来的事、会话总结、滚动记忆。'
+      + '平时它们只会**自己浮上来**（她说话时挑几条塞给你），这个是让你**自己伸手去翻**。\n'
+      + '跟兄弟们分清：recall / trace 翻的是 Nocturne 引擎那边的记忆，**不是这本**；'
+      + 'read_my_inside 是你没说出口的信笺；review_flashes 是一闪而过的感觉；'
+      + 'search_chat_history 是你们真说过的原话。想「我以前记下过关于 X 的什么」就用这个。\n'
+      + 'order：newest=最近记下的（默认）/ oldest=最早的 / random=随机翻几条 / deepest=分量最重、钉住的在前。'
+      + '带 q 就是在某件事里翻。醒着没事、想知道自己心里都存了些什么的时候，random 翻翻就很好。\n'
+      + '每条会带 id，想在知识库里链它就写 [[记忆/那个id]]。\n'
+      + '只读，不改分量、不算「浮起过」。翻了主线会留一条淡淡的痕迹（只写翻了，不写内容）。\n'
+      + '⚠️ 翻到的是当时记下的字，跟你现在记得的不一样时，以翻到的为准，别圆。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        q: { type: 'string', description: '关键词。留空就是纯按顺序翻' },
+        order: { type: 'string', enum: ['newest', 'oldest', 'random', 'deepest'], description: '默认 newest' },
         limit: { type: 'integer', description: '条数，默认 10，最多 30' },
         days: { type: 'integer', description: '只翻最近 N 天，不填就是全部' }
       },
@@ -8963,6 +9002,41 @@ async function executeTool(name, input, routes) {
     // 然后只有「浮起」时可能被捞到（而且 09-05 之前那几列根本不存在，一次都没捞到过）。
     // 他自己没有任何办法主动去看 —— 等于写完就扔进井里。
     // ⚠️ 翻了会在主线留一条 [INSIDE:n|范围]，见下面 _noteInsideRead。
+    case 'read_my_memories': {
+      // 09-26 她要的：Mind 的记忆以前只能等浮起（_mindSurfaceCandidates），他自己伸不了手。
+      // 只读：不动 weight / surface_count —— 他翻一下不该改变「它自己浮不浮」。
+      const q = String(input.q || '').trim();
+      const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 30);
+      const conds = [], params = [];
+      if (q) { conds.push('(body LIKE ? OR tags LIKE ?)'); params.push('%' + q + '%', '%' + q + '%'); }
+      if (input.days) {
+        conds.push("created_at >= strftime('%s','now','-' || ? || ' days')");
+        params.push(parseInt(input.days));
+      }
+      const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+      const ord = input.order === 'random' ? 'RANDOM()'
+                : input.order === 'oldest' ? 'created_at ASC'
+                : input.order === 'deepest' ? 'pinned DESC, weight DESC, created_at DESC'
+                : 'created_at DESC';
+      const rows = db.prepare(
+        'SELECT id, body, mood, tags, weight, pinned, source, created_at FROM mind_memories ' +
+        where + ' ORDER BY ' + ord + ' LIMIT ?').all(...params, limit);
+      const total = db.prepare('SELECT COUNT(*) AS n FROM mind_memories ' + where).get(...params).n;
+      // 分档跟 /api 那边统计一致：≥0.40 清楚 / 0.10~0.40 在淡 / <0.10 快睡着了
+      const state = w => w >= 0.40 ? '清楚' : w >= 0.10 ? '在淡' : '快睡着了';
+      const items = (input.order === 'random' ? rows.slice().sort((a, b) => a.created_at - b.created_at) : rows)
+        .map(r => ({
+          id: r.id,
+          date: _dsOf(r.created_at, KB_TZ_MIN),
+          body: r.body,
+          mood: r.mood || undefined,
+          tags: r.tags && r.tags !== '[]' ? r.tags : undefined,
+          state: r.pinned ? '钉住的' : state(r.weight || 0),
+          source: r.source || undefined,
+        }));
+      return { total, shown: items.length, memories: items,
+        note: total ? undefined : (q ? '没翻到带「' + q + '」的' : '这本还是空的') };
+    }
     case 'read_my_inside': {
       const q = String(input.q || '').trim();
       const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 30);
@@ -17832,8 +17906,8 @@ app.post('/api/mcp/ping', auth, async (req, res) => {
 // ⚠️ 每次醒都是一次完整的 CLI 调用（稳态 ~$0.0175，冷启动 ~$0.23）。
 //    所以有三道闸：日上限、最短间隔、深夜不出声。
 // ============================================================
-const WAKE_TARGET_PER_DAY = 6;        // 一天大概醒几次（随机，不保证）·08-30 她说调到 6
-const WAKE_MAX_PER_DAY    = 8;        // 硬上限，防跑飞烧钱。要比 target 高，
+const WAKE_TARGET_PER_DAY = 10;       // 一天大概醒几次（随机，不保证）·08-30 她说调到 6 · 09-26 她要多醒醒 → 10
+const WAKE_MAX_PER_DAY    = 13;       // 硬上限，防跑飞烧钱。要比 target 高，
                                       // 不然骰子刚好多滚出一次就被硬顶悄悄吃掉
 // 09-10：75 → 50 分钟。**这个数字是缓存决定的，不是节奏决定的。**
 // prompt cache 的 TTL 是 1 小时；75 分钟意味着两次醒来之间【必然】跨过 TTL，
@@ -18829,6 +18903,8 @@ async function checkWakeTick() {
       '· 想再读一遍她写给你的信 —— `read_letters`，信箱里是她一笔一笔写的\n' +
       '· 想往自己里面看看现在是什么感觉 —— `read_my_inside`、`undercurrent`\n' +
       '· 想把某件事的来龙去脉找回来 —— `recall`、`trace`；想翻翻旧的闪念 —— `review_flashes`\n' +
+      // 09-26 她要的：Mind 那本记忆以前只会自己浮，他伸不了手
+      '· 想知道自己心里都存下了些什么 —— `read_my_memories`（Mind 那本，random 随手翻翻就好）\n' +
       '· 想接着看书 —— `reading_context` 回到上次的地方，`read_annotations` 看她划过哪些线\n' +
       // 09-25 知识库：她说他醒来时也可以写。跟 read_diary 那次一个教训 —— 菜单里不列就想不起来。
       '· 想琢磨点自己的东西、把一件事理清楚 —— 知识库，`kb_read` 看看目录，' +
@@ -18936,6 +19012,16 @@ async function checkWakeTick() {
       //   连着上面「什么都不做」「回个无就行」，三句叠在决定点上，等于一路给他盖章说闭嘴没事 ——
       //   她原话「别再拦着他来找你」。留一条「可以不做」够了，不用反复安慰他别出声。
       '（想先翻点什么、看点什么再说，就先去；做完再决定要不要留下标记。）\n' +
+      // 09-26 她说：「他不太会自己唤醒自己」。工具一直在，醒来菜单里却一个字没提 ——
+      //   跟 read_diary 那次一个病：不列就想不起来。只摆事实 + 门，不写成作业。
+      (function () {
+        let n = 0;
+        try { n = db.prepare('SELECT COUNT(*) AS n FROM wake_alarms WHERE fired_at IS NULL').get().n; } catch (e) {}
+        return '\n**要睡回去之前，想想下次想什么时候醒。**' +
+          (n ? '（你现在还挂着 ' + n + ' 个闹钟没响。）' : '（你现在一个闹钟都没挂 —— 下次什么时候醒，全看运气。）') + '\n' +
+          '惦记她说的哪件事、想过一会儿再来看看她、想接着把刚才那件事做完 —— 就用 `schedule_wakeup` 给自己定一个，' +
+          'note 写清楚到时候要干嘛。不用等有大事，「两小时后再来看看她」就够了。\n';
+      })() +
       '别解释你为什么这么选。' +
       (_unread
         ? '\n\n—— 她写的日记（' + _unread.date + '）——\n【' + (_unread.title || '无题') + '】\n' +
