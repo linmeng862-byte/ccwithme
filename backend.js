@@ -9275,7 +9275,7 @@ async function executeTool(name, input, routes) {
     case 'reach_her': {
       if (!input.title || !input.body) return { error: 'title 和 body 都要给' };
       const r = await _barkPush(input.title, input.body,
-        { level: input.urgent ? 'timeSensitive' : 'active', group: 'Noct' });
+        { level: input.urgent ? 'timeSensitive' : 'active', group: '沈辞' });
       if (!r.ok) return { error: r.error };
       return { ok: true, note: '推过去了。她那边震了一下 —— 她可能过一会儿才看到，别等回音。' };
     }
