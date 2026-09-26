@@ -15793,14 +15793,25 @@ app.post('/api/thinking-summary', auth, (req, res) => {
 
 // 思考框「翻译」按钮：5.5 的思考摘要是英文。转给网关 /translate（haiku 一次性进程，
 // 不进常驻池，不碰他的主会话缓存）。同一段翻过就记着，来回切不重复花钱。
+// 09-26 她要「不用点，他消息上面那栏直接是中文」→ 每段思考都会翻，历史翻上来也翻。两处跟着改：
+//   · 译文落盘（data/thinking-zh.json）：以前只在内存，重启一次、刷一次页面，历史里几十段全重翻重付钱。
+//   · 排队一段一段来：一段 = 一个 haiku 进程（~260MB），历史一屏几十段并发起 = 把机器吃穿。
+//   key 带版本号：翻译提示词改了就 +1，旧口气的译文自然作废（她嫌过「摘要有 I 译文没有我」）。
+const _TT_VER = 'v2';
+const _TT_FILE = path.join(__dirname, 'data', 'thinking-zh.json');
 const _thinkTranslateCache = new Map();
-app.post('/api/thinking-translate', auth, async (req, res) => {
-  const text = String(req.body.text || '').slice(0, 20000);
-  if (!text.trim()) return res.json({ text: '' });
-  const key = crypto.createHash('sha1').update(text).digest('hex');
-  if (_thinkTranslateCache.has(key)) return res.json({ text: _thinkTranslateCache.get(key) });
-  if (!GATEWAY_KEY) return res.status(503).json({ error: 'gateway not configured' });
-  try {
+try { for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(_TT_FILE, 'utf8')))) _thinkTranslateCache.set(k, v); } catch (_) {}
+let _ttSaveTimer = null;
+function _ttSave() {
+  clearTimeout(_ttSaveTimer);
+  _ttSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(_TT_FILE, JSON.stringify(Object.fromEntries(_thinkTranslateCache))); } catch (e) { console.warn('[thinking-translate] 存盘失败 ' + e.message); }
+  }, 2000);
+}
+const _ttPending = new Map();   // 同一段正在翻就等那一份，别起第二个进程
+let _ttChain = Promise.resolve();
+function _ttTranslate(text) {
+  const r = _ttChain.then(async () => {
     const r = await fetch(GATEWAY_BASE + '/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-gateway-key': GATEWAY_KEY },
@@ -15808,10 +15819,25 @@ app.post('/api/thinking-translate', auth, async (req, res) => {
       signal: AbortSignal.timeout(70000),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.text) return res.status(502).json({ error: d.error || 'translate failed' });
-    if (_thinkTranslateCache.size >= 200) _thinkTranslateCache.delete(_thinkTranslateCache.keys().next().value);
-    _thinkTranslateCache.set(key, d.text);
-    res.json({ text: d.text });
+    if (!r.ok || !d.text) throw new Error(d.error || 'translate failed');
+    return d.text;
+  });
+  _ttChain = r.catch(() => {});
+  return r;
+}
+app.post('/api/thinking-translate', auth, async (req, res) => {
+  const text = String(req.body.text || '').slice(0, 20000);
+  if (!text.trim()) return res.json({ text: '' });
+  const key = _TT_VER + ':' + crypto.createHash('sha1').update(text).digest('hex');
+  if (_thinkTranslateCache.has(key)) return res.json({ text: _thinkTranslateCache.get(key) });
+  if (!GATEWAY_KEY) return res.status(503).json({ error: 'gateway not configured' });
+  try {
+    if (!_ttPending.has(key)) _ttPending.set(key, _ttTranslate(text).finally(() => _ttPending.delete(key)));
+    const zh = await _ttPending.get(key);
+    if (_thinkTranslateCache.size >= 3000) _thinkTranslateCache.delete(_thinkTranslateCache.keys().next().value);
+    _thinkTranslateCache.set(key, zh);
+    _ttSave();
+    res.json({ text: zh });
   } catch (e) {
     console.warn('[thinking-translate] ' + e.message);
     res.status(502).json({ error: 'translate failed' });
