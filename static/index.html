@@ -586,7 +586,7 @@
     </div>
     <div style="flex:1"></div>
     <label id="stickerAddBtn" title="添加" style="width:30px;height:30px;border-radius:50%;background:var(--bg-sunken);display:grid;place-items:center;cursor:pointer;font-size:17px;color:var(--text-secondary)">+
-      <input type="file" id="stickerFileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" style="display:none" />
+      <input type="file" id="stickerFileInput" multiple accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" style="display:none" />
     </label>
     <button id="stickerEditToggle" title="编辑" style="width:30px;height:30px;border-radius:50%;background:var(--bg-sunken);border:none;cursor:pointer;color:var(--text-secondary);display:grid;place-items:center">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
@@ -4867,6 +4867,8 @@ function renderMessage(md,text,noStrip){var src=noStrip?String(text||''):_stripU
   //    所以半截的也挡掉：整条以 [QUOTE: 开头、还没见到闭合标签 = 他正在写引用，先什么都不显示。
   if(/^\[QUOTE:/.test(src)&&!/\[\/QUOTE\]/.test(src))src='';
   else src=_stripQuote(src);
+  // 09-26：他偶尔会在正文里自己写 [STICKER:/stickers/x]（表情已经由 send_sticker 单独成条了），不显示这行。
+  src=src.replace(/\[STICKER:[^\]]*\]/gi,'');
   if(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/.test(src)){var m=src.match(/^\[Sticker\]\s*(\/stickers\/[\w.]+)/);if(m){md.innerHTML='<img src=\"'+assetUrl(m[1])+'\" style=\"max-width:200px;max-height:200px;border-radius:12px;display:block\" />';return}}// [IMAGE:url] 标记 → 渲染为图片
   var imgRe=/\[IMAGE:([^\]]+)\]/g;var imgsHtml='',imgMatch;imgRe.lastIndex=0;
   while((imgMatch=imgRe.exec(src))!==null){imgsHtml+='<img src=\"'+assetUrl(imgMatch[1])+'\" style=\"max-width:min(320px,100%);max-height:400px;border-radius:26px;display:block;margin:6px 0;cursor:pointer;object-fit:scale-down;box-shadow:0 4px 24px rgba(0,0,0,.06)\" onclick=\"var ex=document.createElement(\'div\');ex.className=\'image-expand\';var fi=document.createElement(\'img\');fi.src=this.src;ex.append(fi);ex.onclick=function(){ex.remove()};document.body.append(ex)\" />'}
@@ -9672,24 +9674,32 @@ $('stkEditDelete').onclick = async function() {
 // ── 上传 ──
 // 名字/描述都不填 —— 后端会交给他自动认（status: processing → active）。
 // 她想改随时点编辑，人工填的永远优先。
+// 09-26：可以一次选一批，一张一张传（并发传会让后端同时起一堆认图进程）。
+//   文件名是中文那句话的（「你他妈不要我了吗.jpg」「小发雷霆-吃醋.jpg」）后端直接拿来当名字/情绪词，不再认。
 $('stickerFileInput').onchange = async function() {
-  var f = this.files[0]; if (!f) return;
+  var files = Array.prototype.slice.call(this.files || []); if (!files.length) return;
   this.value = '';
-  toast('上传中…');
-  var fd = new FormData(); fd.append('file', f); fd.append('owner', _stkOwner);
-  try {
-    var r = await fetch('/api/stickers/upload', {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + state.token }, body: fd
-    });
-    var j = await r.json().catch(function(){return{}});
-    if (!r.ok) { toast('上传失败: ' + (j.error || r.status)); return; }
-    toast(j.status === 'processing' ? '存好了，他正在认这张' : '存好了');
-    loadStickers();
-    // 他认完要几十秒，隔一会儿自己刷一次，省得她盯着「识别中」不动
-    if (j.status === 'processing') setTimeout(function() {
-      if ($('stickerPanel').style.display !== 'none') loadStickers();
-    }, 30000);
-  } catch (ex) { toast('上传失败: ' + ex.message); }
+  var ok = 0, fail = 0, processing = 0;
+  for (var i = 0; i < files.length; i++) {
+    toast(files.length > 1 ? '上传中… ' + (i + 1) + '/' + files.length : '上传中…');
+    var fd = new FormData(); fd.append('file', files[i]); fd.append('owner', _stkOwner);
+    try {
+      var r = await fetch('/api/stickers/upload', {
+        method: 'POST', headers: { 'Authorization': 'Bearer ' + state.token }, body: fd
+      });
+      var j = await r.json().catch(function(){return{}});
+      if (!r.ok) { fail++; toast('上传失败: ' + files[i].name + ' ' + (j.error || r.status)); continue; }
+      ok++; if (j.status === 'processing') processing++;
+    } catch (ex) { fail++; toast('上传失败: ' + ex.message); }
+  }
+  toast(files.length === 1
+    ? (fail ? '上传失败' : processing ? '存好了，他正在认这张' : '存好了')
+    : '存好了 ' + ok + ' 张' + (fail ? '，' + fail + ' 张失败' : '') + (processing ? '，' + processing + ' 张他在认' : ''));
+  loadStickers();
+  // 他认完要几十秒（一批是排队一张张认），隔一会儿自己刷一次，省得她盯着「识别中」不动
+  if (processing) setTimeout(function() {
+    if ($('stickerPanel').style.display !== 'none') loadStickers();
+  }, 30000 * Math.min(processing, 4));
 };
 
 	// 09-07 删掉了这里一个全局 .file-card 点击拦截器：它打的是

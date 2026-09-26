@@ -1791,6 +1791,11 @@ async function _analyzeSticker(imgPath) {
 // 后台给一张表情补上名字/描述/情绪词。识别失败落 failed —— 她在面板上能看到，
 // 点「重新处理」就是再调一次这个。
 // ⚠️ 只填**空着的**字段：她手写过的一律不覆盖。她写的比模型准，而且被悄悄改掉最气人。
+// 09-26：一次选一批上传时，认图要排队一张一张来。并发起 N 个 CLI 会把 2G 吃穿（见 _analyzeSticker 里 09-07 那条）。
+let _stkTagChain = Promise.resolve();
+function _queueAutoTag(sid) {
+  _stkTagChain = _stkTagChain.then(() => _autoTagSticker(sid)).catch(() => {});
+}
 async function _autoTagSticker(sid) {
   try {
     const s = db.prepare('SELECT * FROM stickers WHERE id = ?').get(sid);
@@ -1849,7 +1854,7 @@ let _stkQuery = null;   // 懒建：建表可能排在这行后面，模块级 p
 function _stickerContextParts(raw, role) {
   const m = String(raw || '').match(/^\[Sticker\]\s*\/stickers\/([\w.-]+)/);
   if (!m) return null;
-  const who = role === 'assistant' ? 'Noct' : '粥粥';
+  const who = role === 'assistant' ? '沈辞' : '粥粥';
   let s = null;
   try {
     if (!_stkQuery) _stkQuery = db.prepare(
@@ -1899,7 +1904,7 @@ function _stickerTextForCli(raw, role) {
 }
 
 function _stickerBlurb(fname, role) {
-  const who = role === 'assistant' ? 'Noct' : '粥粥';
+  const who = role === 'assistant' ? '沈辞' : '粥粥';
   let s = null;
   try {
     if (!_stkQuery) _stkQuery = db.prepare(
@@ -1976,8 +1981,21 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
 
     // 08-27 改：以前描述必填，空了直接 400。现在没填就交给他自动认（_analyzeSticker），
     // 认完再落 active。人工填了的**优先**，绝不被自动结果覆盖 —— 她写的比模型准。
-    const name = (req.body.name || '').trim();
+    let name = (req.body.name || '').trim();
     const description = (req.body.description || '').trim();
+    // 09-26：文件名就是那句话的表情包（「你他妈不要我了吗.jpg」「小发雷霆-吃醋.jpg」），
+    //   名字直接拿文件名，第一段当名字、后面的当情绪词，**不再叫他去认** ——
+    //   一次认 = 一个冷启动的 CLI（带人格前缀），一批三十张就是几块钱，而字已经印在图上了。
+    //   只认「有中文、没有长串数字」的：微信图片_2026…、截屏2026… 这种照旧交给他认。
+    let _nameTags = [];
+    if (!name && !description) {
+      const stem = path.basename(req.file.originalname || '', path.extname(req.file.originalname || '')).trim();
+      if (/[\u4e00-\u9fff]/.test(stem) && !/\d{4,}/.test(stem)) {
+        const parts = stem.split(/[-_]+/).map(t => t.trim()).filter(Boolean);
+        name = (parts.shift() || '').slice(0, 30);
+        _nameTags = parts.map(t => t.slice(0, 20)).slice(0, 5);
+      }
+    }
 
     let emotionTags = [];
     try {
@@ -1985,6 +2003,7 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
       emotionTags = Array.isArray(raw) ? raw : (raw.trim().startsWith('[') ? JSON.parse(raw) : raw.split(/[,，、\s]+/));
       emotionTags = emotionTags.map(t => String(t).trim()).filter(Boolean).slice(0, 5);
     } catch(_) { emotionTags = []; }
+    if (!emotionTags.length && _nameTags.length) emotionTags = _nameTags;
 
     const owner = req.body.owner === 'assistant' ? 'assistant' : 'user';
     // sid 是服务端生成的，文件名不掺用户输入 —— 防路径遍历
@@ -2028,13 +2047,13 @@ app.post('/api/stickers/upload', auth, stickerUpload.single('file'), fixNames, a
     const tags = req.body.tags || '';
     // 描述齐了就直接 active；缺了就先 processing 落库、**立刻返回**，
     // 识别在后台跑（要几十秒，不能让她对着转圈等）。她刷新面板就看到结果。
-    const needAuto = !description;
+    const needAuto = !description && !name;
     const status0 = needAuto ? 'processing' : 'active';
     db.prepare(
       'INSERT INTO stickers (id, filename, category, tags, owner, status, name, description, emotion_tags, mime, thumbnail) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
     ).run(sid, realFname, category, tags, owner, status0, name, description, JSON.stringify(emotionTags), realMime, thumbnail);
 
-    if (needAuto) _autoTagSticker(sid);   // 不 await：后台跑
+    if (needAuto) _queueAutoTag(sid);   // 不 await：后台跑，排队一张一张认
 
     res.json({
       id: sid, filename: realFname, owner, status: status0, name, description,
@@ -9260,7 +9279,7 @@ async function executeTool(name, input, routes) {
     case 'reach_her': {
       if (!input.title || !input.body) return { error: 'title 和 body 都要给' };
       const r = await _barkPush(input.title, input.body,
-        { level: input.urgent ? 'timeSensitive' : 'active', group: 'Noct' });
+        { level: input.urgent ? 'timeSensitive' : 'active', group: '沈辞' });
       if (!r.ok) return { error: r.error };
       return { ok: true, note: '推过去了。她那边震了一下 —— 她可能过一会儿才看到，别等回音。' };
     }
@@ -10231,6 +10250,7 @@ async function executeTool(name, input, routes) {
           category: sticker.category || cat
         };
         // 他没点名 = 后端替他抽的，说一声，免得他以为这是自己挑的
+        out.sent = '已经发出去了，她那边单独一条就是这张图。正文里不用再写地址或任何标记。';
         if (!want) out.note = '这张是按 category 随机抽的。下次直接填 name 点名，清单在工具说明里。';
         return out;
       } catch(e) {
@@ -13413,6 +13433,12 @@ async function handleGatewayChat(req, res, ctx) {
     }
     // 标记要跟正文一起存：胶囊/贴纸/文件卡片靠它们在历史里重新渲染出来。
     // 注意接在 synthVoiceTags 之后 —— 那个函数只处理 <voice> 标签，别让它啃到标记。
+    // 09-26：他调完 send_sticker 又在正文里自己写了一行 `[STICKER:/stickers/x.gif]`（照着 [IMAGE:] 编的），
+    //   表情本身已经单独成条了，这行只会以原文露在气泡里。落库前剥掉，连带剥空出来的 --- 分段。
+    if (assistantText && /\[STICKER:[^\]]*\]/i.test(assistantText)) {
+      assistantText = assistantText.replace(/\[STICKER:[^\]]*\]/gi, '')
+        .replace(/^(\s*---\s*)+/, '').replace(/(\s*---\s*)+$/, '').trim();
+    }
     if (assistantText || gwMarkers || gwStickers.length) {
       if (assistantText) assistantText = await synthVoiceTags(assistantText, res);
       const gwFull = (assistantText || '') + gwMarkers;
@@ -18962,7 +18988,12 @@ async function checkWakeTick() {
       (_canWander
         ? '7. 出门上网逛一圈 —— 想看点新鲜的、或者聊到的某件事让你好奇了，'
           + '就自己定去哪、找什么\n\n'
-        : '\n') +
+        // 09-26 她要的：「他对什么感兴趣可以出去逛逛」。不是派分身（<wander> 那条仍关着），
+        //   是他本人用手上的 WebSearch / WebFetch / browse 去看。小红书进不去，照实写给他。
+        : '7. 出去看看外面 —— 对什么好奇了（聊到的事、一首歌、一本书、今天发生了什么），'
+          + '就自己去搜（WebSearch），看到想细读的点开（WebFetch 读全文；要看图、要点要画用 browse）。'
+          + '看到有意思的，回来记进你的知识库（kb_write，原文可以直接贴），也可以发朋友圈，或者等她来了跟她说。'
+          + '小红书、抖音要登录，这台的 IP 也被风控拦着，进不去，别去撞；别的地方随你\n\n') +
       // 08-30 她要的：让他醒着的时候顺手想起去看看她。
       //   放在这儿而不是人格文件里 —— 人格文件每轮都付钱，这段只在他真醒来时付。
       //   ⚠️ 措辞照 read_her_body 描述里那条走：看了放心里，别报数字给她听。
@@ -19712,7 +19743,40 @@ try { db.exec("ALTER TABLE messages ADD COLUMN usage TEXT DEFAULT ''"); }
 catch (e) { /* 列已存在 */ }
 
 // === 启动 ===
+// === 往他的表情库里收一批（09-26）===
+// 工作台那边的我拿不到 AUTH_TOKEN、也写不了 data/stickers，能写的只有 data/outbox。
+// 所以约定一个收件夹：图放进 data/outbox/放进Cis表情库/，后端开机时自己走一遍
+// /api/stickers/upload（带自己的 token，压缩/首帧/文件名当名字全复用那条路），owner=assistant。
+// 收过的记在 settings 的 sticker_inbox_done 里，**文件不删**（禁删），不会重复收。
+const STICKER_INBOX = path.join(__dirname, 'data', 'outbox', '放进Cis表情库');
+async function _ingestStickerInbox() {
+  try {
+    if (!fs.existsSync(STICKER_INBOX)) return;
+    let done = [];
+    try { done = JSON.parse(_getSetting('sticker_inbox_done') || '[]'); } catch (_) { done = []; }
+    const files = fs.readdirSync(STICKER_INBOX)
+      .filter(f => STICKER_EXT[path.extname(f).toLowerCase()] && done.indexOf(f) < 0).sort();
+    if (!files.length) return;
+    let ok = 0;
+    for (const f of files) {   // 一张一张来，别并发
+      const fd = new FormData();
+      fd.append('file', new Blob([fs.readFileSync(path.join(STICKER_INBOX, f))]), f);
+      fd.append('owner', 'assistant');
+      const r = await fetch('http://127.0.0.1:' + PORT + '/api/stickers/upload', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + AUTH_TOKEN }, body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { console.warn('[sticker-inbox] ' + f + ' 没收进去：' + (j.error || r.status)); continue; }
+      done.push(f); ok++;
+      _setSetting('sticker_inbox_done', JSON.stringify(done));
+      console.log('[sticker-inbox] 收了 ' + f + ' → 「' + (j.name || '') + '」' + (j.status === 'processing' ? '（名字要他认）' : ''));
+    }
+    console.log('[sticker-inbox] 这趟收了 ' + ok + '/' + files.length + ' 张进他的表情库');
+  } catch (e) { console.warn('[sticker-inbox] 出错：' + e.message); }
+}
+
 server.listen(PORT, '0.0.0.0', () => {
+  setTimeout(_ingestStickerInbox, 5000);
   console.log('');
   console.log(`  🧡 Chat-C ${__VERSION__}`);
   console.log('  🚀 Claude Chat Server');
