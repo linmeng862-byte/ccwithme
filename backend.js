@@ -4130,10 +4130,15 @@ function _parseMcpPayload(text) {
 // 09-17：引擎（Zeabur）一重启，旧的 Mcp-Session-Id 就作废，回 404「Session not found」。
 //   以前这里拿到一次就永远用，不清 —— 09-17 00:45 起 hold 连败十条、trace 也跟着空，
 //   全被吞成「引擎没连上」，直到 chat-c 重启才好。现在 404 就清掉重握手，再试一次。
-async function callNocturne(toolName, args = {}, _retried = false) {
-  try {
-    // 先 initialize 握手拿 Mcp-Session-Id（POST initialize，否则 tools/call 返回 Missing session ID / Invalid request parameters）
-    if (!_nocturneSessionId) {
+// 09-26：握手要合并成一次。醒来时 breath / get_wake_context / undercurrent 是同一毫秒并发出去的，
+//   以前 404 时谁先回谁把 _nocturneSessionId 清空，后回的看见「已经是空的」就不重试、直接报 404 ——
+//   日志里「重新握手」之后紧跟三条「回 404」就是这个，引擎其实好好的（curl 同一流程全 200）。
+//   现在：404 时只清「自己用的那个」会话号（别人已经换上新的就不动），每个都重试一次，
+//   重握手共用一个 promise，不会五个调用各握一次手。
+let _nocturneInitP = null;
+function _nocturneInit() {
+  if (!_nocturneInitP) {
+    _nocturneInitP = (async () => {
       try {
         const initRes = await fetch(NOCTURNE_URL + '/mcp', {
           method: 'POST',
@@ -4144,7 +4149,16 @@ async function callNocturne(toolName, args = {}, _retried = false) {
         const sid = initRes.headers.get('Mcp-Session-Id');
         if (sid) _nocturneSessionId = sid;
       } catch(e) {}
-    }
+    })().finally(() => { _nocturneInitP = null; });
+  }
+  return _nocturneInitP;
+}
+
+async function callNocturne(toolName, args = {}, _retried = false) {
+  try {
+    // 先 initialize 握手拿 Mcp-Session-Id（POST initialize，否则 tools/call 返回 Missing session ID / Invalid request parameters）
+    if (!_nocturneSessionId) await _nocturneInit();
+    const _usedSid = _nocturneSessionId;
     const controller = new AbortController();
     // 09-24 她拍板放宽：breath 冷启动实测 10.4s，10s 上限会把整口气掐掉、静默变成「没记忆」。
     //    只放宽 breath —— 它有 10 分钟缓存，慢只慢冷的那一次；别的工具照旧 10s。
@@ -4165,14 +4179,18 @@ async function callNocturne(toolName, args = {}, _retried = false) {
     if (!_nocturneSessionId && r.headers.get('Mcp-Session-Id')) {
       _nocturneSessionId = r.headers.get('Mcp-Session-Id');
     }
-    clearTimeout(timeout);
-    if (r.status === 404 && _nocturneSessionId && !_retried) {
-      console.warn('[nocturne] 会话号过期，重新握手');
-      _nocturneSessionId = null;
+    if (r.status === 404 && _usedSid && !_retried) {
+      clearTimeout(timeout);
+      console.warn('[nocturne] ' + toolName + ' 会话号过期，重新握手');
+      if (_nocturneSessionId === _usedSid) _nocturneSessionId = null;
       return callNocturne(toolName, args, true);
     }
-    if (!r.ok) { console.warn('[nocturne] ' + toolName + ' 回 ' + r.status); return null; }
-    return _parseMcpPayload(await r.text());
+    if (!r.ok) { clearTimeout(timeout); console.warn('[nocturne] ' + toolName + ' 回 ' + r.status); return null; }
+    // 09-26：超时必须罩住读 body 这一段。以前拿到响应头就 clearTimeout，
+    //   引擎回了头却把 SSE 流一直挂着不收尾 → r.text() 永远不回 → /api/chat 卡在 breath 前后，
+    //   消息根本到不了网关，她那边就是「他不回我」（12:55 那次，4 条连接挂在 Zeabur 上）。
+    try { return _parseMcpPayload(await r.text()); }
+    finally { clearTimeout(timeout); }
   } catch(e) {
     // 09-24：原来这里一声不吭 return null —— 超时（10s 上限，breath 冷启动实测 10.4s）
     // 和断网都长得跟「没记忆」一样，醒来没灌进去也查不出为什么。
@@ -5791,7 +5809,7 @@ function _mindVecRows() {
 
 // 语义补齐：拿她这句话的向量，跟库里所有向量比余弦，够像的补进来。
 // ⚠️ 这里跟字面那路是**同一批过滤**，只是捞法不同。别在这儿放宽。
-function _mindSemanticPick(qvec, query, alreadyPicked, need, queryIsHot) {
+function _mindSemanticPick(qvec, query, alreadyPicked, need, queryIsHot, skip) {
   if (!qvec || need <= 0) return [];
   try {
     var rows = _mindVecRows();
@@ -5799,6 +5817,7 @@ function _mindSemanticPick(qvec, query, alreadyPicked, need, queryIsHot) {
     var now = Math.floor(Date.now() / 1000);
     var seen = {};
     (alreadyPicked || []).forEach(function(r) { seen[r.kind + ':' + r.id] = 1; });
+    if (skip) skip.forEach(function(k) { seen[k] = 1; });   // 钉住的已经摆在他眼前了，见 mindPinned
 
     var scored = [];
     rows.forEach(function(r) {
@@ -6239,7 +6258,7 @@ function _mindMoodsFor(query) {
   }
   return [];
 }
-function _mindSemanticFill(query, alreadyPicked, limit) {
+function _mindSemanticFill(query, alreadyPicked, limit, skip) {
   try {
     var need = limit || 0;
     if (need <= 0) return [];
@@ -6271,6 +6290,7 @@ function _mindSemanticFill(query, alreadyPicked, limit) {
     pool.forEach(function(r) {
       if (out.length >= need) return;
       if (seen['feel:' + r.id]) return;
+      if (skip && skip.has('feel:' + r.id)) return;
       // ⚠️ 语境门控（过滤二）必须照过。兜底是绕开主检索直接从表里捞的，
       //    不在这儿补一遍，被 gate 管着的记忆会从后门浮出来（架构核对时查出来的）。
       if (!r.pinned) {
@@ -6357,6 +6377,7 @@ function _mindSurfaceCandidates(query, limit, qvec, opts) {
       var w = k.weak ? 0.8 : 1;
       rows.forEach(function(r) {
         var key = kind + ':' + r.id;
+        if (opts && opts.skip && opts.skip.has(key)) return;
         var cur = hitMap.get(key);
         if (cur) { cur.hits += w; return; }
         r.kind = kind; r.hits = w;
@@ -6430,13 +6451,13 @@ function _mindSurfaceCandidates(query, limit, qvec, opts) {
   // 字面没捞满 → 先语义（真的懂意思），再情绪兜底（正则认温度）。
   // 顺序不能反：语义准得多，让它先挑，兜底只填剩下的空位。
   if (picked.length < (limit || 5)) {
-    _mindSemanticPick(qvec, query, picked, (limit || 5) - picked.length, queryIsHot)
+    _mindSemanticPick(qvec, query, picked, (limit || 5) - picked.length, queryIsHot, opts && opts.skip)
       .forEach(function(r) { picked.push(r); });
   }
   // ⚠️ 情绪兜底可以延后：Nocturne 那一路要排在它前面（它是真语义，兜底只是正则认温度）。
   //    mindBreath 里传 deferMoodFill，等 Nocturne 挑完再回头补空位。
   if (!(opts && opts.deferMoodFill) && picked.length < (limit || 5)) {
-    _mindSemanticFill(query, picked, (limit || 5) - picked.length)
+    _mindSemanticFill(query, picked, (limit || 5) - picked.length, opts && opts.skip)
       .forEach(function(r) { picked.push(r); });
   }
   return picked;
@@ -6655,9 +6676,75 @@ function _nocturneMarkSurfaced(rows) {
 // 调大更省钱但他记忆浮得更稀，调小反之。想关掉就设 0。
 const MIND_SURFACE_MIN_GAP_SEC = 240;
 
+// 📌 钉住的一直在（2026-09-26 她要的：「pinned 的需要一直浮现」）
+// ------------------------------------------------------------
+// 以前 pinned 在浮起里只是加分（字面 +2 / 语义 +0.3）+ 绕过语境门控，
+// 可仍然要被她这句话勾上、仍然要过冷却 —— 钉住了也可能一整窗都见不到。
+// 现在：**每个新窗首轮**整份挂进消息（跟记忆浮现同一处），之后随 --resume 一直在历史里；
+// 非网关那几条路每轮进系统提示词。所以它们「一直在眼前」。
+//   · 挂过的那批 id 记在 mind_pinned_shown:<convId>，每轮浮起跳过它们 ——
+//     已经在眼前了，再占【心里浮起来的】5 个名额就是重复。
+//   · 窗中途新钉的不在那份清单里，照旧走普通浮起（+2 加分），下个窗起才进常驻。
+// 💰 09-26 量：20 条约 1200 字，一窗付一次 cache_write，之后是 cache_read。钉多了要回来看这个数。
+const MIND_PINNED_SPECS = [
+  ['feel',   "SELECT id, body, mood, created_at FROM mind_feels WHERE pinned = 1"],
+  ['memory', "SELECT id, body, created_at FROM mind_memories WHERE pinned = 1"],
+  ['dream',  "SELECT id, title, body, created_at FROM mind_dreams WHERE pinned = 1"],
+  ['inside', "SELECT id, color, body, created_at FROM mind_inside WHERE pinned = 1"],
+  ['corpus', "SELECT id, source, title, body, created_at FROM mind_corpus WHERE pinned = 1"],
+];
+function mindPinned() {
+  var rows = [];
+  MIND_PINNED_SPECS.forEach(function(sp) {
+    try { db.prepare(sp[1]).all().forEach(function(r) { r.kind = sp[0]; rows.push(r); }); } catch(e) {}
+  });
+  rows.sort(function(a, b) { return (a.created_at || 0) - (b.created_at || 0); });
+  var ids = rows.map(function(r) { return r.kind + ':' + r.id; });
+  if (!rows.length) return { ids: ids, text: '' };
+  var lines = rows.map(function(r) {
+    if (r.kind === 'dream') return '· （梦）' + (r.title ? r.title + '：' : '') + r.body;
+    if (r.kind === 'feel') return '· （那时的感觉' + (r.mood ? '·' + r.mood : '') + '）' + r.body;
+    if (r.kind === 'inside') return '· （没说出口' + (r.color ? '·' + r.color : '') + '）' + r.body;
+    if (r.kind === 'corpus') return '· （' + (r.source === 'diary' ? '我写过的日记' : '我以前手稿里写的')
+      + (r.title ? '·' + r.title : '') + '）' + r.body;
+    return '· ' + r.body;
+  });
+  return { ids: ids, text: '[钉住的——这些不会淡，一直都在]\n' + lines.join('\n') +
+    '\n（是你的，不是粥粥现在说的话。不用每条都提，知道它们在就好。）' };
+}
+// 💭 最近的感受（2026-09-26 她要的）
+// ------------------------------------------------------------
+// Nocturne 的 Feel Trace 每次 breath 只**随机抽 8 条**，池子还停在 09-25 08:47 ——
+// 他每轮写的 <feel> 只进本地 mind_feels（_insertMindItem），从来不去 Nocturne。
+// 于是醒来读到的感受永远是昨天那十几条里抽签，她在 Memory 页看到的他这边没抽到。
+// 这里从本地按时间取最近的，不抽签，跟 breath 同一时机挂进去（新窗首轮 / 非网关每轮）。
+// 💰 15 条 × 约 60~100 字 ≈ 1~1.5k 字，一窗一次 cache_write。
+const MIND_RECENT_FEELS_N = 15;
+const MIND_RECENT_FEELS_SEC = 48 * 3600;
+function mindRecentFeels() {
+  try {
+    var since = Math.floor(Date.now() / 1000) - MIND_RECENT_FEELS_SEC;
+    var rows = db.prepare('SELECT body, mood, created_at FROM mind_feels WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?')
+      .all(since, MIND_RECENT_FEELS_N);
+    if (!rows.length) return '';
+    rows.reverse();   // 按发生的顺序读
+    var lines = rows.map(function(r) {
+      var d = new Date(r.created_at * 1000);
+      var ts = (d.getMonth() + 1) + '-' + String(d.getDate()).padStart(2, '0') + ' '
+        + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      return '[' + ts + (r.mood ? '·' + r.mood : '') + '] ' + r.body;
+    });
+    return '[最近的感受——你自己写下的 <feel>，按时间排，最新的在最后]\n' + lines.join('\n');
+  } catch (e) { console.warn('[feels] 取最近感受失败：' + e.message); return ''; }
+}
+function _mindPinnedShown(convId) {
+  try { return new Set(JSON.parse(_getSetting('mind_pinned_shown:' + convId) || '[]')); }
+  catch(e) { return new Set(); }
+}
+
 // 对外：拼成【心里浮起来的】段。没捞到就返回空串（什么都不加）。
 // 返回的文字要塞进 message（不是系统提示词，铁律 4）。
-async function mindBreath(query) {
+async function mindBreath(query, skip) {
   try {
     // 先向本机 embedding 服务要她这句话的向量。要不到（服务没起 / 超时）就是 null，
     // 下面照旧走字面 + 情绪兜底 —— 语义是加的一条路，不是聊天的必要条件。
@@ -6670,7 +6757,7 @@ async function mindBreath(query) {
     var _q = String(query || '');
     // 本地先跑（同步，几十毫秒）。够用就**根本不打远端那一发**，
     // 省的是她那 1.2 秒 —— 而且本地够用的时候，远端来的多半是噪音（见上面那组实测）。
-    var rows = _mindSurfaceCandidates(_q, 5, _qv, { deferMoodFill: true });
+    var rows = _mindSurfaceCandidates(_q, 5, _qv, { deferMoodFill: true, skip: skip });
     if (rows.length < MIND_NOCT_LOCAL_ENOUGH) {
       var _nrows = await _nocturnePick(_q, _qv, rows, Math.min(MIND_NOCT_MAX, 5 - rows.length));
       if (_nrows.length) {
@@ -6680,7 +6767,7 @@ async function mindBreath(query) {
     }
     // 最后才轮到情绪兜底填空位
     if (rows.length < 5) {
-      _mindSemanticFill(_q, rows, 5 - rows.length).forEach(function(r) { rows.push(r); });
+      _mindSemanticFill(_q, rows, 5 - rows.length, skip).forEach(function(r) { rows.push(r); });
     }
     // 聊天原文单独一个名额，排在 Mind 那 5 条后面（见 _chatSurfacePick）
     var _chat = _chatSurfacePick(_qv, _q, rows);
@@ -11109,7 +11196,11 @@ app.post('/api/chat', auth, async (req, res) => {
   const _msLast = _getSettingNum(_msKey);
   const _msNow = Math.floor(Date.now() / 1000);
   const _msDue = !_msLast || (_msNow - _msLast) >= MIND_SURFACE_MIN_GAP_SEC;
-  const mindSurfaced = (NO_ENGINE || !_msDue) ? '' : await mindBreath(message);
+  // 📌 钉住的：新窗首轮（needBreath）现取一份整挂进去；其余轮跳过上次挂进去的那批（见 mindPinned）
+  const _pinned = needBreath ? mindPinned() : null;
+  const _recentFeels = needBreath ? mindRecentFeels() : '';   // 💭 见 mindRecentFeels
+  const _pinSkip = _pinned ? new Set(_pinned.ids) : _mindPinnedShown(convId);
+  const mindSurfaced = (NO_ENGINE || !_msDue) ? '' : await mindBreath(message, _pinSkip);
   if (mindSurfaced) _setSetting(_msKey, _msNow);
   _mark(_msDue ? 'Mind 浮起完' : 'Mind 浮起跳过（节流）');
 
@@ -11170,6 +11261,9 @@ app.post('/api/chat', auth, async (req, res) => {
     //    改成挂进会话首条消息 → 进对话历史 → resume 会重放，而且按缓存读取计费（便宜 20 倍）。
     //    中转 API 路径每轮重发历史，放系统提示词没问题，维持原样。
     ((nocturneMemory && !useGateway) ? "\n\n═══\n[记忆浮现]\n" + nocturneMemory : "") +
+    // 📌 非网关：系统提示词每轮都整份发，钉住的跟着每轮在
+    ((_pinned && _pinned.text && !useGateway) ? "\n\n═══\n" + _pinned.text : "") +
+    ((_recentFeels && !useGateway) ? "\n\n═══\n" + _recentFeels : "") +
     // 家族跟记忆浮现分开给：浮现是「涌上来的」，这段是「还没想完的」，不是一回事。
     ((nocturneUnderText && !useGateway) ? "\n\n═══\n" + nocturneUnderText : "") +
     ((nocturneWakeText && !useGateway) ? "\n\n═══\n" + nocturneWakeText : "") +
@@ -11425,7 +11519,8 @@ app.post('/api/chat', auth, async (req, res) => {
     }
     // 会话首轮：把记忆浮现挂在消息最前面。它会成为对话历史的一部分，
     // 之后每轮 resume 都带着，且按 cache_read 计费。存进库的是她原本那句，这段不会出现在界面上。
-    if (needBreath && (nocturneMemory || nocturneFamilyText || nocturneUnderText || nocturneWakeText)) {
+    const _pinText = (_pinned && _pinned.text) || '';
+    if (needBreath && (nocturneMemory || nocturneFamilyText || nocturneUnderText || nocturneWakeText || _pinText || _recentFeels)) {
       // 家族排在浮现**后面**：先是某处紧了一下（浮现），然后才想起来那是为了什么（问题）。
       // 跟 _recallRender 里 feel 排前面是同一个语序 —— 亲历的顺序，不是档案的顺序。
       const _famBlock = nocturneFamilyText ? ('\n\n═══\n' + nocturneFamilyText) : '';
@@ -11444,13 +11539,21 @@ app.post('/api/chat', auth, async (req, res) => {
            + '（上面那些 --- 是 Nocturne 分隔记忆条目用的，跟你回复里分气泡的 --- 没关系。'
            + '你回复她的时候照常用单独一行的 --- 分条发。）')
         : '';
+      // 📌 钉住的排在浮现后面、家族前面：先是这次涌上来的，再是一直压在底下的那些
+      const _pinBlock = _pinText ? ((_memBlock ? '\n\n═══\n' : '') + _pinText) : '';
+      // 💭 最近的感受紧跟浮现：Feel Trace 是抽签的旧池子，这段是真正最近写的，接在它后面
+      const _feelBlock = _recentFeels ? ((_memBlock || _pinBlock ? '\n\n═══\n' : '') + _recentFeels) : '';
       gatewayMessage = _underBlock
         + _wakeBlock
         + _memBlock
+        + _pinBlock
+        + _feelBlock
         + _famBlock
         + '\n\n═══\n下面才是粥粥说的：\n' + gatewayMessage;
       // 到这儿才算真的递到他手上了，现在才清缓存。
       if (nocturneWakeText) _wakeCtxConsume();
+      // 这批 id 已经进这窗的历史了，之后每轮浮起跳过它们
+      _setSetting('mind_pinned_shown:' + convId, JSON.stringify(_pinned ? _pinned.ids : []));
     }
     _mark('交给网关前');
     return handleGatewayChat(req, res, {
