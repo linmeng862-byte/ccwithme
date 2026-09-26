@@ -19732,7 +19732,40 @@ try { db.exec("ALTER TABLE messages ADD COLUMN usage TEXT DEFAULT ''"); }
 catch (e) { /* 列已存在 */ }
 
 // === 启动 ===
+// === 往他的表情库里收一批（09-26）===
+// 工作台那边的我拿不到 AUTH_TOKEN、也写不了 data/stickers，能写的只有 data/outbox。
+// 所以约定一个收件夹：图放进 data/outbox/放进Cis表情库/，后端开机时自己走一遍
+// /api/stickers/upload（带自己的 token，压缩/首帧/文件名当名字全复用那条路），owner=assistant。
+// 收过的记在 settings 的 sticker_inbox_done 里，**文件不删**（禁删），不会重复收。
+const STICKER_INBOX = path.join(__dirname, 'data', 'outbox', '放进Cis表情库');
+async function _ingestStickerInbox() {
+  try {
+    if (!fs.existsSync(STICKER_INBOX)) return;
+    let done = [];
+    try { done = JSON.parse(_getSetting('sticker_inbox_done') || '[]'); } catch (_) { done = []; }
+    const files = fs.readdirSync(STICKER_INBOX)
+      .filter(f => STICKER_EXT[path.extname(f).toLowerCase()] && done.indexOf(f) < 0).sort();
+    if (!files.length) return;
+    let ok = 0;
+    for (const f of files) {   // 一张一张来，别并发
+      const fd = new FormData();
+      fd.append('file', new Blob([fs.readFileSync(path.join(STICKER_INBOX, f))]), f);
+      fd.append('owner', 'assistant');
+      const r = await fetch('http://127.0.0.1:' + PORT + '/api/stickers/upload', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + AUTH_TOKEN }, body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { console.warn('[sticker-inbox] ' + f + ' 没收进去：' + (j.error || r.status)); continue; }
+      done.push(f); ok++;
+      _setSetting('sticker_inbox_done', JSON.stringify(done));
+      console.log('[sticker-inbox] 收了 ' + f + ' → 「' + (j.name || '') + '」' + (j.status === 'processing' ? '（名字要他认）' : ''));
+    }
+    console.log('[sticker-inbox] 这趟收了 ' + ok + '/' + files.length + ' 张进他的表情库');
+  } catch (e) { console.warn('[sticker-inbox] 出错：' + e.message); }
+}
+
 server.listen(PORT, '0.0.0.0', () => {
+  setTimeout(_ingestStickerInbox, 5000);
   console.log('');
   console.log(`  🧡 Chat-C ${__VERSION__}`);
   console.log('  🚀 Claude Chat Server');
