@@ -1728,6 +1728,29 @@ async function _shrinkSticker(srcPath, ext) {
   }
 }
 
+// 09-26：他描述里常把图上的字原样引出来 —— 写着"我来了" —— 英文双引号没转义，
+//   JSON.parse 报 Expected ',' or '}'，整张落 failed（我来了！/我要亲亲你/ovo 都栽在这）。
+//   先照常解析；坏了就逐字扫一遍：字符串里的 " 后面不是 , : } ] 的，当成正文里的引号转义掉，
+//   裸换行也转成 \n。提示词那头也让他用「」，两道一起。
+function _parseJsonLoose(s) {
+  try { return JSON.parse(s); } catch (_) {}
+  let out = '', inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (!inStr) { out += c; if (c === '"') inStr = true; continue; }
+    if (c === '\\') { out += c + (s[i + 1] || ''); i++; continue; }
+    if (c === '\n') { out += '\\n'; continue; }
+    if (c === '"') {
+      const rest = s.slice(i + 1).match(/^\s*(.)/);
+      if (!rest || ',:}]'.includes(rest[1])) { out += c; inStr = false; }
+      else out += '\\"';
+      continue;
+    }
+    out += c;
+  }
+  return JSON.parse(out);
+}
+
 // 让他看一眼这张表情是什么。走网关→CLI（那头有 Read，能直接读图文件）。
 // ⚠️ 必须用**独立 session**，不能蹭他的主会话 —— 那会把主线的前缀缓存搅乱，
 //    而缓存重建占了这个项目 71% 的开销。跟 distill 那条一个路子。
@@ -1736,7 +1759,7 @@ async function _analyzeSticker(imgPath) {
   if (!GATEWAY_KEY) return null;
   const prompt = 'Read 这个文件：' + imgPath + '\n' +
     '这是一张表情包' + (STICKER_ANIMATED[path.extname(imgPath).toLowerCase()] ? '（动图，你看到的是第一帧）' : '') + '。' +
-    '只回一个 JSON，不要任何别的话：' +
+    '只回一个 JSON，不要任何别的话。引用图上的字用「」，不要用英文双引号：' +
     '{"name":"两到四个字的名字","description":"这个表情在做什么、通常代表什么情绪或语气，一句话",' +
     '"emotion_tags":["三到五个情绪词"],"category":"一个大类"}';
   // ⚠️ 09-07：这里以前是 `session_id: crypto.randomUUID()` 直接写在 body 里，
@@ -1769,8 +1792,10 @@ async function _analyzeSticker(imgPath) {
     }
     // 他偶尔会包一层 ```json，抠出第一个 {...} 再解析
     const m = out.match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    const d = JSON.parse(m[0]);
+    if (!m) { console.warn('[sticker] 识别回的不是 JSON：' + out.slice(0, 200)); return null; }
+    let d;
+    try { d = _parseJsonLoose(m[0]); }
+    catch (e) { console.warn('[sticker] 识别回的 JSON 修不好：' + m[0].slice(0, 200)); throw e; }
     if (!d || !d.description) return null;
     return {
       name: String(d.name || '').trim().slice(0, 20),
